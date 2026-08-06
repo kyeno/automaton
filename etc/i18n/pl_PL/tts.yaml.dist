@@ -1,0 +1,22 @@
+# TTS Configuration -- Polish Locale
+# -----------------------------------
+# Template merged into every TTS API request for this locale.
+# "model" is REQUIRED. All other fields are OPTIONAL.
+#
+# Copy this file to "tts.yaml" and customize voice model for your setup.
+
+# REQUIRED - Voice model identifier for tts-server
+model: "pl_PL-bass-high"
+
+# OPTIONAL - Phoneme handling for Polish triple consonants
+triple_leading_consonant: true
+
+# OPTIONAL - Piper TTS engine effects
+piper_effects: "--length_scale 1.15"
+
+# OPTIONAL - SoX audio post-processing effects
+sox_effects: "pad 1.2 0.5"
+
+# OPTIONAL - Override output_endpoint per-request via event payload instead
+# If not set here or in event, falls back to automaton.yaml tts.output_endpoint
+# output_endpoint: "0.0.0.0:12345"

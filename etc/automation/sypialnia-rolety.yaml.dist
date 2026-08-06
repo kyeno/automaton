@@ -1,0 +1,29 @@
+# Bedroom Roller Shutter Automation Configuration
+# Controls multiple roller shutters in a bedroom based on outdoor conditions.
+#
+# Copy this file to "sypialnia-rolety.yaml" (or your own name) and customize.
+
+targets:
+  - name: 'Bedroom Roller Left'
+    id: left
+  - name: 'Bedroom Roller Right'
+    id: right
+
+sensors:
+  illuminance: 'Outdoor Luminance'
+  temperature: 'Outdoor Temperature'
+
+triggers_zigbee:
+  - 'Outdoor Luminance'
+  - 'Outdoor Temperature'
+
+timer_interval_ms: 60000
+
+rules:
+  - name: 'Night - close all'
+    conditions:
+      time-of-day: [evening, night]
+      illuminance: { lt: 15 }
+    targets:
+      left: CLOSE
+      right: CLOSE

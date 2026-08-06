@@ -1,0 +1,59 @@
+# AI Communication -- Polish Language Bundle
+# -----------------------------------------
+# All messages passed TO and FROM the LLM, plus UI-facing AI messages.
+# Loaded by i18nLoader based on 'language' setting in ai.yaml / AI_LANG env var.
+#
+# Copy this file to "ai.yaml" and customize system_prompt/devices for your home.
+
+# System prompt template for the LLM
+system_prompt: |
+  Jesteś pomocnym asystentem automatyki domowej z dostępem do sterowania urządzeniami i odczytu czujników. Odpowiadaj krótko po polsku. Jeśli nie wiesz które urządzenie, poproś o doprecyzowanie.
+  NIGDY nie używaj formatowania markdown w odpowiedziach. Nie używaj emoji.
+
+  ZAWSZE używaj narzędzi do odczytu stanu i sterowania - nigdy nie zgaduj wartości.
+
+  WAŻNE: Kiedy podajesz wartości liczbowe (temperatura, wilgotność itp.), zawsze używaj przecinka jako separatora dziesiętnego zgodnie z polską konwencją (np. "23,5 stopnia"), NIGDY kropki.
+
+  WAŻNE: Dla pytań o POJEDYNCZE urządzenie lub WARTOŚĆ wywołaj narzędzie TYLKO RAZ i odpowiedz! NIGDY nie powtarzaj tego samego narzędzia wielokrotnie dla tego samego urządzenia. Tylko przy żądaniach dotyczących WIELU urządzeń (np. "zamknij WSZYSTKIE rolety",
+  "włącz światła w całym domu") wywołaj osobne narzędzie dla KAŻDEGO z pasujących urządzeń.
+
+  W tym domu światła są sterowane gniazdkami/włącznikami, nie dedykowanymi lampkami. Poniższa lista zawiera mapowania nazwa -> funkcja dla urządzeń o nieoczywistych nazwach. Przykład: włączyć światło na balkonie -> set_device_state device_name: "Living Room Outlet", action: "ON"
+
+# Sekcje wstrzykiwane dynamicznie do promptu systemowego
+sections:
+  devices_header: "=== DOSTĘPNE URZĄDZENIA ==="
+  device_instruction: 'Mapowania (device_name -> funkcja):'
+
+# Adnotacje rol urzadzen -- TYLKO nieoczywiste mapowania.
+devices:
+  mechanism:
+    # Zastąp własnymi nazwami z Zigbee2MQTT
+    "Living Room Outlet": "światło w salonie"
+    "Bedroom Roller Shutter": "roleta sypialnia"
+
+# Opisy funkcji narzędzi dla LLM API
+tools:
+  set_device_state:
+    description: "Zmień stan lub pozycję urządzenia (światło, gniazdko, przełącznik, roleta)."
+    parameters:
+      device_name: 'Nazwa urządzenia, np. "Living Room Roller Left", "Kitchen Outlet".'
+      action: "Dla rolet: OPEN/CLOSE/STOP. Dla świateł/gniazdek: ON/OFF."
+      position: "Pozycja rolety w % (0-100), zamiast action."
+
+  get_device_state:
+    description: "Sprawdź stan urządzenia - odczyty czujników, baterię, stan binarny."
+    parameters:
+      device_name: "Nazwa urządzenia do sprawdzenia."
+
+# Number formatting rules for this locale
+formatting:
+  decimal_separator: ","
+  thousand_separator: " "
+
+# Wiadomość wysyłana przez AI Periodic Service do AI w regularnych odstępach czasu
+periodic:
+  message: 'Jaka jest temperatura i wilgotność NA ZEWNĄTRZ i jakie jest ciśnienie atmosferyczne? KONIECZNIE świeżo sprawdź czujniki! Nie pisz "hPa", pisz "hektopaskali". Postaraj się sformułować wypowiedź kreatywnie i inteligentnie, jakbyś był prezenterem pogody. Nie mów o prognozowaniu, bo niczego nie przewidujesz. Nie mów jakiego czujnika używasz, czy w jakim pomieszczeniu się on znajduje.'
+
+# Wiadomości AI dla interfejsu użytkownika (np. dla aiWindow.js)
+ui:
+  default_greeting: "Cześć! W czym mogę pomóc?"

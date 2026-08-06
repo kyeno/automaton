@@ -1,0 +1,123 @@
+#!/usr/bin/env node
+/**
+ * Simple test bundle runner.
+ * Runs syntax checks on all source files and executes all test scripts.
+ *
+ * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+ *
+ * @author Ratan M. Kyeno
+ * @license AGPL-3.0-only
+ */
+import { execSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+
+const ROOT = resolve(import.meta.dirname, '..')
+const SRC_DIR = join(ROOT, 'src')
+const TESTS_DIR = join(ROOT, 'tests')
+
+let failures = 0
+let passed = 0
+
+/* ------------------------------------------------------------------ */
+ /* Helper                                                             */
+/* ------------------------------------------------------------------ */
+function run(cmd, label) {
+  process.stdout.write(`  ▶ ${label} ... `)
+  try {
+    execSync(cmd, { stdio: ['inherit', 'pipe', 'pipe'], cwd: ROOT })
+    console.log('✓')
+    passed++
+  } catch (e) {
+    console.error('✗')
+    if (e.stdout) process.stderr.write(e.stdout.toString())
+    if (e.stderr) process.stderr.write(e.stderr.toString())
+    failures++
+  }
+}
+
+/* ------------------------------------------------------------------ */
+ /* 1. Syntax-check every .js file under src/                          */
+/* ------------------------------------------------------------------ */
+console.log('\n── Syntax checks ──\n')
+
+function collectJs(dir, list = [], fs) {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    // skip node_modules and var-like dirs
+    if (entry.startsWith('.')) continue
+    const stat = fs.statSync(full)
+    if (stat.isDirectory()) {
+      collectJs(full, list, fs)
+    } else if (entry.endsWith('.js')) {
+      list.push(full.replace(ROOT + '/', ''))
+    }
+  }
+  return list
+}
+
+const fs = await import('node:fs')
+
+// Also scan etc/ for custom automation/interaction scripts (.js only, not .js.dist)
+const ETC_DIRS = ['etc/automation', 'etc/interaction']
+for (const dir of ETC_DIRS) {
+  const fullDir = join(ROOT, dir)
+  try {
+    fs.accessSync(fullDir)
+  } catch {
+    continue // directory may not exist in minimal setups
+  }
+  const etcFiles = collectJs(fullDir, [], fs)
+  for (const f of etcFiles) {
+    if (f.endsWith('.js.dist')) continue // skip distribution templates
+    run(`node --check "${join(ROOT, f)}"`, `syntax ${f}`)
+  }
+}
+
+const files = collectJs(SRC_DIR, [], fs)
+for (const f of files) {
+  run(`node --check "${join(ROOT, f)}"`, `syntax ${f}`)
+}
+
+/* ------------------------------------------------------------------ */
+ /* 2. Run non-sound test scripts                                      */
+/* ------------------------------------------------------------------ */
+console.log('\n── Test scripts ──\n')
+
+const testScripts = [
+  'test-config-validation.js',
+  'test-device-instantiation.js',
+  'test-automation-instantiation.js',
+  'test-service-instantiation.js',
+  'test-origin-classification.js',
+  'test-dist-sync.js',
+  // Note: test-jsdoc-coverage.js moved to npm run lint:check
+  'test-sound.js',
+  'test-sound-mario.js',
+]
+
+for (const script of testScripts) {
+  const path = join(TESTS_DIR, script)
+  // Skip if the file doesn't exist
+  try {
+    fs.accessSync(path)
+  } catch {
+    console.log(`  ⊘ ${script} (not found, skipped)`)
+    continue
+  }
+  run(`node "${path}"`, script)
+}
+
+/* ------------------------------------------------------------------ */
+ /* Summary                                                            */
+/* ------------------------------------------------------------------ */
+const total = passed + failures
+console.log(
+  `\n${'═'.repeat(50)}` +
+  `\n  Results: ${passed}/${total} passed` +
+  (failures > 0 ? `, ${failures} failed` : '') +
+  `\n${'═'.repeat(50)}\n`
+)
+
+process.exit(failures > 0 ? 1 : 0)

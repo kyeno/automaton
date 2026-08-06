@@ -1,0 +1,183 @@
+# ================================================================
+# AUTOMATON -- Main Configuration File
+# ================================================================
+# All behavioral settings in one place. Service connection strings and
+# secrets remain in .env (MQTT_URL, REDIS_URL, AI_API_URL, etc.).
+# ================================================================
+# This is a distribution template. Copy to "automaton.yaml" and customize
+# for your environment. The system automatically falls back to this .dist
+# file if the active config is missing.
+# ================================================================
+
+# ================================================================
+# AUTOMATION SECTION
+# ================================================================
+# Controls global automation behavior. Custom automations are defined
+# in separate YAML files under their respective directories.
+
+# Human-interaction cooldown in milliseconds (default: 900000 = 15 min).
+# Automations skip a device for this duration after a human manually changes it.
+human_interaction_cooldown_ms: 900000
+
+# -- Where to find custom configurations --------------------------
+# These paths can be overridden below under the `paths` section. Defaults are:
+#   configs.network     -> etc/device/network.yaml
+#   configs.interaction -> etc/interaction/interaction.yaml
+#   directories.automation  -> etc/automation/
+#   directories.interaction -> etc/interaction/
+# Uncomment and edit below to override any of these defaults.
+# ================================================================
+
+# Override config/directory paths (optional - commented out = use defaults)
+# paths:
+#   configs:
+#     network: "etc/device/network.yaml"
+#     interaction: "etc/interaction/interaction.yaml"
+#   directories:
+#     automation: "etc/automation/"
+#     interaction: "etc/interaction/"
+
+# ================================================================
+# i18n SECTION
+# ================================================================
+# Language and time-format settings used across the entire UI.
+
+# AI assistant language (system prompt, tool descriptions, UI greetings).
+# Available languages: pl, en
+ai_language: en
+
+# Time display format: "12h" (01:30pm) or "24h" (13:30)
+time_format: "24h"
+# ================================================================
+
+# ================================================================
+# TTS SECTION
+# ================================================================
+# Text-to-speech service auto-enables when TTS_API_URL is set in .env.
+# Output endpoint (speaker device) configured via TTS_TCP_ENDPOINT in .env.
+# Locale-specific voice templates live in etc/i18n/{locale}/tts.yaml.
+# ================================================================
+# ================================================================
+# AI SECTION
+# ================================================================
+# Provider settings sent to the LLM with every chat request, plus
+# conversation management options. API secrets stay in .env.
+
+# Model name to use (e.g., qwen2.5-3b-instruct). Required for chat requests.
+model: gemma-4-E2B-it
+
+# Maximum tokens in the AI response (default: 2048). Use -1 for unlimited
+# (omits max_tokens from the request, letting the provider use its default).
+max_tokens: -1
+
+# Sampling temperature 0.0-1.0 (default: 0.1).
+# Lower = more deterministic; higher = more creative/random.
+temperature: 1.0
+
+# Conversation history TTL in seconds (default: 900 = 15 minutes).
+# After this period of inactivity, the conversation is purged from Redis.
+conversation_ttl_sec: 900
+
+# Maximum number of message turns to retain in context window.
+# Prevents token explosion during very long conversations.
+max_conversation_turns: 15
+
+# Strip markdown formatting and emoji from AI responses before displaying
+# in UI or passing to TTS. Some AI models use bold/italic/emoji that may not
+# render well in terminal UI or sound awkward when spoken.
+strip_ai_formatting: false
+
+# Periodic AI messenger settings for the built-in AI Periodic Service.
+# Sends a localized prompt to the AI at regular intervals, triggering
+# the full flow: tool execution → AI response → TTS (if enabled).
+# In the UI, these messages appear with a <system> prefix (yellow color).
+ai_periodic_message:
+  # Interval in milliseconds between periodic messages (default: 900000 = 15 min).
+  # Set to 0 to disable the periodic messenger entirely.
+  interval_ms: 900000
+# ================================================================
+
+# ================================================================
+# UI SECTION
+# ================================================================
+# Terminal UI layout, status bar widgets, and window definitions.
+
+status_bar:
+  lines:
+    # Line 1 -- time + time-of-day (left), activity indicator stays after left
+    # Time format is derived from i18n section time_format setting.
+    - left:
+        - type: time
+          render_seconds: false
+        - type: separator
+          char: " |"
+        - type: time_of_day
+      right: []
+    # Line 2 -- sensor readings (left), connection status (right)
+    - left:
+        - type: temp
+          device: "Living Room Temperature"
+          label: "Living Room"
+          format: "{value}*C"
+        - type: separator
+          char: " |"
+        - type: temp
+          device: "Bedroom Temperature"
+          label: "Bedroom"
+          format: "{value}*C"
+      right:
+        # First bracket group
+        - [{type: state, key: "mqtt.connected", iconTrue: "[o]", iconFalse: "[x]", label: "MQTT"}]
+        # Second bracket group
+        - [{type: state, key: "redis.connected", iconTrue: "[o]", iconFalse: "[x]", label: "Redis"}]
+
+layout:
+  # Minimum terminal width before UI clamps rendering width.
+  # Going below this risks OOM crashes during resize due to excessive wrapping.
+  min_width: 60
+
+window_settings:
+  # Maximum buffered entries per window (before trimming oldest).
+  # WARNING: Setting above 5000 significantly increases memory usage and crash risk.
+  max_buffer_lines: 2000
+
+windows:
+  - id: logs
+    channel: "!log"
+    title: "Logs"
+    shortcut: 1
+    readonly: true
+  - id: device
+    channel: "!sensors"
+    title: "Devices"
+    shortcut: 2
+    readonly: true
+  - id: ai
+    channel: "#automaton"
+    title: "AI Chat"
+    shortcut: 3
+    readonly: false
+# ================================================================
+
+# ================================================================
+# LOGGER SECTION
+# ================================================================
+# Winston logger configuration for console and file transports.
+
+logger:
+  # Winston file logger settings.
+  file:
+    max_size: 5242880    # 5MB in bytes
+    max_files: 8
+    tailable: true
+
+  # Winston console logger settings.
+  console:
+    console_warn_levels: [warn]
+    stderr_levels: [error]
+
+  # Logger relative paths (non-absolute paths become relative to project root).
+  path:
+    debug: var/log/debug.log
+    warn: var/log/warn.log
+# ================================================================

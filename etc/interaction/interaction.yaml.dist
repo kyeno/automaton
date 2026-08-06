@@ -1,0 +1,45 @@
+# Interactions Configuration
+# Defines interactions that can be triggered by Zigbee devices.
+#
+# Each interaction has:
+#   - name: Unique identifier (snake_case). This is also the EventBus topic
+#     the interaction subscribes to via "zigbee:{name}".
+#   - actions: Array of action definitions with type and either targets or calls
+#
+# Action types:
+#   - targets: Direct device commands -- array of {device, command} objects.
+#     The interaction finds each device via DeviceContainer and calls receiveCommand(command).
+#   - calls: Delegate to another named interaction's execute() method.
+#
+# Copy this file to "interaction.yaml" and customize for your setup.
+
+interactions:
+  # Example: Remote controlling two roller shutters in a room.
+  - name: 'living_room_remote'
+    actions:
+      - type: '1_single'
+        targets:
+          - device: 'Living Room Roller Left'
+            command: 'OPEN'
+          - device: 'Living Room Roller Right'
+            command: 'OPEN'
+      - type: '2_single'
+        targets:
+          - device: 'Living Room Roller Left'
+            command: 'STOP'
+          - device: 'Living Room Roller Right'
+            command: 'STOP'
+      - type: '3_single'
+        targets:
+          - device: 'Living Room Roller Left'
+            command: 'CLOSE'
+          - device: 'Living Room Roller Right'
+            command: 'CLOSE'
+
+  # Example: Physical switch toggling an outlet.
+  - name: 'kitchen_switch'
+    actions:
+      - type: 'single'
+        targets:
+          - device: 'Kitchen Outlet'
+            command: 'TOGGLE'

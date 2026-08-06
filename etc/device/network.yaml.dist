@@ -1,0 +1,21 @@
+# Network Device Configuration
+# Lists computers, routers, access points and appliances on your network.
+# Used by automations for presence detection via ping checks.
+#
+# Copy this file to "network.yaml" and replace placeholders with your actual devices.
+
+computers:
+  # Replace hostname/ip pairs with your own machines
+  my-pc: 0.0.0.0
+  laptop: 0.0.0.0
+
+routers:
+  # - "Router Name": 0.0.0.0
+
+ac:
+  # Access points for optional monitoring
+  # - "AC Name": 0.0.0.0
+
+appliances:
+  # Smart appliances tracked on the network
+  # - "Appliance Name": 0.0.0.0

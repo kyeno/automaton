@@ -1,0 +1,23 @@
+# Node.js deps
+node_modules/
+
+# Development files
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+_debug/
+
+# Generated documentation
+doc/api/
+
+# User-specific files
+.env
+var/log/*.log
+
+# Active config files (tracked .dist templates take precedence)
+etc/**/*.yaml
+!etc/**/*.yaml.dist
+etc/**/*.js
+!etc/**/*.js.dist

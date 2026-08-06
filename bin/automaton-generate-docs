@@ -1,0 +1,172 @@
+#!/usr/bin/env node
+/**
+ * Generate API documentation from JSDoc comments.
+ *
+ * Scans all JavaScript files under src/ and produces an HTML documentation
+ * site in doc/api/ using the JSDoc tool.
+ *
+ * Usage:
+ *   automaton-generate-docs [options]
+ *
+ * Options:
+ *   --src <dir>      Source directory to scan (default: src)
+ *   --out <dir>      Output directory for generated docs (default: doc/api)
+ *   --dry-run        Print the generated config.json without generating docs
+ *
+ * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+ *
+ * @author Ratan M. Kyeno
+ * @license AGPL-3.0-only
+ */
+'use strict'
+
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const projectRoot = resolve(__dirname, '..')
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+function parseArgs(argv) {
+    const args = {
+        src: 'src',
+        out: 'doc/api',
+        dryRun: false
+    }
+
+    for (let i = 0; i < argv.length; i++) {
+        switch (argv[i]) {
+            case '--src':
+                args.src = argv[++i]
+                break
+            case '--out':
+                args.out = argv[++i]
+                break
+            case '--dry-run':
+                args.dryRun = true
+                break
+        }
+    }
+
+    return args
+}
+
+// ---------------------------------------------------------------------------
+// JSDoc configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a JSDoc-compatible configuration object.
+ * @param {Object} args - Parsed CLI arguments
+ * @returns {Object} JSDoc configuration
+ */
+function buildConfig(args) {
+    return {
+        source: {
+            include: [args.src],
+            exclude: [
+                'node_modules',
+                'var',
+                '_debug',
+                '\\.dist$'
+            ],
+            pattern: '\\.js$',
+            excludePattern: '(^|\\/|\\\\)_.'
+        },
+        opts: {
+            readme: resolve(projectRoot, 'README.md'),
+            recurse: true,
+            destination: resolve(projectRoot, args.out)
+        },
+        plugins: [resolve(projectRoot, 'jsdoc-modules.cjs')],
+        templates: {
+            default: {
+                cleverLinks: true,
+                monospaceLinks: false,
+                useLongnameInNav: true
+            }
+        },
+        sort: 'alphabetical'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+async function main() {
+    const args = parseArgs(process.argv.slice(2))
+    const config = buildConfig(args)
+    const configFile = resolve(projectRoot, '.jsdoc.json')
+    const jsdocBin = resolve(projectRoot, 'node_modules/jsdoc/jsdoc.js')
+
+    console.log('JSDoc Documentation Generator')
+    console.log('=============================\n')
+    console.log(`Source:     ${args.src}/`)
+    console.log(`Output:     ${args.out}/`)
+    console.log(`Config:     .jsdoc.json`)
+
+    // Write temporary config file so JSDoc CLI can read it
+    writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8')
+
+    if (args.dryRun) {
+        console.log('\n[--dry-run] Configuration written to .jsdoc.json:')
+        console.log(readFileSync(configFile, 'utf8'))
+        unlinkSync(configFile)
+        return
+    }
+
+    // Prune previous documentation so stale files don't persist
+    const outDir = resolve(projectRoot, args.out)
+    if (existsSync(outDir)) {
+        console.log(`Removing previous documentation at ${args.out}/`)
+        rmSync(outDir, { recursive: true, force: true })
+    }
+
+    // Ensure output directory and required subdirs exist (JSDoc default template
+    // expects these for fonts, CSS, images, etc.)
+    for (const subdir of ['', 'fonts', 'scripts', 'styles']) {
+        mkdirSync(resolve(outDir, subdir), { recursive: true })
+    }
+
+    console.log('\nGenerating documentation...\n')
+
+    const result = spawnSync(
+        'node',
+        [jsdocBin, '-c', configFile],
+        { cwd: projectRoot, stdio: 'inherit', encoding: 'utf8' }
+    )
+
+    // Clean up temp config
+    try {
+        unlinkSync(configFile)
+    } catch {}
+
+    // JSDoc may exit with code 1 due to type-expression parse errors in source
+    // comments — these are non-fatal warnings. Check whether output was actually
+    // produced instead of blindly trusting the exit code.
+    const indexHtml = resolve(projectRoot, args.out, 'index.html')
+
+    if (!existsSync(indexHtml)) {
+        console.error('\nFailed to generate documentation.')
+        if (result.error) {
+            console.error(result.error.message)
+        }
+        process.exit(1)
+    }
+
+    console.log('\nDocumentation generated successfully!')
+    console.log(`Output directory: ${resolve(projectRoot, args.out)}`)
+    console.log('Open doc/api/index.html in your browser to view.')
+}
+
+main().catch(err => {
+    console.error('Unexpected error:', err)
+    process.exit(1)
+})

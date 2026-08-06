@@ -1,0 +1,19 @@
+# Zigbee Device Configuration
+# Lists all Zigbee devices grouped by type. These names must match exactly
+# what Zigbee2MQTT reports for each device's friendly_name.
+#
+# Copy this file to "zigbee.yaml" and populate with your actual device names.
+
+mechanism:
+  # Outlets, switches controlling lights, roller shutters etc.
+  - "Living Room Outlet"
+  - "Bedroom Roller Shutter"
+
+remote:
+  # Wall remotes and handheld controllers
+  - "Living Room Remote"
+
+sensor:
+  # Temperature, humidity, illuminance, motion sensors etc.
+  - "Outdoor Temperature"
+  - "Outdoor Luminance"

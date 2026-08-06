@@ -1,0 +1,59 @@
+{
+  "type": "module",
+  "name": "automaton",
+  "version": "0.1.0-dev",
+  "description": "A programmatic approach to Zigbee2MQTT home automation",
+  "keywords": [
+    "zigbee2mqtt",
+    "home-automation",
+    "smart-home",
+    "mqtt",
+    "redis",
+    "rule-engine",
+    "ai-assistant",
+    "llm",
+    "openai",
+    "tts",
+    "terminal-ui",
+    "tui",
+    "network-presence",
+    "agpl-v3"
+  ],
+  "author": {
+    "name": "Ratan M. Kyeno",
+    "email": "matt@prayam.com"
+  },
+  "license": "AGPL-3.0-only",
+  "main": "src/main.js",
+  "bin": {
+    "automaton": "./bin/automaton"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node bin/automaton-test",
+    "lint:check": "node bin/automaton-lint-check",
+    "docs": "node bin/automaton-generate-docs"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.4",
+    "redis": "^6.0.0",
+    "terminal-kit": "^2.11.7",
+    "winston": "^3.19.0",
+    "winston-transport": "^4.9.0",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "jsdoc": "^4.0.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "!win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

@@ -1,0 +1,18 @@
+# TTS Configuration -- English Locale
+# ------------------------------------
+# Template merged into every TTS API request for this locale.
+# "model" is REQUIRED. All other fields are OPTIONAL.
+#
+# Copy this file to "tts.yaml" and customize voice model for your setup.
+
+# REQUIRED - Voice model identifier for tts-server
+model: "en_GB-alan-medium"
+
+# OPTIONAL - Uncomment and configure as needed for your voice model
+# triple_leading_consonant: false
+# piper_effects: "--length_scale 1.0"
+# sox_effects: "pad 0.5 0.3"
+
+# OPTIONAL - Override output_endpoint per-request via event payload instead
+# If not set here or in event, falls back to automaton.yaml tts.output_endpoint
+# output_endpoint: "0.0.0.0:12345"

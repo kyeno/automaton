@@ -1,0 +1,74 @@
+#!/usr/bin/env node
+/**
+ * Lint check bundle runner.
+ *
+ * Runs all static analysis checks on source files. Designed to be extensible
+ * for future tools (ESLint, style checks, etc.). Currently runs:
+ *  - JSDoc coverage check
+ *
+ * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+ *
+ * @author Ratan M. Kyeno
+ * @license AGPL-3.0-only
+ */
+import { execSync } from 'node:child_process'
+import { accessSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+
+const ROOT = resolve(import.meta.dirname, '..')
+const TESTS_DIR = join(ROOT, 'tests')
+
+let failures = 0
+let passed = 0
+
+/* ------------------------------------------------------------------ */
+ /* Helper                                                             */
+/* ------------------------------------------------------------------ */
+function run(cmd, label) {
+  process.stdout.write(`  > ${label} ... `)
+  try {
+    execSync(cmd, { stdio: ['inherit', 'pipe', 'pipe'], cwd: ROOT })
+    console.log('\x1b[32m✓\x1b[0m')
+    passed++
+  } catch (e) {
+    console.log('\x1b[31m✗\x1b[0m')
+    if (e.stdout) process.stderr.write(e.stdout.toString())
+    if (e.stderr) process.stderr.write(e.stderr.toString())
+    failures++
+  }
+}
+
+/* ------------------------------------------------------------------ */
+ /* Lint checks                                                        */
+/* ------------------------------------------------------------------ */
+console.log('\n── Lint Checks ──\n')
+
+const lintScripts = [
+  'test-jsdoc-coverage.js',
+]
+
+for (const script of lintScripts) {
+  const path = join(TESTS_DIR, script)
+  // Skip if the file doesn't exist
+  try {
+    accessSync(path)
+  } catch {
+    console.log(`  - ${script} (not found, skipped)`)
+    continue
+  }
+  run(`node "${path}"`, script)
+}
+
+/* ------------------------------------------------------------------ */
+ /* Summary                                                            */
+/* ------------------------------------------------------------------ */
+const total = passed + failures
+console.log(
+  `\n${'═'.repeat(50)}` +
+  `\n  Results: ${passed}/${total} passed` +
+  (failures > 0 ? `, ${failures} failed` : '') +
+  `\n${'═'.repeat(50)}\n`
+)
+
+process.exit(failures > 0 ? 1 : 0)

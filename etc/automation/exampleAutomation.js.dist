@@ -1,0 +1,47 @@
+/**
+ * Example Automation -- Rule-based blinds controller.
+ * Copy this file to a .js name (e.g., "my-blinds-automation.js"), rename the
+ * class, update CONFIG_PATH to point at your YAML config, and customize logic.
+ *
+ * @author Ratan M. Kyeno
+ * @license MIT
+ */
+'use strict'
+
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import RuleBasedAutomationBase from '../../src/automation/base/ruleBasedAutomationBase.js'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+// Point this at your companion YAML config (same directory as this script)
+const CONFIG_PATH = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'example-automation.yaml'   // <-- rename to match your yaml file
+)
+
+// ---------------------------------------------------------------------------
+// Class
+// ---------------------------------------------------------------------------
+
+export default class ExampleBlindsAutomation extends RuleBasedAutomationBase {
+
+    constructor() {
+        super({ name: 'ExampleBlindsAutomation', configPath: CONFIG_PATH })
+    }
+
+    async init() {
+        await super.init()
+    }
+
+    /**
+     * Resolve which command to send for a given target device.
+     * Delegate to blinds-specific resolve in base class.
+     */
+    resolveCommand(device, targetId, matchingRules) {
+        return this.blindsResolveCommand(device, targetId, matchingRules)
+    }
+}

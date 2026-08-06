@@ -1,0 +1,137 @@
+/**
+ * Example Interaction -- Button-triggered device control with custom logic.
+ * Copy this file to a .js name (e.g., "my-kitchen-interaction.js"), rename the
+ * class, update DEVICES with your actual Zigbee device names, and customize
+ * execute() for your desired behavior.
+ *
+ * @author Ratan M. Kyeno
+ * @license MIT
+ */
+'use strict'
+
+import DeviceContainer from '../../src/device/container/deviceContainer.js'
+import InteractionBase   from '../../src/interaction/base/interactionBase.js'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Device names referenced by this interaction.
+ * Centralize here so renaming a device in Zigbee/zigbee.yaml requires
+ * updating only one place per interaction module.
+ * @readonly
+ * @type {{light: string}}
+ */
+const DEVICES = Object.freeze({
+    light: 'Example Light',   // <-- replace with your device name
+})
+
+// ---------------------------------------------------------------------------
+// Class
+// ---------------------------------------------------------------------------
+
+export default class ExampleInteraction extends InteractionBase {
+
+    // -- Private state ----------------------------------------------------
+
+    /**
+     * Optional timer reference for delayed actions.
+     * @type {NodeJS.Timeout|null}
+     */
+    #timer = null
+
+    // -- Constructor ------------------------------------------------------
+
+    constructor() {
+        super({ name: 'ExampleInteraction' })
+    }
+
+    // -- Overrides --------------------------------------------------------
+
+    /**
+     * Validate that all referenced devices exist at startup.
+     */
+    async init() {
+        await super.init?.()
+        const missing = []
+        for (const [role, name] of Object.entries(DEVICES)) {
+            if (!DeviceContainer.findByName(name)) {
+                missing.push(`${role}("${name}")`)
+            }
+        }
+        if (missing.length) {
+            this.log(`Referenced device(s) not found: ${missing.join(', ')}`, 'error')
+        } else {
+            this.log('All referenced devices resolved', 'info')
+        }
+    }
+
+    /**
+     * Main execution logic — called whenever the interaction is triggered.
+     *
+     * @param {Object} triggerData - Data from the event trigger
+     */
+    async execute(triggerData = null) {
+        const action = triggerData?.action || null
+
+        if (action === 'single') {
+            this.#handleSingleClick()
+        } else if (action === 'double') {
+            this.#handleDoubleClick()
+        } else {
+            this.log(`Unknown action: ${action}`, 'warn')
+        }
+    }
+
+    /**
+     * Clean up resources on shutdown.
+     */
+    cleanup() {
+        super.cleanup()
+        this.#clearTimer()
+    }
+
+    // -- Private helpers --------------------------------------------------
+
+    /**
+     * Handle single-click action.
+     * @private
+     */
+    #handleSingleClick() {
+        const light = DeviceContainer.findByName(DEVICES.light)
+        if (!light) {
+            this.log(`${DEVICES.light} not found`)
+            return
+        }
+
+        this.log('Single click received')
+        light.receiveCommand('TOGGLE')
+    }
+
+    /**
+     * Handle double-click action.
+     * @private
+     */
+    #handleDoubleClick() {
+        const light = DeviceContainer.findByName(DEVICES.light)
+        if (!light) {
+            this.log(`${DEVICES.light} not found`)
+            return
+        }
+
+        this.log('Double click received')
+        light.receiveCommand('ON')
+    }
+
+    /**
+     * Clear any pending timer.
+     * @private
+     */
+    #clearTimer() {
+        if (this.#timer !== null) {
+            clearTimeout(this.#timer)
+            this.#timer = null
+        }
+    }
+}

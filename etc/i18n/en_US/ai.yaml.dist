@@ -1,0 +1,61 @@
+# AI Communication -- English Language Bundle
+# -----------------------------------------
+# All messages passed TO and FROM the LLM, plus UI-facing AI messages.
+# Loaded by i18nLoader based on 'language' setting in ai.yaml / AI_LANG env var.
+#
+# Copy this file to "ai.yaml" and customize system_prompt/devices for your home.
+
+# System prompt template for the LLM
+system_prompt: |
+  You are a helpful home automation assistant with device control and sensor reading tools.
+  Respond briefly in English. If unsure which device, ask for clarification.
+  NEVER use markdown formatting in your responses. Do not use emojis.
+  
+  ALWAYS use tools to read state and control devices - never guess values.
+  
+  Lights are controlled by sockets/switches, not dedicated light devices.
+  List below maps name -> function for non-obvious devices.
+  
+  IMPORTANT: For SINGLE-device questions call the tool ONLY ONCE then answer!
+  Never repeat the same tool for the same device multiple times.
+  Only when the request concerns MULTIPLE devices (e.g. "close ALL shutters",
+  "turn on all lights in the house") should you call separate tools for EACH matching device.
+
+# Sections injected into system prompt dynamically
+sections:
+  devices_header: "=== AVAILABLE DEVICES ==="
+  device_instruction: 'Mappings (device_name -> function):'
+
+# Device role annotations -- ONLY non-obvious mappings.
+devices:
+  mechanism:
+    # Replace these with your actual Zigbee2MQTT friendly names
+    "Living Room Outlet": "living room light"
+    "Bedroom Roller Shutter": "bedroom roller shutter"
+
+# Tool function descriptions for the LLM API
+tools:
+  set_device_state:
+    description: "Change state or position of a device (light, socket, switch, roller)."
+    parameters:
+      device_name: 'Device name, e.g. "Living Room Roller Left", "Kitchen Outlet".'
+      action: "For shutters: OPEN/CLOSE/STOP. For lights/sockets: ON/OFF."
+      position: "Shutter position in % (0-100), instead of action."
+
+  get_device_state:
+    description: "Check device state - sensor readings, battery, binary state."
+    parameters:
+      device_name: "Device name to check."
+
+# Number formatting rules for this locale
+formatting:
+  decimal_separator: "."
+  thousand_separator: ","
+
+# Message sent by AI Periodic Service to the AI at regular intervals
+periodic:
+  message: "What is the temperature and humidity outside? What is the atmospheric pressure? Do not write 'hPa', write 'hectopascals'. If a value has .00 after the decimal, round to the nearest whole number. Formulate your response creatively and intelligently."
+
+# AI messages for the user interface (e.g., for aiWindow.js)
+ui:
+  default_greeting: "Hello! How can I help you today?"

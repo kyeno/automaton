@@ -1,0 +1,64 @@
+# Automation Configuration Template
+# Example rule-based automation controlling roller shutters based on
+# illuminance, temperature, time-of-day and presence detection.
+#
+# Copy this file to a name like "my-room-rollers.yaml" and customize
+# device names, thresholds and rules for your home.
+#
+# Each automation also needs a companion JavaScript class that extends
+# RuleBasedAutomationBase (see salonRoletyAutomation.js.dist for reference).
+
+targets:
+  - name: 'Living Room Roller Left'
+    id: left
+  - name: 'Living Room Roller Right'
+    id: right
+
+sensors:
+  illuminance: 'Outdoor Luminance'
+  temperature: 'Outdoor Temperature'
+
+triggers_zigbee:
+  - 'Outdoor Luminance'
+  - 'Outdoor Temperature'
+
+triggers_network:
+  - my-pc
+
+timer_interval_ms: 60000
+
+rules:
+  - name: 'Night - close all'
+    conditions:
+      time-of-day: [evening, night]
+      illuminance: { lte: 15 }
+    targets:
+      left: CLOSE
+      right: CLOSE
+
+  - name: 'Day - warm, not too bright - open'
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      illuminance: { lt: 10000 }
+      temperature: { lt: 25 }
+    targets:
+      left: OPEN
+      right: OPEN
+
+  - name: 'Hot weather - close'
+    conditions:
+      time-of-day: [morning, noon]
+      temperature: { gte: 30 }
+    targets:
+      left: CLOSE
+      right: CLOSE
+
+  # Presence-based partial position example
+  - name: 'Present, bright daylight'
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      illuminance: { gt: 10000 }
+      presence: my-pc
+    targets:
+      left: 30
+      right: CLOSE
