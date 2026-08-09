@@ -1,0 +1,11 @@
+# WeatherMan -- Polish Language Bundle
+# ------------------------------------
+# Speech templates for the ttsWeatherman automation.
+# Supports {{ DeviceName.property }} interpolation for live sensor data.
+#
+# Copy this file to "weatherman.yaml" and customize sentences for your home.
+
+base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperatura.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperatura.humidity }} procent, a oświetlenie to {{ Outdoor Luminance.illuminance }} luksów.'
+ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób: '
+hot_warning: 'Uwaga, dziś jest bardzo gorąco!'
+night_message: 'Zima i ciemno za oknem, czas na odpoczynek.'

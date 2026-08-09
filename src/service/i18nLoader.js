@@ -156,6 +156,29 @@ class SI18nLoader {
     }
 
     /**
+     * Format the current local time using the active locale and configured
+     * time format (12h or 24h). Used by {% %} interpolation in i18n strings.
+     *
+     * Example output: "04:09" (24h) or "4:09 AM" (12h).
+     *
+     * @param {Date} [date] - Optional date; defaults to Date.now()
+     * @returns {string} Formatted time string respecting locale and time_format config
+     */
+    formatTime(date = new Date()) {
+        const locale = (LOCALE_MAP[this.#language] || this.#language).replace('_', '-')
+        try {
+            return new Intl.DateTimeFormat(locale, {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: this.is12HourFormat()
+            }).format(date)
+        } catch {
+            // Fallback if locale is unsupported by the runtime
+            return String(date.toLocaleTimeString())
+        }
+    }
+
+    /**
      * Resolve a dotted key path against the loaded AI language bundle.
      * Example: t('sections.devices_header') → "=== DOSTĘPNE URZĄDZENIA ==="
      *

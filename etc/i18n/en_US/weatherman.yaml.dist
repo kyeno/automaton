@@ -1,0 +1,11 @@
+# WeatherMan -- English Language Bundle
+# -------------------------------------
+# Speech templates for the ttsWeatherman automation.
+# Supports {{ DeviceName.property }} interpolation for live sensor data.
+#
+# Copy this file to "weatherman.yaml" and customize sentences for your home.
+
+base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and illuminance is {{ Outdoor Luminance.illuminance }} lux.'
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely: '
+hot_warning: 'Warning, it is very hot today!'
+night_message: 'It is cold and dark outside, time to rest.'

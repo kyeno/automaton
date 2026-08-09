@@ -29,7 +29,6 @@ import InteractionContainer from './interaction/container/interactionContainer.j
 import NetworkPresence from './monitor/networkPresence.js'
 
 import AiAssistant     from './ai/aiAssistant.js'
-import AiPeriodicService from './service/aiPeriodicService.js'
 import TtsService      from './service/ttsService.js'
 import Ui              from './ui/ui.js'
 
@@ -161,13 +160,8 @@ async function gracefulDeath(reason, errorLevel = 0) {
         }
 
         // ---------------------------------------------------------------
-        // Phase 3 -- Stop optional services (AI periodic timer, TTS unsubscribes from EventBus).
+        // Phase 3 -- Stop optional services (TTS unsubscribes from EventBus).
         // ---------------------------------------------------------------
-        if (initialized.has('AiPeriodicService')) {
-            LoggerService.debug('Cleaning up AiPeriodicService...', 'Main')
-            AiPeriodicService.cleanup()
-        }
-
         if (initialized.has('TtsService')) {
             LoggerService.debug('Cleaning up TtsService...', 'Main')
             TtsService.cleanup()
@@ -295,10 +289,7 @@ async function bootstrap() {
     // AI Assistant is optional
     await initService('AiAssistant', () => AiAssistant.init(), true)
 
-    // AI Periodic Service runs after both I18nLoader and AiAssistant are ready
-    await initService('AiPeriodicService', () => AiPeriodicService.init(), true)
-
-    // TTS Service auto-enables when TTS_API_URL is set in .env
+    // TTS Service
     await initService('TtsService', () => TtsService.init(), true)
 
     const services = []

@@ -1,0 +1,39 @@
+# ttsWeatherman Configuration Template
+# Rule-based TTS weather announcer with sensor data interpolation.
+#
+# Builds a speech message from a base sentence and condition-matched additions,
+# then routes through AI → TTS pipeline (or direct TTS if AI unavailable).
+#
+# Sensor values can be interpolated into i18n strings using {{ DeviceName.property }}
+# syntax (e.g., "{{ Outdoor Temperature.temperature }}" resolves to live sensor data).
+#
+# Copy this file to "tts-weatherman.yaml" and customize for your home.
+
+timer_interval_ms: 900000   # 15 minutes (set to 0 to disable timer)
+
+sentence_base: 'weatherman.base'           # Always-played opening i18n key
+sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
+
+sensors:
+  illuminance: 'Outdoor Luminance'
+  temperature: 'Outdoor Temperature'
+  humidity: 'Outdoor Temperature'          # Same device as temp (combined sensor)
+  pressure: 'Kitchen Temperature'           # Separate barometer (may vary)
+
+triggers_zigbee:
+  - 'Outdoor Luminance'
+  - 'Outdoor Temperature'
+  - 'Kitchen Temperature'
+
+rules:
+  - name: 'Hot weather warning'
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      temperature: { gte: 30 }
+    sentence: 'weatherman.hot_warning'
+
+  - name: 'Night closing'
+    conditions:
+      time-of-day: [evening, night]
+      illuminance: { lte: 15 }
+    sentence: 'weatherman.night_message'
