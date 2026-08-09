@@ -6,7 +6,7 @@
  * conversations from cache:
  *
  *   'user'     -- Human typed the message in the chat input
- *   'system'   -- AiPeriodicService timer triggered the message automatically
+ *   'system'   -- Periodic system prompt timer triggered the message automatically
  *
  * @module enum/aiChatMessageOrigin
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>

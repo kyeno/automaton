@@ -197,6 +197,15 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
+        // Suppress execution during configured silent period (before any work begins)
+        if (this.isInSilentPeriod()) {
+            this.log(
+                `Suppressed during silent period (${triggerSource})`,
+                'debug'
+            )
+            return
+        }
+
         let context
         try {
             context = await this.buildContext()

@@ -82,11 +82,9 @@ max_conversation_turns: 15   # Max message turns retained in context
 | `conversation_ttl_sec` | After this period of inactivity, conversation history is purged from Redis |
 | `max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
 
-#### Periodic AI Messenger
+#### Periodic AI Messages
 
-The built-in **AI Periodic Service** periodically sends a localized prompt to the AI at regular intervals, triggering the full processing flow: tool execution → AI response → TTS (if enabled). In the UI, these trigger messages appear with a yellow `<system>` prefix instead of `<you>`.
-
-This service starts alongside AiAssistant during bootstrap and is fully independent of the AutomationContainer — no YAML companion file or custom JavaScript class is needed.
+The `ai_periodic_message` section configures a periodic system prompt that is sent to the AI at regular intervals. Each tick triggers the full processing flow: tool execution → AI response → TTS (if enabled). In the UI, these messages appear with a yellow `<system>` prefix instead of `<you>`. System-originated messages are excluded from conversation caching so they don't extend Redis TTLs indefinitely.
 
 ```yaml
 ai_periodic_message:
@@ -94,7 +92,9 @@ ai_periodic_message:
                         # Set to 0 to disable entirely
 ```
 
-On startup, the service logs detailed diagnostics showing its enabled/disabled state, resolved interval, AI availability, and whether the i18n message was found. The message itself is loaded from the i18n bundle (`periodic.message` key), so it respects the configured language. To customize what the AI is asked about periodically, edit the `periodic.message` value in your `etc/i18n/{locale}/ai.yaml`.
+On startup, detailed diagnostics show its enabled/disabled state, resolved interval, AI availability, and whether the i18n message was found. The message itself is loaded from the i18n bundle (`periodic.message` key), so it respects the configured language. To customize what the AI is asked about periodically, edit the `periodic.message` value in your `etc/i18n/{locale}/ai.yaml`.
+
+For rule-based alternatives using the automation engine (e.g., weather announcements with sensor interpolation), see [Example Automations](./example-automations.md).
 
 ### UI Section
 
@@ -256,6 +256,8 @@ triggers_network:         # Network hosts that trigger re-evaluation
 
 timer_interval_ms: 60000  # How often to evaluate rules (milliseconds)
 
+silence_between: "0500-0900"   # Optional: suppress execution between these local times (HHmm-HHmm format). Supports overnight ranges like "2300-0600".
+
 rules:
   - name: 'Human-readable rule name'
     conditions:
@@ -367,7 +369,7 @@ formatting:
   thousand_separator: " "
 
 periodic:
-  message: "What is the temperature and humidity outside?..."  # Sent by AI Periodic Service on each tick
+  message: "What is the temperature and humidity outside?..."  # Periodic prompt sent at configured intervals
 
 ui:
   default_greeting: "Hello! How can I help?"

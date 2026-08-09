@@ -38,7 +38,7 @@ Messages carry an `_origin` field indicating their authorship:
 | Origin | Value | Source | Cached? |
 |--------|-------|--------|---------|
 | **USER** | `'user'` | Human typed message in chat input | Yes |
-| **SYSTEM** | `'system'` | AiPeriodicService timer tick | **No** |
+| **SYSTEM** | `'system'` | Periodic system prompt timer tick | **No** |
 
 The origin enum is defined in `src/enum/aiChatMessageOrigin.js`:
 
@@ -62,7 +62,7 @@ This ensures the entire system-originated exchange can be filtered out as a unit
 
 ### Why System Messages Are Excluded from Cache
 
-The AI Periodic Service (`src/service/aiPeriodicService.js`) sends automated prompts to the AI at regular intervals (default: every 15 minutes). Before this change, each periodic tick would call `#persistConversation()`, resetting the Redis TTL indefinitely — effectively making conversations never expire while Automaton was running.
+The periodic message timer sends automated prompts to the AI at regular intervals (default: every 15 minutes). Before this change, each periodic tick would call `#persistConversation()`, resetting the Redis TTL indefinitely — effectively making conversations never expire while Automaton was running.
 
 Now there are **two** layers of protection:
 
@@ -100,7 +100,7 @@ User types message in chat input
 ### System-Originated Exchange (Not Cached)
 
 ```
-AiPeriodicService timer tick fires
+Periodic system prompt timer fires
   │
   ├─ processMessage(prompt, { origin: 'system' })
   ├─ Push user message to #messages (_origin: 'system')
@@ -146,6 +146,5 @@ To make conversations expire faster, reduce `conversation_ttl_sec`. To prevent p
 |-----------|-----------|
 | AiAssistant (orchestrator, persistence logic) | `src/ai/aiAssistant.js` |
 | ChatMessageOrigin enum | `src/enum/aiChatMessageOrigin.js` |
-| AiPeriodicService (system message timer) | `src/service/aiPeriodicService.js` |
 | CacheService (Redis client) | `src/service/cacheService.js` |
 | AiWindow (UI display) | `src/ui/windows/aiWindow.js` |

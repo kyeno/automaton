@@ -22,7 +22,6 @@
 
 ## AI
 - Do not return .00 values for AI tool calls; round them up!
-- Update AI periodic messenger to support js-cron and different messages at different times; with those messages beying keyed in i18n
 - When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes

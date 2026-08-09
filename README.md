@@ -49,6 +49,7 @@ For detailed setup instructions, see [Installation & Requirements](doc/installat
 | [Architecture](doc/architecture.md) | Project structure, core concepts, CLI usage, testing |
 | [AI Conversation Caching](doc/ai-conversation-caching.md) | Conversation persistence, TTL, origin filtering |
 | [AI vs Human Differentiation](doc/ai-human-differentiation.md) | Echo detection, grace periods, command suppression |
+| [Example Automations](doc/example-automations.md) | Included example automations and how they work |
 | [TODO & Roadmap](doc/TODO.md) | Planned features and known issues |
 
 ### Generated API Reference

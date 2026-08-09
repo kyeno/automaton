@@ -10,6 +10,7 @@
 # Copy this file to "tts-weatherman.yaml" and customize for your home.
 
 timer_interval_ms: 900000   # 15 minutes (set to 0 to disable timer)
+silence_between: null             # Optional: suppress execution between these local times (HHmm-HHmm format), e.g. "0230-0930"
 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI

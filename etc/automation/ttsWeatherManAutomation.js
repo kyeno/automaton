@@ -76,6 +76,15 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
+        // Suppress execution during configured silent period (before any work begins)
+        if (this.isInSilentPeriod()) {
+            this.log(
+                `Suppressed during silent period (${triggerSource})`,
+                'debug'
+            )
+            return
+        }
+
         // Reload bundle fresh each run (interpolation is runtime, not cached)
         this.#bundle = this.#loadWeathermanBundle()
         if (!this.#bundle) {

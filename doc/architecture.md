@@ -13,6 +13,7 @@
 │   ├── ai-human-differentiation.md # AI echo vs human interaction classification
 │   ├── architecture.md         # This file — project structure and design
 │   ├── configuration.md        # Comprehensive configuration guide
+│   ├── example-automations.md  # Included example automations (ttsWeatherMan, etc.)
 │   ├── installation.md         # Installation & requirements
 │   └── TODO.md                 # Roadmap and known issues
 ├── etc/                        # Configuration directory
@@ -95,3 +96,10 @@ Run the full test suite (syntax checks + instantiation tests):
 
 ```bash
 npm test
+```
+
+---
+
+## Note on Development Process
+
+Many parts of this codebase — particularly boilerplate scaffolding, utility functions, and documentation — were generated with guidance from open-weight coding LLMs. The overall architecture, design decisions, naming conventions, and all critical logic remain under human direction. If something looks unusual or overly verbose, it may be an artifact of this collaborative workflow rather than intentional design.

@@ -223,6 +223,52 @@ export default class AutomationBase {
     }
 
     /**
+     * Check whether the current local time falls within the configured silent period.
+     * The config key is `silence_between` with format `"HHmm-HHmm"` (e.g., "0500-0900"
+     * or overnight "2300-0600"). Returns false when no config is set so that existing
+     * automations are unaffected. Invalid formats produce a one-time warning and fall
+     * through to normal behaviour (fail-open).
+     *
+     * @returns {boolean} true if execution should be suppressed right now
+     */
+    isInSilentPeriod() {
+        const silenceConfig = this.config?.silence_between
+        if (!silenceConfig || typeof silenceConfig !== 'string') return false
+
+        // Parse "HHmm-HHmm" — e.g. "0500-0900", "2300-0600"
+        const match = String(silenceConfig).match(/^(\d{4})-(\d{4})$/)
+        if (!match) {
+            LoggerService.warn(
+                `Invalid silence_between format "${silenceConfig}", expected "HHmm-HHmm". Ignoring.`,
+                `Auto:${this.name}`
+            )
+            return false
+        }
+
+        const parseToMinutes = (hhmm) => {
+            const hours = parseInt(hhmm.slice(0, 2), 10)
+            const minutes = parseInt(hhmm.slice(2, 4), 10)
+            return hours * 60 + minutes
+        }
+
+        const startMinutes = parseToMinutes(match[1])
+        const endMinutes   = parseToMinutes(match[2])
+
+        const now = new Date()
+        const currentMinutes = now.getHours() * 60 + now.getMinutes()
+
+        if (startMinutes < endMinutes) {
+            // Normal range: e.g., 0500-0900 → between 5 AM and 9 AM
+            return currentMinutes >= startMinutes && currentMinutes < endMinutes
+        } else if (startMinutes > endMinutes) {
+            // Overnight wrap: e.g., 2300-0600 → from 11 PM to 6 AM next day
+            return currentMinutes >= startMinutes || currentMinutes < endMinutes
+        }
+        // start === end means the window covers either all or no time — treat as no-op.
+        return false
+    }
+
+    /**
      * Check whether a device is under a human-interaction cooldown using Redis TTL.
      * The cooldown key (`cooldown:<slug>`) is set by DeviceBase when it detects
      * a genuine human-initiated state change outside the grace period. It auto-
