@@ -5,6 +5,8 @@
 - Improve JSDoc generation (it's very messy and buggy)
 - Weatherman: Add a line to AI prompt to *never* re-use previously generated
   sentence and ALWAYS be creative and fresh.
+- BUG: {"PID":1371047,"context":"MqttService","level":"debug","message":"Client cleanup during reconnect: this[#client].destroy is not a function","timestamp":"2026-08-09T09:58:10.472Z"}
+
 
 ## Architecture
 - Prefix main config file paths with respective sections!
@@ -52,6 +54,8 @@ personas:
 ## BitchX UI
 
 - BUG: When running in `screen` and typing a long message it produces really weird results
+- BUG: When detaching screen in a bigger terminal window and reattaching in a
+  smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
 - Unify cache read messages vs real time reads on AiWindow:
   cache: [05:58:26am] * AI checked state of Balkon Temperatura
