@@ -310,7 +310,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      *   - devices: ['name1', 'name2'] -- returns Map keyed by name
      * Subclasses may override for custom device structures.
      * 
-     * @returns {Map<string, DeviceBase>} map of target key → device
+     * @returns {Map<string, DeviceBase>} map of target key -> device
      */
     loadDevices() {
         const result = new Map()

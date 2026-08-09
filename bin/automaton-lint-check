@@ -46,6 +46,7 @@ console.log('\n── Lint Checks ──\n')
 
 const lintScripts = [
   'test-jsdoc-coverage.js',
+  'test-no-illegal-unicode.js',
 ]
 
 for (const script of lintScripts) {

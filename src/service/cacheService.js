@@ -2,7 +2,7 @@
  * Cache service backed by Redis.
  *
  * Provides JSON-serialized get/set accessors with configurable TTL and
- * automatic reconnection via exponential backoff (1 s → 30 s cap).
+ * automatic reconnection via exponential backoff (1 s -> 30 s cap).
  * All lifecycle events (connect, ready, reconnecting, error, end) are logged.
  *
  * Security note: `REDIS_URL` may contain credentials -- do not log the raw URL.

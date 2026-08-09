@@ -100,7 +100,7 @@ class ChannelManager {
     }
 
     /**
-     * Build an id→shortcut map for legacy status bar activity tracking.
+     * Build an id->shortcut map for legacy status bar activity tracking.
      * Example: { logs: 1, device: 2, ai: 3 }
      * @returns {Object}
      */

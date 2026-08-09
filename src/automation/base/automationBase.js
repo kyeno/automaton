@@ -235,7 +235,7 @@ export default class AutomationBase {
         const silenceConfig = this.config?.silence_between
         if (!silenceConfig || typeof silenceConfig !== 'string') return false
 
-        // Parse "HHmm-HHmm" — e.g. "0500-0900", "2300-0600"
+        // Parse "HHmm-HHmm" -- e.g. "0500-0900", "2300-0600"
         const match = String(silenceConfig).match(/^(\d{4})-(\d{4})$/)
         if (!match) {
             LoggerService.warn(
@@ -258,13 +258,13 @@ export default class AutomationBase {
         const currentMinutes = now.getHours() * 60 + now.getMinutes()
 
         if (startMinutes < endMinutes) {
-            // Normal range: e.g., 0500-0900 → between 5 AM and 9 AM
+            // Normal range: e.g., 0500-0900 -> between 5 AM and 9 AM
             return currentMinutes >= startMinutes && currentMinutes < endMinutes
         } else if (startMinutes > endMinutes) {
-            // Overnight wrap: e.g., 2300-0600 → from 11 PM to 6 AM next day
+            // Overnight wrap: e.g., 2300-0600 -> from 11 PM to 6 AM next day
             return currentMinutes >= startMinutes || currentMinutes < endMinutes
         }
-        // start === end means the window covers either all or no time — treat as no-op.
+        // start === end means the window covers either all or no time -- treat as no-op.
         return false
     }
 

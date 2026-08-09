@@ -1,7 +1,7 @@
 /**
  * TTS WeatherMan Automation.
  * Rule-based weather announcer that builds a speech message from a base sentence
- * and condition-matched additions, then routes through AI → TTS pipeline (or
+ * and condition-matched additions, then routes through AI -> TTS pipeline (or
  * direct TTS if AI unavailable). Supports {{ DeviceName.property }} string
  * interpolation for live sensor data in i18n strings.
  *
@@ -68,7 +68,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     /**
      * Custom execute that builds a speech message and sends it to TTS.
      * Overrides the parent's device-targeting flow entirely since this
-     * automation has no device targets — only TTS output.
+     * automation has no device targets -- only TTS output.
      *
      * @param {{trigger?: string}|null} [triggerData]
      */
@@ -120,7 +120,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
                     if (ruleText) {
                         const interpolated = this.#interpolate(ruleText, context)
                         message += ' ' + interpolated
-                        this.log(`Rule matched: "${rule.name}" → appended sentence`, 'debug')
+                        this.log(`Rule matched: "${rule.name}" -> appended sentence`, 'debug')
                     }
                 }
             } catch (error) {
@@ -128,12 +128,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
-        // Route output through AI→TTS or direct TTS
+        // Route output through AI->TTS or direct TTS
         await this.#speak(message)
     }
 
     /**
-     * No device targets for this automation — returns empty Map so parent
+     * No device targets for this automation -- returns empty Map so parent
      * execute() short-circuits gracefully. We override execute() entirely
      * but keep this for compatibility.
      * @returns {Map<string, never>}
@@ -183,7 +183,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /**
      * Resolve a dotted i18n key against the loaded weatherman bundle.
-     * Example: 'weatherman.hot_warning' → bundle['hot_warning']
+     * Example: 'weatherman.hot_warning' -> bundle['hot_warning']
      * The first segment ('weatherman') is stripped as the namespace prefix.
      * @param {string} key - Dot-separated key (e.g., "weatherman.base")
      * @param {*} fallback - Default value if key not found
@@ -216,7 +216,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         let result = text.replace(TIME_INTERPOLATION_REGEX, (_match, keyword) => {
             switch (keyword) {
                 case 'time': return I18nLoader.formatTime()
-                default:     return `{% ${keyword} %}`   // unknown → pass through unchanged
+                default:     return `{% ${keyword} %}`   // unknown -> pass through unchanged
             }
         })
 
@@ -295,7 +295,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
                     EventBus.emit('ai:periodicResponse', { text: response })
                 }
 
-                this.log('Weather update sent via AI→TTS pipeline', 'debug')
+                this.log('Weather update sent via AI -> TTS pipeline', 'debug')
             } catch (error) {
                 this.log(`AI processing failed: ${error.message}`, 'error')
                 // Fallback to direct TTS on AI failure

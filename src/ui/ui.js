@@ -270,8 +270,8 @@ class Ui {
     /**
      * Handle commands typed at the bottom prompt.
      * Routes input based on the active window's inputMode:
-     *   - 'chat'    → send directly to AI (no log)
-     *   - 'command' → log + auto-prefix with / as slash-command
+     *   - 'chat'    -> send directly to AI (no log)
+     *   - 'command' -> log + auto-prefix with / as slash-command
      * @param {string} cmd - Raw command string from the input component
      */
     #handleCommand(cmd) {

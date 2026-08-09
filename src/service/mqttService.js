@@ -66,7 +66,7 @@ const COMMAND_BATCH_SIZE = 2
 /**
  * Delay in milliseconds between consecutive batches of outgoing commands.
  * Zigbee herdsman transaction queue needs ~200-400ms per round-trip
- * (request → acknowledgment through mesh). 300ms is a safe middle ground.
+ * (request -> acknowledgment through mesh). 300ms is a safe middle ground.
  * @type {number}
  */
 const INTER_BATCH_DELAY_MS = 300

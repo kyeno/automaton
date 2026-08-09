@@ -137,7 +137,7 @@ class STtsService {
      */
     async #loadTemplate() {
         const locale = I18nLoader.getLanguage()
-        // Resolve short code → BCP 47 locale using I18nLoader's internal mapping
+        // Resolve short code -> BCP 47 locale using I18nLoader's internal mapping
         // Since we don't expose it publicly yet, reconstruct the path:
         const localeDir = this.#resolveLocale(locale)
         const filePath  = path.join(I18N_ROOT, localeDir, 'tts.yaml')

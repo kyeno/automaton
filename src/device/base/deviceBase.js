@@ -1,7 +1,7 @@
 /**
  * Abstract base class for all Zigbee devices.
  *
- * Provides Origin-based state provenance (`unknown` → `automation` | `human`)
+ * Provides Origin-based state provenance (`unknown` -> `automation` | `human`)
  * via {@link CommandCorrelator} causality tokens, MQTT subscription lifecycle
  * management, Redis-backed state persistence, and unified logging helpers.
  *
@@ -283,7 +283,7 @@ export default class DeviceBase {
     #subscriptions = []
     /** Set of already-subscribed topic strings (prevents double-subscription) */
     #subscribedTopics = new Set()
-    /** Custom event listeners map (eventType → callback[]) */
+    /** Custom event listeners map (eventType -> callback[]) */
     #eventListeners = new Map()
 
     // -- Constructor ------------------------------------------------------

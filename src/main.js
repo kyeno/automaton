@@ -133,7 +133,7 @@ async function gracefulDeath(reason, errorLevel = 0) {
 
     try {
         // ---------------------------------------------------------------
-        // Phase 1 -- Stop high-level logic (interactions → automations)
+        // Phase 1 -- Stop high-level logic (interactions -> automations)
         // These may reference devices and each-other; halt them first so
         // no new device commands or automation rules fire during teardown.
         // ---------------------------------------------------------------

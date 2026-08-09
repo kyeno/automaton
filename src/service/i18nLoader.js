@@ -33,7 +33,7 @@ const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
 /** Default fallback language. */
 const DEFAULT_LANGUAGE = 'pl'
 
-/** Short-code → BCP 47 locale mapping (e.g., config "pl" → directory "pl_PL"). */
+/** Short-code -> BCP 47 locale mapping (e.g., config "pl" -> directory "pl_PL"). */
 const LOCALE_MAP = { pl: 'pl_PL', en: 'en_US' }
 
 /** Supported short-language codes as written in automaton.yaml ai_language. */
@@ -136,7 +136,7 @@ class SI18nLoader {
      * @returns {string} Formatted number string respecting locale conventions
      */
     formatNumber(value, fractionDigits = 2) {
-        // Convert underscore to hyphen for BCP 47 compliance (pl_PL → pl-PL)
+        // Convert underscore to hyphen for BCP 47 compliance (pl_PL -> pl-PL)
         const locale = (LOCALE_MAP[this.#language] || this.#language).replace('_', '-')
         try {
             let formatted = new Intl.NumberFormat(locale, {
@@ -180,7 +180,7 @@ class SI18nLoader {
 
     /**
      * Resolve a dotted key path against the loaded AI language bundle.
-     * Example: t('sections.devices_header') → "=== DOSTĘPNE URZĄDZENIA ==="
+     * Example: t('sections.devices_header') -> "=== DOSTĘPNE URZĄDZENIA ==="
      *
      * @param {string} key - Dot-separated key path
      * @param {string} [fallback] - Value returned if key not found

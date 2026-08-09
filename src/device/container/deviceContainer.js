@@ -52,7 +52,7 @@ const BRIDGE_DEVICE_LIST_TIMEOUT_MS = 10_000
  * Device repository and autoloader.
  *
  * Discovers Zigbee devices through the Bridge, resolves their type class
- * (instance override → config category → DummyDevice fallback), instantiates
+ * (instance override -> config category -> DummyDevice fallback), instantiates
  * them, wires MQTT communication, and initializes cached state.
  */
 class SDeviceContainer {
