@@ -66,8 +66,13 @@ class AiWindow extends BaseWindow {
     show() {
         super.show()
         if (!this.#welcomeShown) {
-            this.#showWelcome()
             this.#welcomeShown = true
+            // Only show welcome/join sequence if no pre-existing content
+            // (e.g., from tts-weatherman firing while another window was active).
+            // Otherwise the welcome would appear after real conversation content.
+            if (this.isEmpty) {
+                this.#showWelcome()
+            }
         }
     }
 

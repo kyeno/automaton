@@ -2,13 +2,14 @@
 
 ## General
 - Postpone automations so they don't fire all at once
-- Remove all UTF-8 that's not diacritic chars; add a "linter" step that checks for this
 - Improve JSDoc generation (it's very messy and buggy)
+- Weatherman: Add a line to AI prompt to *never* re-use previously generated
+  sentence and ALWAYS be creative and fresh.
 
 ## Architecture
 - Prefix main config file paths with respective sections!
 - CONSIDER naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
-- Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
+- LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 
 ### MQTT & Zigbee Bridge
 
@@ -21,14 +22,11 @@
   Day-period methods (`isMorning()`, `isNoon()`, etc.) and season methods are generated via `for...of` loops assigning to `Temporal.prototype`. IDEs may not autocomplete these, and minifiers could interfere. Document generated methods in JSDoc or list them explicitly.
 
 ## AI
-- Do not return .00 values for AI tool calls; round them up!
+- Do not return .00 values for AI tool calls; round them up! (Consider a library
+  for this)
 - When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
-- Unify cache read messages vs real time reads on AiWindow:
-  cache: [05:58:26am] * AI checked state of Balkon Temperatura
-   live: [06:17:15am] * AI performed STATE on Balkon Temperatura
-- Modify current TTS weather report to build message for AI locally, including sensor values and suggestions to warn about conditions, use AI only to construct nice sentence
 
 ### Assistant personalization
 personas:
@@ -55,6 +53,10 @@ personas:
 
 - BUG: When running in `screen` and typing a long message it produces really weird results
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
+- Unify cache read messages vs real time reads on AiWindow:
+  cache: [05:58:26am] * AI checked state of Balkon Temperatura
+   live: [06:17:15am] * AI performed STATE on Balkon Temperatura
+- Add window for TTS
 - Consistent color palette across all windows (status bar, device window)
 - `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - Proper nick highlighting (own messages emphasized in chat)

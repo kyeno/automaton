@@ -235,6 +235,12 @@ class BaseWindow {
     getScrollOffset() { return this.#scrollOffset }
 
     /**
+     * Check if buffer has no entries.
+     * @returns {boolean} true when buffer is empty
+     */
+    get isEmpty() { return this.#buffer.length === 0 }
+
+    /**
      * Check if window is currently in backscrolled state (not following tail).
      * @returns {boolean}
      */
