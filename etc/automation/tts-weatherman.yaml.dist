@@ -1,4 +1,4 @@
-# ttsWeatherman Configuration Template
+# ttsWeatherMan Configuration Template
 # Rule-based TTS weather announcer with sensor data interpolation.
 #
 # Builds a speech message from a base sentence and condition-matched additions,
@@ -6,6 +6,9 @@
 #
 # Sensor values can be interpolated into i18n strings using {{ DeviceName.property }}
 # syntax (e.g., "{{ Outdoor Temperature.temperature }}" resolves to live sensor data).
+#
+# When multiple rules match, only the one with the highest priority fires.
+# Default priority is 0 if not specified. Higher number = higher precedence.
 #
 # Copy this file to "tts-weatherman.yaml" and customize for your home.
 
@@ -21,20 +24,60 @@ sensors:
   humidity: 'Outdoor Temperature'          # Same device as temp (combined sensor)
   pressure: 'Kitchen Temperature'           # Separate barometer (may vary)
 
-triggers_zigbee:
-  - 'Outdoor Luminance'
-  - 'Outdoor Temperature'
-  - 'Kitchen Temperature'
-
 rules:
-  - name: 'Hot weather warning'
+  - name: 'Warm day'
+    priority: 1
     conditions:
       time-of-day: [morning, noon, afternoon]
-      temperature: { gte: 30 }
-    sentence: 'weatherman.hot_warning'
+      temperature: { lte: 25, gte: 18 }
+      humidity: { lte: 55 }
+    sentence: 'weatherman.soothing_warm_day'
 
-  - name: 'Night closing'
+  - name: 'Hot day'
+    priority: 2
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      temperature: { gt: 25 }
+    sentence: 'weatherman.warning_hot_day'
+
+  - name: 'Hot and humid day'
+    priority: 3
+    conditions:
+      temperature: { gte: 26 }
+      humidity: { gte: 50 }
+    sentence: 'weatherman.warning_stay_at_home'
+
+  - name: 'Too hot day'
+    priority: 4
+    conditions:
+      temperature: { gte: 29 }
+    sentence: 'weatherman.warning_stay_at_home'
+
+  - name: 'Apocalypse'
+    priority: 5
+    conditions:
+      temperature: { gte: 30 }
+      humidity: { gte: 55 }
+    sentence: 'weatherman.warning_apocalypse'
+
+  - name: 'Humid night'
+    priority: 3
     conditions:
       time-of-day: [evening, night]
-      illuminance: { lte: 15 }
-    sentence: 'weatherman.night_message'
+      temperature: { gte: 18 }
+      humidity: { gte: 65 }
+    sentence: 'weatherman.warning_humid_night'
+
+  - name: 'Chill evening'
+    priority: 1
+    conditions:
+      time-of-day: [evening, night]
+      temperature: { lte: 18 }
+    sentence: 'weatherman.warning_chill_night'
+
+  - name: 'Warm evening'
+    priority: 2
+    conditions:
+      time-of-day: [evening, night]
+      temperature: { gt: 18, lte: 20 }
+    sentence: 'weatherman.soothing_warm_night'

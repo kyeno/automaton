@@ -5,7 +5,13 @@
 #
 # Copy this file to "weatherman.yaml" and customize sentences for your home.
 
-base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperatura.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperatura.humidity }} procent, a oświetlenie to {{ Outdoor Luminance.illuminance }} luksów.'
-ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób: '
+base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperatura.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperatura.humidity }} procent, a ciśnienie atmosferyczne to {{ Kuchnia Temperatura.pressure }} hektopaskali.'
+ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie: '
 hot_warning: 'Uwaga, dziś jest bardzo gorąco!'
-night_message: 'Zima i ciemno za oknem, czas na odpoczynek.'
+warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
+warning_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'
+warning_apocalypse: 'UWAGA: Na zewnątrz panuje termiczna apokalipsa! Zasłoń rolety, zamknij okna, ustaw mocną klimatyzację i absolutnie nie wychodź z domu!'
+warning_humid_night: 'UWAGA: Wilgotność na zewnątrz jest zbyt duża, by swobodnie oddychać.'
+warning_chill_night: 'Wychodząc na spacer załóż bluzę lub lekką kurtkę.'
+soothing_warm_day: 'Pogoda jest doskonała! Idealna na spacer, lub pracę na zewnątrz!'
+soothing_warm_night: 'Jest przepiękna noc. Można wyjść w krótkich spodenkach i koszulce by podziwiać gwiazdy.'

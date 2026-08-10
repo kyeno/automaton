@@ -270,6 +270,41 @@ rules:
       alias_b: CLOSE
 ```
 
+### Silence Periods (`silence_between`)
+
+The optional `silence_between` key defines a time window during which an automation's `execute()` call is suppressed entirely. It applies per-automation file — each `.yaml` can have its own independent schedule.
+
+```yaml
+silence_between: "HHmm-HHmm"   # e.g., "0500-0900" or overnight "2300-0600"
+```
+
+#### Format
+
+Times use compact four-digit **NATO-style** notation without separators: hours followed by minutes. A dash separates start from end.
+
+| Example | Meaning |
+|---------|---------|
+| `"0500-0900"` | Suppress from 5:00 AM until 8:59 AM |
+| `"2300-0600"` | Suppress from 11:00 PM through midnight into 5:59 AM next day |
+| `"0730-0815"` | Suppress from 7:30 AM to 8:14 AM |
+
+Start time is **inclusive** (execution at exactly that minute is blocked). End time is **exclusive** (execution resumes at the end boundary).
+
+#### Scope
+
+Silence suppression blocks **all trigger sources**, not just timer ticks. If a zigbee sensor fires an MQTT event or a network host comes online during the silent window, the automation will still be suppressed and log `Suppressed during silent period` at debug level. This differs from setting `timer_interval_ms: 0`, which only disables periodic execution while leaving event-driven triggers active.
+
+#### Error Handling
+
+Invalid formats produce a one-time warning in logs and fall through to normal behavior (fail-open). Examples of invalid input treated as "no silence":
+
+- `"05:00-09:00"` — colons instead of compact digits
+- `"50-90"` — too few characters
+- `null` / number / non-string type
+- `"1200-1200"` — start equals end (treated as no-op)
+
+If omitted entirely, automations run normally with no silence period applied.
+
 ### Condition Operators
 
 | Operator | Meaning | Example |

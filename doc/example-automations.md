@@ -12,40 +12,78 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 
 1. On each timer tick, the automation loads its locale-specific i18n bundle (`etc/i18n/{locale}/weatherman.yaml`).
 2. A base sentence (e.g., *"It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius..."*) is resolved — placeholders are replaced with real-time sensor values pulled from Zigbee devices via MQTT.
-3. Condition rules are evaluated against the current context (time of day, temperature thresholds, illuminance levels, etc.). Matching rules append additional sentences (e.g., *"Warning, it is very hot today!"* when outdoor temp ≥ 30 °C during daytime hours).
+3. Condition rules are evaluated against the current context built dynamically from all sensors defined in `config.sensors`. When multiple rules match simultaneously, only the one with the highest `priority` fires (higher number wins; default is 0).
 4. If an AI assistant is available, the built message is prefixed with a creative instruction key (`sentence_ai_prefix`) and sent through `AiAssistant.processMessage()` for natural-language rewriting before being spoken aloud. Otherwise, the raw interpolated text goes straight to TTS.
 5. System-originated messages appear in the UI with a yellow `<system>` prefix and are excluded from conversation caching so they don't extend Redis TTLs indefinitely.
+
+### Dynamic Sensor System
+
+The base class reads every entry under `config.sensors` at runtime. Each entry maps a logical name → Zigbee device name, where the logical name also serves as both:
+- The property key extracted from the device's state object (e.g., `{ humidity: 'Balkon Temperatura' }` reads `state.humidity`)
+- The condition key used in rule evaluation (e.g., `humidity: { gte: 50 }`)
+
+Adding new sensor types requires **zero code changes** — just add them to the YAML config. Supported numeric operators: `lt`, `lte`, `gt`, `gte`.
 
 ### Configuration File
 
 Located at `etc/automation/tts-weatherman.yaml`:
 
 ```yaml
-timer_interval_ms: 900000   # Milliseconds between runs (set to 0 to disable)
+timer_interval_ms: 3600000   # Milliseconds between runs (set to 0 to disable)
+silence_between: "0230-1030" # Suppress execution during this time window
 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 
-# Sensor mappings used for condition evaluation
+# All sensors are read dynamically — any key here becomes available for conditions
 sensors:
   illuminance: 'Balkon Swiatlo'
   temperature: 'Balkon Temperatura'
-  humidity: 'Balkon Temperatura'
-  pressure: 'Kuchnia Temperatura'
+  humidity: 'Balkon Temperatura'          # Same combined sensor as temp
+  pressure: 'Kuchnia Temperatura'         # Separate barometer device
 
-# Condition rules — matched sentences are appended to the base sentence
 rules:
-  - name: 'Hot weather warning'
+  - name: 'Warm day'
+    priority: 1                           # Low — comfort advice only
     conditions:
       time-of-day: [morning, noon, afternoon]
-      temperature: { gte: 30 }
-    sentence: 'weatherman.hot_warning'
+      temperature: { lte: 25, gte: 18 }
+      humidity: { lte: 55 }
+    sentence: 'weatherman.soothing_warm_day'
 
-  - name: 'Night closing'
+  - name: 'Hot day'
+    priority: 2                           # Medium — generic heat warning
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      temperature: { gt: 25 }
+    sentence: 'weatherman.warning_hot_day'
+
+  - name: 'Too hot day'
+    priority: 3                           # High — extreme heat regardless of humidity
+    conditions:
+      temperature: { gte: 29 }
+    sentence: 'weatherman.warning_stay_at_home'
+
+  - name: 'Apocalypse'
+    priority: 4                           # Highest — overrides everything
+    conditions:
+      temperature: { gte: 30 }
+      humidity: { gte: 55 }
+    sentence: 'weatherman.warning_apocalypse'
+
+  - name: 'Chill evening'
+    priority: 1
     conditions:
       time-of-day: [evening, night]
-      illuminance: { lte: 15 }
-    sentence: 'weatherman.night_message'
+      temperature: { lte: 18 }
+    sentence: 'weatherman.warning_chill_night'
+
+  - name: 'Warm evening'
+    priority: 1
+    conditions:
+      time-of-day: [evening, night]
+      temperature: { gt: 18, lte: 20 }
+    sentence: 'weatherman.soothing_warm_night'
 ```
 
 ### Interpolation Syntax
@@ -65,18 +103,28 @@ Weather speech templates live in per-locale files at `etc/i18n/{locale}/weatherm
 
 **English (`en_US/weatherman.yaml`):**
 ```yaml
-base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius...'
-ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely: '
-hot_warning: 'Warning, it is very hot today!'
-night_message: 'It is cold and dark outside, time to rest.'
+base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
+warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
+warning_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
+warning_apocalypse: 'WARNING: Thermal apocalypse outside! Close blinds, seal windows, crank up the AC, and do not leave the house under any circumstances!'
+warning_humid_night: 'WARNING: Humidity levels are too high for comfortable breathing outdoors.'
+warning_chill_night: 'Grab a sweater or light jacket before heading out.'
+soothing_warm_day: 'The weather is perfect! Ideal for a walk or working outside!'
+soothing_warm_night: 'Beautiful night out there. You could step outside in shorts and a t-shirt to enjoy the stars.'
 ```
 
 **Polish (`pl_PL/weatherman.yaml`):**
 ```yaml
-base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Balkon Temperatura.temperature }} stopni Celsjusza...'
-ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób: '
-hot_warning: 'Uwaga, dziś jest bardzo gorąco!'
-night_message: 'Zima i ciemno za oknem, czas na odpoczynek.'
+base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Balkon Temperatura.temperature }} stopni Celsjusza, wilgotność to {{ Balkon Temperatura.humidity }} procent, a ciśnienie atmosferyczne to {{ Kuchnia Temperatura.pressure }} hektopaskali.'
+ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie: '
+warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
+warning_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'
+warning_apocalypse: 'UWAGA: Na zewnątrz panuje termiczna apokalipsa! Zasłoń rolety, zamknij okna, ustaw mocną klimatyzację i absolutnie nie wychodź z domu!'
+warning_humid_night: 'UWAGA: Wilgotność na zewnątrz jest zbyt duża, by swobodnie oddychać.'
+warning_chill_night: 'Wychodząc na spacer załóż bluzę lub lekką kurtkę.'
+soothing_warm_day: 'Pogoda jest doskonała! Idealna na spacer, lub pracę na zewnątrz!'
+soothing_warm_night: 'Jest przepiękna noc. Można wyjść w krótkich spodenkach i koszulce by podziwiać gwiazdy.'
 ```
 
 To add support for another language, create a new `weatherman.yaml` in your locale directory with translated keys matching those used in the automation's YAML config.

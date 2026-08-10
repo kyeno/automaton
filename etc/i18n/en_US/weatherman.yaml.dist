@@ -1,11 +1,17 @@
 # WeatherMan -- English Language Bundle
 # -------------------------------------
-# Speech templates for the ttsWeatherman automation.
+# Speech templates for the ttsWeatherMan automation.
 # Supports {{ DeviceName.property }} interpolation for live sensor data.
 #
 # Copy this file to "weatherman.yaml" and customize sentences for your home.
 
-base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and illuminance is {{ Outdoor Luminance.illuminance }} lux.'
-ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely: '
+base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
 hot_warning: 'Warning, it is very hot today!'
-night_message: 'It is cold and dark outside, time to rest.'
+warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
+warning_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
+warning_apocalypse: 'WARNING: Thermal apocalypse outside! Close blinds, seal windows, crank up the AC, and do not leave the house under any circumstances!'
+warning_humid_night: 'WARNING: Humidity levels are too high for comfortable breathing outdoors.'
+warning_chill_night: 'Grab a sweater or light jacket before heading out.'
+soothing_warm_day: 'The weather is perfect! Ideal for a walk or working outside!'
+soothing_warm_night: 'Beautiful night out there. You could step outside in shorts and a t-shirt to enjoy the stars.'

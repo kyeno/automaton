@@ -83,48 +83,40 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @returns {Promise<{illuminance: number|null, temperature: number|null, timeOfDay: string}>}
      */
     async buildContext() {
-        // Illuminance -- read from device configured in sensors.illuminance
-        let illuminance = null
-        const sensorName = this.config.sensors?.illuminance
-        if (sensorName) {
-            const sensor = DeviceContainer.findByName(sensorName)
-            if (sensor) {
-                const state = sensor.getStateLast()
-                if (state && typeof state.illuminance === 'number') {
-                    illuminance = state.illuminance
-                } else {
-                    this.log(`Could not retrieve illuminance from "${sensorName}"`, 'warn')
+        // Dynamically read every sensor defined in config.sensors.
+        // Each entry maps a logical name -> Zigbee device name.
+        // The logical name also serves as the property key on the device's state object.
+        // E.g., { humidity: 'Balkon Temperatura' } reads state.humidity from that device.
+        const ctx = {}
+        const sensors = this.config.sensors ?? {}
+
+        for (const [sensorKey, deviceName] of Object.entries(sensors)) {
+            let value = null
+            try {
+                const sensor = DeviceContainer.findByName(deviceName)
+                if (!sensor) {
+                    this.log(`Sensor "${deviceName}" not found in container`, 'warn')
+                    continue
                 }
-            } else {
-                this.log(`Illuminance sensor "${sensorName}" not found in container`, 'warn')
-            }
-        }
-
-        // Temperature -- optional, warn if configured but unreachable
-        let temperature = null
-        const tempSensorName = this.config.sensors?.temperature
-        if (tempSensorName) {
-            const sensor = DeviceContainer.findByName(tempSensorName)
-            if (sensor) {
                 const state = sensor.getStateLast()
-                if (state && typeof state.temperature === 'number') {
-                    temperature = state.temperature
+                if (state && typeof state[sensorKey] === 'number') {
+                    value = state[sensorKey]
                 } else {
-                    this.log(`Could not retrieve temperature from "${tempSensorName}"`, 'warn')
+                    this.log(
+                        `Could not retrieve ${sensorKey} from "${deviceName}" (no numeric "${sensorKey}")`,
+                        'warn'
+                    )
                 }
-            } else {
-                this.log(`Temperature sensor "${tempSensorName}" not found in container`, 'warn')
+            } catch (error) {
+                this.log(`Error reading ${sensorKey} from "${deviceName}": ${error.message}`, 'warn')
             }
+            ctx[sensorKey] = value
         }
 
-        // Time period
-        const timeOfDay = temporal.getCurrentTimePeriod()
+        // Time period -- always included regardless of config
+        ctx.timeOfDay = temporal.getCurrentTimePeriod()
 
-        return {
-            illuminance,
-            temperature,
-            timeOfDay
-        }
+        return ctx
     }
 
     /**
@@ -151,28 +143,26 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
-        // illuminance check
-        if (conditions.illuminance) {
-            if (!this.#matchesNumericRange(context.illuminance, conditions.illuminance)) {
-                return false
-            }
-        }
-
-        // temperature check
-        if (conditions.temperature) {
-            // If temperature is null (no sensor data), rules requiring temp don't match
-            if (context.temperature === null) return false
-            if (!this.#matchesNumericRange(context.temperature, conditions.temperature)) {
-                return false
-            }
-        }
-
         // presence check
         if (conditions.presence !== undefined) {
             const expected = this.#normalizePresenceCondition(conditions.presence)
             for (const [deviceName, shouldBeOnline] of Object.entries(expected)) {
                 const isOnline = await networkPresence.isOnline(deviceName)
                 if (isOnline !== shouldBeOnline) {
+                    return false
+                }
+            }
+        }
+
+        // Dynamic: any remaining condition key -> numeric range check against context.
+        // Supports illuminance, temperature, humidity, pressure, or any future sensor type
+        // defined in config.sensors without code changes.
+        for (const [key, constraint] of Object.entries(conditions)) {
+            if (key === 'time-of-day' || key === 'presence') continue // handled above
+
+            if (constraint && typeof constraint === 'object') {
+                const value = context[key]
+                if (!this.#matchesNumericRange(value, constraint)) {
                     return false
                 }
             }

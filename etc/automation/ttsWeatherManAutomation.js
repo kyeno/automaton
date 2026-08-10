@@ -110,21 +110,51 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
         let message = this.#interpolate(baseText, context)
 
-        // Evaluate rules and append matching sentences
+        // Evaluate all rules, collect matches, then pick highest priority winner.
+        // When multiple rules match, only the one with the highest `priority` fires.
+        // Default priority is 0; higher number wins. Ties are broken by YAML order
+        // (first rule in file wins).
         const rules = this.config.rules ?? []
+        const winners = []
+
         for (const rule of rules) {
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
-                if (match && rule.sentence) {
-                    const ruleText = this.#resolveI18n(rule.sentence, '')
-                    if (ruleText) {
-                        const interpolated = this.#interpolate(ruleText, context)
-                        message += ' ' + interpolated
-                        this.log(`Rule matched: "${rule.name}" -> appended sentence`, 'debug')
-                    }
+                if (match) {
+                    winners.push({
+                        rule,
+                        priority: typeof rule.priority === 'number' ? rule.priority : 0
+                    })
                 }
             } catch (error) {
                 this.log(`Error evaluating rule "${rule.name}": ${error.message}`, 'error')
+            }
+        }
+
+        if (winners.length > 0) {
+            // Sort descending by priority; stable sort preserves YAML order for ties
+            winners.sort((a, b) => b.priority - a.priority)
+            const best = winners[0]
+
+            // Log suppressed lower-priority rules for debugging
+            if (winners.length > 1) {
+                const losers = winners.slice(1).map(
+                    w => `"${w.rule.name}" (p=${w.priority})`
+                ).join(', ')
+                this.log(
+                    `Multiple rules matched (${winners.length}), "${best.rule.name}" wins with priority ${best.priority}. Suppressed: ${losers}`,
+                    'debug'
+                )
+            }
+
+            // Append only the winner's sentence
+            if (best.rule.sentence) {
+                const ruleText = this.#resolveI18n(best.rule.sentence, '')
+                if (ruleText) {
+                    const interpolated = this.#interpolate(ruleText, context)
+                    message += ' ' + interpolated
+                    this.log(`Rule matched: "${best.rule.name}" -> appended sentence`, 'debug')
+                }
             }
         }
 
