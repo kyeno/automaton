@@ -27,6 +27,9 @@ import UiLayoutManager from './layout/uiLayoutManager.js'
 // Channels
 import channels from './channels.js'
 
+// Commands
+import CommandContainer from './commands/container/commandContainer.js'
+
 // Windows
 import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
@@ -55,6 +58,7 @@ class Ui {
     #input
     #running = false
     #channelShortcutMap = {}  // id -> shortcut mapping
+    #commandContext = null     // context object injected into pluggable commands
 
     // -- Initialization ---------------------------------------------------
 
@@ -127,6 +131,8 @@ class Ui {
         this.#input.onCommand((cmd) => this.#handleCommand(cmd))
         this.#setupKeyBindings()  // Must run before this.#input.init()
         this.#input.init()
+
+        await CommandContainer.init(null)
 
         // Terminal resize handling
         try {
@@ -356,6 +362,8 @@ class Ui {
                 break
 
             default:
+                // Delegate unknown verbs to pluggable command container
+                CommandContainer.execute(verb, arg).catch(() => {})
                 // Unknown slash-command in command-mode window - just ignore
                 break
         }

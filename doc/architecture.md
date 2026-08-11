@@ -15,6 +15,7 @@
 │   ├── configuration.md        # Comprehensive configuration guide
 │   ├── example-automations.md  # Included example automations (ttsWeatherMan, etc.)
 │   ├── installation.md         # Installation & requirements
+│   ├── ui-commands.md          # Terminal UI slash-command reference
 │   └── TODO.md                 # Roadmap and known issues
 ├── etc/                        # Configuration directory
 │   ├── automaton.yaml          # Main configuration file
@@ -35,6 +36,14 @@
 │   ├── monitor/                # Network presence monitoring
 │   ├── service/                # Core services (MQTT, Redis, config, logging)
 │   └── ui/                     # Terminal UI components
+│       ├── channels.js         # Channel definitions (window routing)
+│       ├── layout/             # Layout manager
+│       ├── widgets/            # Reusable UI widgets (status bar, input)
+│       ├── windows/            # Window implementations (log, device, AI)
+│       └── commands/           # Pluggable slash-command system
+│           ├── base/           # Abstract CommandBase class
+│           ├── container/      # CommandContainer (autodiscover + dispatch)
+│           └── *.Cmd.js        # Concrete command implementations
 ├── tests/                      # Test scripts
 │   ├── test-config-validation.js
 │   ├── test-device-instantiation.js
@@ -89,6 +98,50 @@ The `bin/automaton` script wraps `npm start` and automatically loads variables f
 ```bash
 sh bin/automaton --no-ui
 ```
+
+## Terminal UI Command System
+
+The terminal UI supports a pluggable slash-command system that auto-discovers command classes from `src/ui/commands/`. Commands are **only available when running with the terminal UI** — they are entirely disabled when using `--no-ui` (system service mode).
+
+### Dispatch Flow
+
+When a user types `/verb args`, Ui parses the verb and routes it through this priority chain:
+
+```
+User input "/clear"
+    │
+    ▼
+┌─────────────┐     ┌──────────────────┐     ┌──────────────┐
+│   Ui        │────▶│ CommandContainer  │────▶│ ClearCmd     │
+│ (dispatch)  │     │ (lookup by name)  │     │ .execute()   │
+│             │◀────│                   │◀────│              │
+└─────────────┘     └──────────────────┘     └──────────────┘
+                              ▲
+                    ┌─────────┴──────────┐
+                    │ Autoloader          │
+                    │ scans *.Cmd.js in   │
+                    │ src/ui/commands/    │
+                    └────────────────────┘
+```
+
+1. Built-in window shortcuts (`/1`, `/2`, ...) handled first in switch statement
+2. Lifecycle commands (`/quit`, `/exit`, `/q`) handled next
+3. Everything else delegated to **CommandContainer.execute(verb, arg)**
+4. Container looks up command by its static `name` property → calls `.execute(args)`
+
+### Architecture Pattern
+
+Commands follow the same container + autoloader pattern used throughout Automaton:
+
+| Component | Role | File |
+|-----------|------|------|
+| `CommandBase` | Abstract base class defining contract | `src/ui/commands/base/commandBase.js` |
+| `CommandContainer` | Singleton registry with autodiscovery | `src/ui/commands/container/commandContainer.js` |
+| `*.Cmd.js` | Concrete implementations (one per file) | `src/ui/commands/clearCmd.js`, etc. |
+
+Each command is a single ES module that extends `CommandBase`, sets `static name` and `static description`, and implements `async execute(args)`. The container auto-discovers all `.js` files directly under `src/ui/commands/` at startup — no manual registration needed.
+
+See [UI Commands Reference](./ui-commands.md) for full command list and custom command guide.
 
 ## Testing
 
