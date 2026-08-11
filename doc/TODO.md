@@ -30,6 +30,9 @@
 - Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
 
+## SST
+- Build entire speech-to-text architecture based on whisper-cpp
+
 ### Assistant personalization
 personas:
   hal9000:

@@ -1,0 +1,92 @@
+# AI (Large Language Model) Integration
+
+Automaton connects to any OpenAI-compatible API endpoint for its chat assistant. The AI can query device states, control devices via function calling, and converse in multiple languages through i18n-aware prompts.
+
+## Requirements
+
+- An LLM inference server exposing an **OpenAI-compatible** `/v1/chat/completions` endpoint
+- `.env` variable `AI_API_URL` pointing to your server
+- A model capable of reliable JSON function calling (see recommendations below)
+
+## Configuration
+
+### Environment Variable
+
+Add to `.env`:
+
+```env
+AI_API_URL=http://your-llm-server:port/v1/chat/completions
+```
+
+If this variable is not set, the AI feature is disabled at startup with a warning message.
+
+### Main Config
+
+In `etc/automaton.yaml`, the `[ai]` section controls behavior:
+
+```yaml
+ai:
+  model: "gemma-4-e2b-it"
+  temperature: 0.7
+  max_tokens: 2048
+  system_prompt_file: "etc/i18n/en_US/ai.yaml"
+  conversation_cache_ttl: 3600
+  origin_filter: true
+```
+
+See [Configuration Guide](../configuration.md#ai-section) for every option explained.
+
+## Recommended Models
+
+Automaton has been tested and proven stable against the **gemma-4-E2B-it** model family — a compact model capable of i18n-aware prompts and reliable tool calling. This is recommended as the smallest option that handles both multilingual conversations and structured function calls.
+
+Other models may work but are untested; reliability depends on their function-calling implementation quality.
+
+## Example Setups
+
+### llama.cpp
+
+Run locally via its built-in OpenAI-compatible server:
+
+```bash
+./llama-server \
+    --model /path/to/gemma-4-e2b-it.Q4_K_M.gguf \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --embedding \
+    --function-call
+```
+
+Then set `AI_API_URL=http://localhost:8080/v1/chat/completions`.
+
+### Ollama
+
+Pull and run a compatible model:
+
+```bash
+ollama pull gemma:2b
+ollama serve # defaults to localhost:11434
+```
+
+Then set `AI_API_URL=http://localhost:11434/v1/chat/completions` (Ollama's proxy endpoint).
+
+### vLLM
+
+For larger models with GPU acceleration:
+
+```bash
+vllm serve /path/to/model \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --api-key dummy
+```
+
+Then set `AI_API_URL=http://localhost:8000/v1/chat/completions`.
+
+## Conversation Caching
+
+Automaton caches AI conversations in Redis for persistence across restarts. Cached entries are tagged by origin so that AI-generated echoes can be distinguished from human interactions during replay. See [AI Conversation Caching](../architecture/ai-conversation-caching.md) for details on TTL, filtering, and cache behavior.
+
+## Human vs AI Differentiation
+
+When the AI generates responses that trigger device state changes, those events carry an origin marker preventing them from being re-processed as new automations or interactions. This prevents feedback loops where the AI responds to its own actions. See [AI vs Human Differentiation](../architecture/ai-human-differentiation.md) for echo detection logic, grace periods, and command suppression rules.

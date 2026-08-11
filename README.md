@@ -31,12 +31,12 @@ Automaton is a pure JavaScript Zigbee2MQTT sidekick that provides rule-based aut
 ## Quick start
 
 ```bash
-git clone <repository-url> && cd automaton
+git clone https://github.com/kyeno/automaton.git && cd automaton
 npm install
 sh bin/automaton
 ```
 
-For detailed setup instructions, see [Installation & Requirements](doc/installation.md).
+For detailed setup instructions, see [Installation & Requirements](doc/installation/index.md).
 
 ---
 
@@ -44,12 +44,11 @@ For detailed setup instructions, see [Installation & Requirements](doc/installat
 
 | Document | Description |
 |----------|-------------|
-| [Installation & Requirements](doc/installation.md) | Runtime deps, system packages, first-time setup |
+| [Installation & Requirements](doc/installation/index.md) | Runtime deps, system packages, first-time setup |
 | [Configuration Guide](doc/configuration.md) | Every config file, environment variable, and i18n bundle explained |
-| [Architecture](doc/architecture.md) | Project structure, core concepts, CLI usage, testing |
-| [AI Conversation Caching](doc/ai-conversation-caching.md) | Conversation persistence, TTL, origin filtering |
-| [AI vs Human Differentiation](doc/ai-human-differentiation.md) | Echo detection, grace periods, command suppression |
 | [Example Automations](doc/example-automations.md) | Included example automations and how they work |
+| [Terminal UI](doc/ui/index.md) | Windows, channels, layout, input modes, slash commands |
+| [Architecture](doc/architecture/index.md) | Project structure, core concepts, CLI usage, testing |
 | [TODO & Roadmap](doc/TODO.md) | Planned features and known issues |
 
 ### Generated API Reference

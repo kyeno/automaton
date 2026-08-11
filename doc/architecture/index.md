@@ -1,5 +1,7 @@
 # Architecture
 
+> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [AI vs Human Differentiation](./ai-human-differentiation.md)
+
 ## Project Structure
 
 ```
@@ -9,13 +11,21 @@
 │   ├── automaton-lint-check    # Lint check bundle (JSDoc coverage, etc.)
 │   └── automaton-generate-docs # JSDoc API documentation generator
 ├── doc/                        # Documentation
-│   ├── ai-conversation-caching.md  # AI conversation persistence & caching behavior
-│   ├── ai-human-differentiation.md # AI echo vs human interaction classification
-│   ├── architecture.md         # This file — project structure and design
+│   ├── architecture/           # Architecture deep-dive
+│   │   ├── index.md            # This file — project structure and design
+│   │   ├── ai-conversation-caching.md  # AI conversation persistence & caching behavior
+│   │   └── ai-human-differentiation.md # AI echo vs human interaction classification
+│   ├── installation/           # Setup guides
+│   │   ├── index.md            # Requirements, install steps, running modes
+│   │   ├── ai-integration.md   # LLM setup (llama.cpp, Ollama, vLLM)
+│   │   ├── tts-integration.md  # Text-to-speech backend configuration
+│   │   └── stt-integration.md  # Speech-to-text (planned)
+│   ├── ui/                     # Terminal UI documentation
+│   │   ├── index.md            # Windows, channels, layout, input bar
+│   │   └── commands/           # Slash-command reference
+│   │       └── index.md        # Quick ref, custom commands, context API
 │   ├── configuration.md        # Comprehensive configuration guide
 │   ├── example-automations.md  # Included example automations (ttsWeatherMan, etc.)
-│   ├── installation.md         # Installation & requirements
-│   ├── ui-commands.md          # Terminal UI slash-command reference
 │   └── TODO.md                 # Roadmap and known issues
 ├── etc/                        # Configuration directory
 │   ├── automaton.yaml          # Main configuration file
@@ -81,7 +91,7 @@ Automaton uses a layered configuration approach:
 | **Interactions** | `etc/interaction/interaction.yaml` (+ optional `*.js`) | Zigbee-triggered action mappings |
 | **i18n** | `etc/i18n/{locale}/ai.yaml`, `etc/i18n/{locale}/tts.yaml` | Language bundles for AI prompts and TTS voice templates |
 
-> **Note:** Each YAML config has a corresponding `.dist` template with generic device names and documented structure. Custom JavaScript scripts follow the same pattern (`.js.dist`). Copy them to their active names (without `.dist`) and customize for your home. Active configs are gitignored by default so your personal data stays local. See [Configuration Guide](./configuration.md) for a detailed walkthrough of every configuration file and section.
+> **Note:** Each YAML config has a corresponding `.dist` template with generic device names and documented structure. Custom JavaScript scripts follow the same pattern (`.js.dist`). Copy them to their active names (without `.dist`) and customize for your home. Active configs are gitignored by default so your personal data stays local. See [Configuration Guide](../configuration.md) for a detailed walkthrough of every configuration file and section.
 
 ## CLI Usage
 
@@ -99,49 +109,14 @@ The `bin/automaton` script wraps `npm start` and automatically loads variables f
 sh bin/automaton --no-ui
 ```
 
-## Terminal UI Command System
+## Terminal UI Overview
 
-The terminal UI supports a pluggable slash-command system that auto-discovers command classes from `src/ui/commands/`. Commands are **only available when running with the terminal UI** — they are entirely disabled when using `--no-ui` (system service mode).
+Automaton includes an optional IRC-style terminal UI built on `terminal-kit`. It partitions the screen into three slots — main content area, status bar, and input line — and manages multiple windows routed through configurable channels. The UI is disabled when running as a system service (`--no-ui`).
 
-### Dispatch Flow
+See [UI Documentation](../ui/index.md) for details on windows, layout, channels, and input modes.  
+See [UI Commands Reference](../ui/commands/index.md) for slash-command quick reference and custom command guide.
 
-When a user types `/verb args`, Ui parses the verb and routes it through this priority chain:
-
-```
-User input "/clear"
-    │
-    ▼
-┌─────────────┐     ┌──────────────────┐     ┌──────────────┐
-│   Ui        │────▶│ CommandContainer  │────▶│ ClearCmd     │
-│ (dispatch)  │     │ (lookup by name)  │     │ .execute()   │
-│             │◀────│                   │◀────│              │
-└─────────────┘     └──────────────────┘     └──────────────┘
-                              ▲
-                    ┌─────────┴──────────┐
-                    │ Autoloader          │
-                    │ scans *.Cmd.js in   │
-                    │ src/ui/commands/    │
-                    └────────────────────┘
-```
-
-1. Built-in window shortcuts (`/1`, `/2`, ...) handled first in switch statement
-2. Lifecycle commands (`/quit`, `/exit`, `/q`) handled next
-3. Everything else delegated to **CommandContainer.execute(verb, arg)**
-4. Container looks up command by its static `name` property → calls `.execute(args)`
-
-### Architecture Pattern
-
-Commands follow the same container + autoloader pattern used throughout Automaton:
-
-| Component | Role | File |
-|-----------|------|------|
-| `CommandBase` | Abstract base class defining contract | `src/ui/commands/base/commandBase.js` |
-| `CommandContainer` | Singleton registry with autodiscovery | `src/ui/commands/container/commandContainer.js` |
-| `*.Cmd.js` | Concrete implementations (one per file) | `src/ui/commands/clearCmd.js`, etc. |
-
-Each command is a single ES module that extends `CommandBase`, sets `static name` and `static description`, and implements `async execute(args)`. The container auto-discovers all `.js` files directly under `src/ui/commands/` at startup — no manual registration needed.
-
-See [UI Commands Reference](./ui-commands.md) for full command list and custom command guide.
+---
 
 ## Testing
 
