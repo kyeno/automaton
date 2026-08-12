@@ -244,7 +244,7 @@ export default class Bridge extends DeviceBase {
             const parsed = JSON.parse(message)
             if (parsed?.state !== 'online') {
                 LoggerService.error('Zigbee2MQTT bridge is offline', 'Bridge')
-                process.exit(1)
+                process.kill(process.pid, 'SIGTERM')
             }
             this.info('Zigbee2MQTT bridge is online')
         } catch (e) {

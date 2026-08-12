@@ -40,6 +40,7 @@ import InteractionContainer from '../interaction/container/interactionContainer.
 import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
 import AiWindow from './windows/aiWindow.js'
+import TtsWindow from './windows/ttsWindow.js'
 
 // Widgets
 import StatusBar from './widgets/statusBar.js'
@@ -96,6 +97,7 @@ class Ui {
             logs: LogWindow,
             device: DeviceWindow,
             ai: AiWindow,
+            tts: TtsWindow,
         }
 
         let firstChannelId = null
@@ -106,8 +108,8 @@ class Ui {
             const Ctor = windowConstructors[ch.id]
             if (!Ctor) continue
 
-            // AiWindow needs the channel name too
-            const instance = (ch.id === 'ai')
+            // AiWindow and TtsWindow need the channel name too
+            const instance = (ch.id === 'ai' || ch.id === 'tts')
                 ? new Ctor(this.#term, this.#layout, ch.shortcut, ch.channel)
                 : new Ctor(this.#term, this.#layout, ch.shortcut)
 
@@ -350,10 +352,12 @@ class Ui {
         const activeWin = this.#windows[this.#activeWindow]?.instance
         const mode = activeWin?.constructor?.inputMode || 'command'
 
-        // -- Chat mode: send directly to AI, no log -----------------------
+        // -- Chat mode: send directly to the active window ------------------
         if (mode === 'chat') {
-            return this.#windows.ai?.instance?.submitMessage(cmd).catch(err => {
-                LoggerService.error(`AI submit failed: ${err.message}`, 'UI')
+            const win = this.#activeWindow && this.#windows[this.#activeWindow]
+                ? this.#windows[this.#activeWindow].instance : null
+            return win?.submitMessage(cmd).catch(err => {
+                LoggerService.error(`Chat submit failed: ${err.message}`, 'UI')
             })
         }
 
@@ -469,7 +473,7 @@ class Ui {
     shutdown() {
         this.cleanup()
         LoggerService.info('UI shutting down...', 'UI')
-        process.exit(0)
+        process.kill(process.pid, 'SIGINT')
     }
 }
 

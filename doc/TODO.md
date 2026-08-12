@@ -63,7 +63,6 @@ personas:
 - Unify cache read messages vs real time reads on AiWindow:
   cache: [05:58:26am] * AI checked state of Balkon Temperatura
    live: [06:17:15am] * AI performed STATE on Balkon Temperatura
-- Add window for TTS
 - Consistent color palette across all windows (status bar, device window)
 - `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - Proper nick highlighting (own messages emphasized in chat)
@@ -72,6 +71,6 @@ personas:
 
 ### Slash commands
 - Add slash command to debug config
-- Add slash commands to debug automation container, interaction container, device container
++/- Add slash commands to debug automation container, interaction container, device container
 - Add slash commands to debug state and eventbus(?); probably rewrite /status command
 - Debug timers (LATER)
