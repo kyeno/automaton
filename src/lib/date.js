@@ -13,7 +13,7 @@
  *   `isEvening()`, `isNight()`
  * - **Season predicates**: `isSpring()`, `isSummer()`, `isAutumn()`, `isWinter()`
  * - **Duration formatters**: `millisecondsToHumanReadable()`,
- *   `secondsToHumanReadable()`
+ *   `secondsToHumanReadable()`, `msToHuman()`
  * - **Convenience**: `getCurrentTimePeriod()`
  *
  * @module lib/date
@@ -346,6 +346,24 @@ class Temporal {
       if (minutes > 0) parts.push(`${minutes}min`)
       parts.push(`${seconds}sec`)
       return parts.join(' ')
+    }
+
+    /**
+     * Convert milliseconds to a compact "every Xs/m/h" interval string.
+     * Returns 'disabled' for zero/negative/missing values.
+     * Used by UI commands to display timer intervals.
+     *
+     * @param {number} ms - Timer interval in milliseconds
+     * @returns {string} e.g. "every 5s", "every 5m", "every 2h", or "disabled"
+     */
+    msToHuman(ms) {
+      if (!ms || ms <= 0) return 'disabled'
+      const secs = Math.round(ms / 1_000)
+      if (secs < 60) return `every ${secs}s`
+      const mins = Math.round(secs / 60)
+      if (mins < 60) return `every ${mins}m`
+      const hours = Math.round(mins / 60)
+      return `every ${hours}h`
     }
 
     // -- Convenience --------------------------------------------------------

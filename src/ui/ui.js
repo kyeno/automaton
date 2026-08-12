@@ -30,6 +30,12 @@ import channels from './channels.js'
 // Commands
 import CommandContainer from './commands/container/commandContainer.js'
 
+// Automations
+import AutomationContainer from '../automation/container/automationContainer.js'
+
+// Interactions
+import InteractionContainer from '../interaction/container/interactionContainer.js'
+
 // Windows
 import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
@@ -152,6 +158,8 @@ class Ui {
             stateService: StateService,
             logger: LoggerService,
             commandContainer: CommandContainer,
+            automationContainer: AutomationContainer,
+            interactionContainer: InteractionContainer,
         }
 
         await CommandContainer.init(ctx)
@@ -322,14 +330,23 @@ class Ui {
     // -- Callbacks --------------------------------------------------------
 
     /**
-    /**
-     * Handle commands typed at the bottom prompt.
-     * Routes input based on the active window's inputMode:
-     *   - 'chat'    -> send directly to AI (no log)
-     *   - 'command' -> log + delegate entirely to CommandContainer
-     * @param {string} cmd - Raw command string from the input component
-     */
+      * Handle commands typed at the bottom prompt.
+      * Slash-prefixed input always routes through CommandContainer first,
+      * regardless of the active window's inputMode. Non-slash text then
+      * follows normal routing based on inputMode:
+      *   - 'chat'    -> send directly to AI (no log)
+      *   - 'command' -> log + delegate entirely to CommandContainer
+      * @param {string} cmd - Raw command string from the input component
+      */
     #handleCommand(cmd) {
+        // -- Slash commands take priority over inputMode ---------------------
+        if (cmd.startsWith('/')) {
+            LoggerService.info(`UI Received Command: "${cmd}"`, 'UI')
+            const rawInput = cmd.slice(1)
+            CommandContainer.handle(rawInput).catch(() => {})
+            return
+        }
+
         const activeWin = this.#windows[this.#activeWindow]?.instance
         const mode = activeWin?.constructor?.inputMode || 'command'
 
@@ -344,8 +361,8 @@ class Ui {
         LoggerService.info(`UI Received Command: "${cmd}"`, 'UI')
 
         // Strip leading slash and pass raw verb+args to two-phase dispatcher
-        const rawInput = cmd.startsWith('/') ? cmd.slice(1) : cmd
-        CommandContainer.handle(rawInput).catch(() => {})
+        const rawInput2 = cmd.startsWith('/') ? cmd.slice(1) : cmd
+        CommandContainer.handle(rawInput2).catch(() => {})
     }
 
 
