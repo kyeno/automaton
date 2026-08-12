@@ -1,8 +1,8 @@
 /**
  * Help Command -- lists all available slash commands with descriptions.
  *
- * Combines built-in UI shortcuts and registered commands from the container
- * into a single formatted help message printed to the active window.
+ * Dynamically queries the command container for every registered command,
+ * showing primary names, aliases, argument indicators, and descriptions.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -13,42 +13,35 @@
 'use strict'
 
 import CommandBase from './base/commandBase.js'
-import channels from '../channels.js'
 
 class HelpCmd extends CommandBase {
     static name = 'help'
     static description = 'Show available commands'
+    static takesArgs = false
 
     async execute(args) {
         const lines = []
 
-        // Built-in window shortcuts
-        const allChannels = channels.getAll()
-        if (allChannels.length > 0) {
-            lines.push('Built-in shortcuts:')
-            for (const ch of allChannels) {
-                lines.push(`  /${ch.shortcut}          ${ch.channel}`)
-            }
-        }
-
-        lines.push('\nCommands:')
-
-        // Registered commands from container
+        // All registered commands from container
         const cmdInfo = this.ctx.commandContainer?.getAllInfo?.() ?? []
+
         if (cmdInfo.length > 0) {
+            lines.push('Commands:')
             for (const info of cmdInfo) {
-                // Skip showing help itself in its own output to avoid confusion
+                // Skip help itself in its own output to avoid confusion
                 if (info.name === 'help') continue
-                const desc = info.description ? ` -- ${info.description}` : ''
-                lines.push(`  /${info.name}${desc}`)
+
+                let entry = `  /${info.name}`
+                if (info.takesArgs) entry += ' [arg]'
+                if (info.aliases && info.aliases.length > 0) {
+                    entry += ` (${info.aliases.map(a => '/' + a).join(', ')})`
+                }
+                if (info.description) entry += ` -- ${info.description}`
+                lines.push(entry)
             }
         } else {
-            lines.push('  (no registered commands)')
+            lines.push('(no registered commands)')
         }
-
-        // Always-listed built-ins that aren't auto-discovered
-        lines.push('\nAlways available:')
-        lines.push('  /quit           Exit automaton')
 
         this.ctx.print(lines.join('\n'))
     }

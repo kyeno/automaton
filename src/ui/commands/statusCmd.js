@@ -14,6 +14,7 @@ import CommandBase from './base/commandBase.js'
 class StatusCmd extends CommandBase {
     static name = 'status'
     static description = 'Show system status dump'
+    static takesArgs = false
 
     async execute(args) {
         const dump = this.ctx.stateService.dump()

@@ -41,6 +41,13 @@ const COMMANDS_DIR = path.join(PROJECT_ROOT, 'src', 'ui', 'commands')
  * Auto-discovers concrete command implementations in `src/ui/commands/`,
  * instantiates each one with a shared context object, and maintains a name-indexed
  * map so that Ui.#handleCommand can look up or trigger commands by verb.
+ *
+ * Dispatch uses two phases:
+ *   Phase 1 -- exact match: if input equals a registered verb, execute immediately
+ *              with no arguments.
+ *   Phase 2 -- prefix match: split at first space; if any registered verb + " "
+ *              is a prefix of the input, extract everything after the space as
+ *              the argument and pass it to that command's execute().
  */
 class SCommandContainer {
 
@@ -79,7 +86,7 @@ class SCommandContainer {
      * Scan `src/ui/commands/` for concrete command classes using Autoloader.
      * Only loads `.js` files directly in the directory (skips base/ and container/ subdirs).
      * Each discovered class is instantiated with the shared context and registered
-     * under its static `name` property.
+     * under its static `name` property plus any aliases declared on the class.
      *
      * @param {Object} ctx - Context object to inject into each command instance
      * @private
@@ -105,6 +112,14 @@ class SCommandContainer {
                     const cmdName = String(Class.name).toLowerCase().replace(/^\/+/, '')
 
                     this.#commands.set(cmdName, instance)
+
+                    // Register aliases pointing to same instance
+                    const aliases = Class.aliases || []
+                    for (const alias of aliases) {
+                        const key = String(alias).toLowerCase().replace(/^\/+/, '')
+                        this.#commands.set(key, instance)
+                    }
+
                     loadedCount++
                 } catch (error) {
                     LoggerService.error(
@@ -128,41 +143,79 @@ class SCommandContainer {
     // -- Public API -------------------------------------------------------
 
     /**
+     * Two-phase dispatch entry point. Called by Ui with the raw verb string
+     * (leading slash already stripped).
+     *
+     * Phase 1: exact match -- if input equals a registered name or alias, execute
+     *          immediately with no arguments.
+     * Phase 2: prefix match -- split at first space; if any registered primary name
+     *          + " " is a prefix of the input, extract everything after the space
+     *          as the argument and pass it to that command's execute().
+     *
+     * @param {string} rawInput - Verb without leading slash, may include args (e.g., "win 2")
+     * @returns {Promise<boolean>} True if command was found and executed, false otherwise
+     */
+    async handle(rawInput) {
+        const trimmed = rawInput.trim()
+        if (!trimmed) return false
+
+        // --- Phase 1: exact match -----------------------------------------
+        const cmd = this.#commands.get(trimmed.toLowerCase())
+        if (cmd) {
+            try { await cmd.execute('') } catch (error) {}
+            return true
+        }
+
+        // --- Phase 2: prefix match (verb + ' ' + args) --------------------
+        for (const [name, instance] of this.#commands.entries()) {
+            const prefix = `${name} `
+            if (trimmed.toLowerCase().startsWith(prefix)) {
+                const args = trimmed.slice(prefix.length)
+                try { await instance.execute(args) } catch (error) {}
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /**
      * Execute a registered command by its verb name.
-     * Called by Ui.#handleCommand when the verb is not handled by built-in logic.
+     * Backward-compatible wrapper that delegates to handle().
      *
      * @param {string} verb - Command verb without leading slash (e.g., 'clear', 'debug-state')
      * @param {string} args - Raw argument string after the verb
      * @returns {Promise<boolean>} True if command was found and executed, false if not found
      */
     async execute(verb, args = '') {
-        const cmd = this.#commands.get(verb.toLowerCase())
-        if (!cmd) return false
-
-        try {
-            await cmd.execute(args)
-        } catch (error) {
-            LoggerService.error(
-                `Error executing command "/${verb}": ${error.message}`,
-                'CommandContainer'
-            )
-        }
-        return true
+        const input = args ? `${verb} ${args}` : verb
+        return this.handle(input)
     }
 
     /**
      * Get all registered commands as an array of info objects for help generation.
-     * Each entry contains the command name and description.
+     * Each entry contains the primary name, description, takesArgs flag, and aliases.
+     * Only primary names are returned -- aliases are listed alongside their owner.
      *
-     * @returns {Array<Object>} Array of {name: string, description: string}
+     * @returns {Array<Object>} Array of {name, description, takesArgs, aliases}
      */
     getAllInfo() {
+        // Deduplicate: only emit one entry per unique instance (primary name)
+        const seen = new Set()
         const result = []
+
         for (const [name, instance] of this.#commands.entries()) {
+            if (seen.has(instance)) continue
+            seen.add(instance)
+
             const Class = instance.constructor
             result.push({
                 name,
-                description: Class.description || ''
+                description: Class.description || '',
+                takesArgs: Boolean(Class.takesArgs),
+                aliases: (Class.aliases && Class.aliases.length > 0)
+                    ? [...Class.aliases].sort()
+                    : [],
             })
         }
         // Sort alphabetically by name for consistent /help output
@@ -171,7 +224,7 @@ class SCommandContainer {
     }
 
     /**
-     * Look up a single command instance by verb name.
+     * Look up a single command instance by verb name or alias.
      * Useful for external code that needs to inspect or trigger a specific command.
      *
      * @param {string} verb - Command verb without leading slash

@@ -47,6 +47,23 @@ class CommandBase {
      */
     static description = ''
 
+    /**
+     * Whether this command accepts a free-form argument after its verb.
+     * When true, /help annotates the entry with [arg].
+     * Defaults to false -- set to true if your execute() method parses args.
+     * @type {boolean}
+     */
+    static takesArgs = false
+
+    /**
+     * Alternative verbs that route to this same command instance.
+     * E.g., ['exit', 'q'] on QuitCmd means /quit, /exit, and /q all work.
+     * Each alias is registered alongside the primary name so exact-match
+     * dispatch finds it instantly. No prefix-matching is done on aliases.
+     * @type {Array<string>}
+     */
+    static aliases = []
+
     // -- Initialization ---------------------------------------------------
 
     /**
@@ -56,12 +73,11 @@ class CommandBase {
      * @param {Object} ctx - Context object from Ui containing:
      *   - print(...args): Print text to active window
      *   - activeWindow: BaseWindow | null getter for current active window
-     *   - deviceContainer: DeviceContainer singleton
+     *   - switchWindow(idOrShortcut): Switch to a named window by id or shortcut number
      *   - stateService: StateService singleton
-     *   - automationContainer: AutomationContainer singleton
-     *   - interactionContainer: InteractionContainer singleton
      *   - logger: LoggerService singleton
      *   - shutdown(): Function to exit the application
+     *   - commandContainer: CommandContainer reference (for introspection)
      */
     constructor(ctx) {
         if (this.constructor === CommandBase) {

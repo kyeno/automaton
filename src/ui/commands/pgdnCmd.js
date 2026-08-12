@@ -14,12 +14,10 @@ import CommandBase from './base/commandBase.js'
 class PgDnCmd extends CommandBase {
     static name = 'pgdn'
     static description = 'Scroll page down'
+    static takesArgs = false
 
     async execute(args) {
-        const win = this.ctx.activeWindow
-        if (win && typeof win.scrollPageDown === 'function') {
-            win.scrollPageDown()
-        }
+        this.ctx.scrollPageDown?.()
     }
 }
 

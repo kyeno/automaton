@@ -97,7 +97,7 @@ Switch between windows using either method:
 
 | Method | Example | Result |
 |--------|---------|--------|
-| Slash command | `/2` | Switch to window with shortcut `2` |
+| Slash command | `/win 2` | Switch to window with shortcut `2` |
 | Keyboard shortcut | `Esc` then `2` | Same as above |
 
 ## Input Bar Behavior
@@ -112,11 +112,10 @@ Used by LogWindow and DeviceWindow. When you press Enter:
 2. If text starts with `/`, it triggers slash-command dispatch
 3. Otherwise it's treated as a no-op echo
 
-Slash commands are routed through this priority chain:
+Slash commands are routed through a two-phase dispatcher in CommandContainer:
 
-1. **Window shortcuts** — `/1`, `/2`, ... switch to configured channels
-2. **Lifecycle commands** — `/quit`, `/exit`, `/q` trigger graceful shutdown
-3. **CommandContainer** — all other verbs delegated to pluggable command system
+1. **Exact match** — if input equals a registered verb (e.g., `/clear`, `/quit`), execute immediately
+2. **Prefix match** — if input starts with a verb + space, extract everything after the space as arguments and pass them to that command's handler (e.g., `/win 2`)
 
 See [Commands Reference](./commands/index.md) for full list and custom command guide.
 

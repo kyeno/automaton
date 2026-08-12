@@ -14,6 +14,7 @@ import CommandBase from './base/commandBase.js'
 class ClearCmd extends CommandBase {
     static name = 'clear'
     static description = 'Clear current window buffer'
+    static takesArgs = false
 
     async execute(args) {
         const win = this.ctx.activeWindow

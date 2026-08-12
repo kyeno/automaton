@@ -14,12 +14,10 @@ import CommandBase from './base/commandBase.js'
 class PgUpCmd extends CommandBase {
     static name = 'pgup'
     static description = 'Scroll page up'
+    static takesArgs = false
 
     async execute(args) {
-        const win = this.ctx.activeWindow
-        if (win && typeof win.scrollPageUp === 'function') {
-            win.scrollPageUp()
-        }
+        this.ctx.scrollPageUp?.()
     }
 }
 

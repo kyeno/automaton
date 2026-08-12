@@ -58,7 +58,6 @@ class Ui {
     #input
     #running = false
     #channelShortcutMap = {}  // id -> shortcut mapping
-    #commandContext = null     // context object injected into pluggable commands
 
     // -- Initialization ---------------------------------------------------
 
@@ -132,7 +131,30 @@ class Ui {
         this.#setupKeyBindings()  // Must run before this.#input.init()
         this.#input.init()
 
-        await CommandContainer.init(null)
+        // Build context object injected into all pluggable commands
+        const self = this  // capture Ui reference for closure
+        const ctx = {
+            get activeWindow() {
+                return self.#activeWindow && self.#windows[self.#activeWindow]
+                    ? self.#windows[self.#activeWindow].instance
+                    : null
+            },
+            print(...args) {
+                const win = self.#activeWindow && self.#windows[self.#activeWindow]
+                    ? self.#windows[self.#activeWindow].instance
+                    : null
+                if (win && typeof win.print === 'function') win.print(args.join(' '))
+            },
+            switchWindow: self.switchWindow.bind(self),
+            scrollPageUp: () => self.scrollActivePageUp(),
+            scrollPageDown: () => self.scrollActivePageDown(),
+            shutdown: () => self.shutdown(),
+            stateService: StateService,
+            logger: LoggerService,
+            commandContainer: CommandContainer,
+        }
+
+        await CommandContainer.init(ctx)
 
         // Terminal resize handling
         try {
@@ -214,6 +236,32 @@ class Ui {
     }
 
     /**
+     * Scroll the active window one page up through its history buffer.
+     * Also updates the status bar backscroll indicator ("-- more --").
+     */
+    scrollActivePageUp() {
+        if (!this.#activeWindow || !this.#windows[this.#activeWindow]) return
+        const win = this.#windows[this.#activeWindow].instance
+        win.scrollPageUp?.()
+        if (this.#statusBar.notifyBackscrolled) {
+            this.#statusBar.notifyBackscrolled(win.isBackscrolled?.())
+        }
+    }
+
+    /**
+     * Scroll the active window one page down toward live tail.
+     * Also updates the status bar backscroll indicator ("-- more --").
+     */
+    scrollActivePageDown() {
+        if (!this.#activeWindow || !this.#windows[this.#activeWindow]) return
+        const win = this.#windows[this.#activeWindow].instance
+        win.scrollPageDown?.()
+        if (this.#statusBar.notifyBackscrolled) {
+            this.#statusBar.notifyBackscrolled(win.isBackscrolled?.())
+        }
+    }
+
+    /**
      * Return the Winston transport for the log window so external code
      * (e.g., main.js) can attach it early before full init completes.
      * @returns {winston.Transport|null}
@@ -274,10 +322,11 @@ class Ui {
     // -- Callbacks --------------------------------------------------------
 
     /**
+    /**
      * Handle commands typed at the bottom prompt.
      * Routes input based on the active window's inputMode:
      *   - 'chat'    -> send directly to AI (no log)
-     *   - 'command' -> log + auto-prefix with / as slash-command
+     *   - 'command' -> log + delegate entirely to CommandContainer
      * @param {string} cmd - Raw command string from the input component
      */
     #handleCommand(cmd) {
@@ -291,83 +340,14 @@ class Ui {
             })
         }
 
-        // -- Command mode: log + treat as slash-command --------------------
+        // -- Command mode: log + delegate to pluggable command container ---
         LoggerService.info(`UI Received Command: "${cmd}"`, 'UI')
 
-        // Auto-prefix plain text with / so it's treated as a slash-command
-        const processedCmd = cmd.startsWith('/') ? cmd : '/' + cmd
-
-        // Dynamic shortcut handling based on channel config
-        const allChannels = channels.getAll()
-        for (const ch of allChannels) {
-            if (new RegExp(`^\\/${ch.shortcut}\\s*$`).test(processedCmd)) {
-                return this.switchWindow(ch.id)
-            }
-        }
-
-        const parts = processedCmd.split(/\s+/)
-        const verb = parts[0]?.toLowerCase().replace(/^\/+/, '') || ''
-        const arg = parts.slice(1).join(' ')
-
-        switch (verb) {
-            case 'quit':
-            case 'exit':
-            case 'q':
-                this.shutdown()
-                break
-
-            case 'clear':
-                if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                    this.#windows[this.#activeWindow].instance.clear()
-                }
-                break
-
-            case 'help':
-                if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                    const win = this.#windows[this.#activeWindow].instance
-                    const shortcuts = allChannels.map(c => `  /${c.shortcut}       ${c.channel}`).join('\n')
-                    win.print('\nAvailable commands:\n' +
-                        shortcuts + '\n' +
-                        '  /clear          Clear current window\n' +
-                        '  /pgup           Page up (scroll back)\n' +
-                        '  /pgdn           Page down (scroll forward)\n' +
-                        '  /status         Show system status\n' +
-                        '  /quit           Exit automaton\n')
-                }
-                break
-
-            case 'pgup':
-            case 'pageup':
-                if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                    this.#windows[this.#activeWindow].instance.scrollPageUp?.()
-                }
-                break
-
-            case 'pgdn':
-            case 'pagedown':
-                if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                    this.#windows[this.#activeWindow].instance.scrollPageDown?.()
-                }
-                break
-
-            case 'status':
-                if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                    const win = this.#windows[this.#activeWindow].instance
-                    const dump = StateService.dump()
-                    const entries = Object.entries(dump)
-                        .filter(([k, v]) => v != null && v !== '')
-                        .map(([k, v]) => `  ${k} = ${typeof v === 'object' ? JSON.stringify(v) : v}`)
-                    win.print('\nSystem Status:\n' + (entries.length ? entries.join('\n') : '  (no active states)\n'))
-                }
-                break
-
-            default:
-                // Delegate unknown verbs to pluggable command container
-                CommandContainer.execute(verb, arg).catch(() => {})
-                // Unknown slash-command in command-mode window - just ignore
-                break
-        }
+        // Strip leading slash and pass raw verb+args to two-phase dispatcher
+        const rawInput = cmd.startsWith('/') ? cmd.slice(1) : cmd
+        CommandContainer.handle(rawInput).catch(() => {})
     }
+
 
     // -- Private Helpers --------------------------------------------------
 
@@ -416,25 +396,13 @@ class Ui {
 
                 // --- PgUp / PgDown for scroll navigation --------------------
                 if (n === 'page_up' || n === 'pageup' || n === 'pgup') {
-                    if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                        this.#input.markConsumed([n, name])
-                        const win = this.#windows[this.#activeWindow].instance
-                        win.scrollPageUp?.()
-                        if (this.#statusBar.notifyBackscrolled) {
-                            this.#statusBar.notifyBackscrolled(win.isBackscrolled?.())
-                        }
-                    }
+                    this.#input.markConsumed([n, name])
+                    this.scrollActivePageUp()
                     return
                 }
                 if (n === 'page_down' || n === 'pagedown' || n === 'pgdn') {
-                    if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                        this.#input.markConsumed([n, name])
-                        const win = this.#windows[this.#activeWindow].instance
-                        win.scrollPageDown?.()
-                        if (this.#statusBar.notifyBackscrolled) {
-                            this.#statusBar.notifyBackscrolled(win.isBackscrolled?.())
-                        }
-                    }
+                    this.#input.markConsumed([n, name])
+                    this.scrollActivePageDown()
                     return
                 }
 
