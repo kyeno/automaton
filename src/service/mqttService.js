@@ -312,7 +312,7 @@ class SMQTTService {
         // after certain types of connection failures (e.g., device power loss).
         // mqtt v5.x destroy(force=true) handles listener cleanup internally,
         // so do NOT call removeAllListeners() first as it can corrupt internal state.
-        if (this.#client) {
+        if (this.#client && typeof this.#client.destroy === 'function') {
             try {
                 this.#client.destroy(true)
             } catch (e) {

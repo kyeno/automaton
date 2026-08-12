@@ -25,6 +25,7 @@ import I18nLoader from '../../src/service/i18nLoader.js'
 import AiAssistant from '../../src/ai/aiAssistant.js'
 import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
+import { round } from '../../src/lib/math.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -265,9 +266,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
                     this.log(`Interpolation: property "${trimmedProp}" missing on "${trimmedName}"`, 'debug')
                     return INTERPOLATION_MISSING
                 }
-                // Format numbers using I18nLoader's locale-aware formatter
+                // Format numbers using I18nLoader's locale-aware formatter with rounding
                 if (typeof state[trimmedProp] === 'number') {
-                    return I18nLoader.formatNumber(state[trimmedProp])
+                    return I18nLoader.formatNumber(round(state[trimmedProp]))
                 }
                 return String(state[trimmedProp])
             } catch (error) {

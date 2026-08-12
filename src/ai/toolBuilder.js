@@ -25,6 +25,7 @@ import DeviceContainer from '../device/container/deviceContainer.js'
 import EventBus from '../service/eventBus.js'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
+import { round } from '../lib/math.js'
 
 // ---------------------------------------------------------------------------
 // Type Definitions
@@ -497,7 +498,7 @@ class SToolBuilder {
             if (NUMERIC_SENSORS.has(key)) {
                 const numVal = typeof value === 'number' ? value : Number(value)
                 if (!isNaN(numVal)) {
-                    let formatted = I18nLoader.formatNumber(numVal)
+                    let formatted = I18nLoader.formatNumber(round(numVal))
                     const unit = SENSOR_UNITS[key]
                     if (unit && !String(formatted).endsWith(unit)) {
                         formatted += unit

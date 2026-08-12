@@ -138,7 +138,14 @@ class AiWindow extends BaseWindow {
             // Distinguish native tool_calls from parsed JSON intents
             const verb = (tool === 'json_intent') ? 'intended' : 'performed'
             const suffix = (tool === 'json_intent') ? ' (corrected)' : ''
-            this.print(`${tsPrefix()} ${Colors.italic}${Colors.white}* AI ${verb} ${action} on ${device}${suffix}${Colors.reset}`)
+            let messageText
+            if (action === 'STATE') {
+                // Align with history renderer wording: "checked state of <device>"
+                messageText = `* AI checked state of ${device}`
+            } else {
+                messageText = `* AI ${verb} ${action} on ${device}${suffix}`
+            }
+            this.print(`${tsPrefix()} ${Colors.italic}${Colors.white}${messageText}${Colors.reset}`)
             EventBus.emit('window:activity', this.#channelShortcut)
         })
     }

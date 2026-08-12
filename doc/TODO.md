@@ -5,8 +5,6 @@
 - Improve JSDoc generation (it's very messy and buggy)
 - Weatherman: Add a line to AI prompt to *never* re-use previously generated
   sentence and ALWAYS be creative and fresh.
-- BUG: {"PID":1371047,"context":"MqttService","level":"debug","message":"Client cleanup during reconnect: this[#client].destroy is not a function","timestamp":"2026-08-09T09:58:10.472Z"}
-
 
 ## Architecture
 - Prefix main config file paths with respective sections!
@@ -21,11 +19,11 @@
 ### Code Quality & Documentation
 
 - **Dynamic method generation on `Temporal.prototype` (`lib/date.js`)**
-  Day-period methods (`isMorning()`, `isNoon()`, etc.) and season methods are generated via `for...of` loops assigning to `Temporal.prototype`. IDEs may not autocomplete these, and minifiers could interfere. Document generated methods in JSDoc or list them explicitly.
+  Day-period methods (`isMorning()`, `isNoon()`, etc.) and season methods are generated
+  via `for...of` loops assigning to `Temporal.prototype`. They're well-documented now ✅,
+  but consider listing them explicitly for better IDE autocompletion and minifier safety.
 
 ## AI
-- Do not return .00 values for AI tool calls; round them up! (Consider a library
-  for this)
 - When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
@@ -60,9 +58,6 @@ personas:
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
-- Unify cache read messages vs real time reads on AiWindow:
-  cache: [05:58:26am] * AI checked state of Balkon Temperatura
-   live: [06:17:15am] * AI performed STATE on Balkon Temperatura
 - Consistent color palette across all windows (status bar, device window)
 - `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - Proper nick highlighting (own messages emphasized in chat)
