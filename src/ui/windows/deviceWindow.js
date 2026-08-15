@@ -377,7 +377,7 @@ class DeviceWindow extends BaseWindow {
      * Return a warning color for low battery levels.
      *
      * @param {number} battery - Battery percentage (0-100)
-     * @returns {string} ANSI SGR color code (red ≤15%, yellow ≤30%, empty otherwise)
+     * @returns {string} ANSI SGR color code (red <=15%, yellow <=30%, empty otherwise)
      * @private
      */
     #getBatteryColor(battery) {

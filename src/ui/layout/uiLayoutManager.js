@@ -143,7 +143,7 @@ class UiLayoutManager {
         // Clear the slot
         this.clearSlot(slotName)
 
-        const msg = '\x1b[31m\x1b[1m ⚠ TERMINAL TOO NARROW -- PLEASE RESIZE \x1b[0m'
+        const msg = '\x1b[31m\x1b[1m [!] TERMINAL TOO NARROW -- PLEASE RESIZE \x1b[0m'
         const msgLen = msg.replace(/\x1b\[[0-9;]*m/g, '').length
         const padLeft = Math.max(0, Math.floor((slot.width - msgLen) / 2))
 

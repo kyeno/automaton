@@ -83,7 +83,7 @@ const POSITION_NEARLY_CLOSED_THRESHOLD = 2
 const ILLUMINANCE_CHANGE_THRESHOLD = 500
 
 /**
- * Minimum meaningful temperature change (°C).
+ * Minimum meaningful temperature change (degrees Celsius).
  * @type {number}
  */
 const TEMPERATURE_CHANGE_THRESHOLD = 0.5

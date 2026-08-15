@@ -5,6 +5,8 @@
  * Runs all static analysis checks on source files. Designed to be extensible
  * for future tools (ESLint, style checks, etc.). Currently runs:
  *  - JSDoc coverage check
+ *  - Illegal Unicode punctuation check
+ *  - File conventions check (shebangs, tabs, indentation, singleton naming)
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -47,6 +49,7 @@ console.log('\n── Lint Checks ──\n')
 const lintScripts = [
   'test-jsdoc-coverage.js',
   'test-no-illegal-unicode.js',
+  'test-file-conventions.js',
 ]
 
 for (const script of lintScripts) {

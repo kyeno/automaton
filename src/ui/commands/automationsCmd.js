@@ -78,15 +78,15 @@ class AutomationsCmd extends CommandBase {
             const entry = entries[i]
             const isLast = i === total - 1
 
-            // Branch prefix: ├─ for intermediate entries, └─ for the last one
+            // Branch prefix marks whether this is an intermediate or the last entry
             const branchPrefix = isLast ? '\u2514\u2500 ' : '\u251c\u2500 '
-            // Continuation column: always │ for visual consistency
+            // Continuation column keeps nested property lines aligned under the branch
             const contCol = '\u2502   '
 
             // Automation name header
             lines.push(`${branchPrefix}${entry.name}`)
 
-            // Properties -- each uses ├─ or └─ depending on whether it's the last property
+            // Properties -- each gets a branch marker based on its position in the list
             const props = [
                 [`status`, entry.status],
                 [`type`, entry.type],

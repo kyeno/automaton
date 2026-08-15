@@ -19,7 +19,7 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 ### Dynamic Sensor System
 
 The base class reads every entry under `config.sensors` at runtime. Each entry maps a logical name → Zigbee device name, where the logical name also serves as both:
-- The property key extracted from the device's state object (e.g., `{ humidity: 'Balkon Temperatura' }` reads `state.humidity`)
+- The property key extracted from the device's state object (e.g., `{ humidity: 'Outdoor Temperature' }` reads `state.humidity`)
 - The condition key used in rule evaluation (e.g., `humidity: { gte: 50 }`)
 
 Adding new sensor types requires **zero code changes** — just add them to the YAML config. Supported numeric operators: `lt`, `lte`, `gt`, `gte`.
@@ -37,10 +37,10 @@ sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 
 # All sensors are read dynamically — any key here becomes available for conditions
 sensors:
-  illuminance: 'Balkon Swiatlo'
-  temperature: 'Balkon Temperatura'
-  humidity: 'Balkon Temperatura'          # Same combined sensor as temp
-  pressure: 'Kuchnia Temperatura'         # Separate barometer device
+  illuminance: 'Outdoor Luminance'
+  temperature: 'Outdoor Temperature'
+  humidity: 'Outdoor Temperature'         # Same combined sensor as temp
+  pressure: 'Kitchen Temperature'         # Separate barometer device
 
 rules:
   - name: 'Warm day'
@@ -58,14 +58,21 @@ rules:
       temperature: { gt: 25 }
     sentence: 'weatherman.warning_hot_day'
 
+  - name: 'Hot and humid day'
+    priority: 3                           # High -- oppressive heat plus high humidity
+    conditions:
+      temperature: { gte: 26 }
+      humidity: { gte: 50 }
+    sentence: 'weatherman.warning_humid_stay_at_home'
+
   - name: 'Too hot day'
-    priority: 3                           # High — extreme heat regardless of humidity
+    priority: 4                           # Higher -- extreme heat regardless of humidity
     conditions:
       temperature: { gte: 29 }
-    sentence: 'weatherman.warning_stay_at_home'
+    sentence: 'weatherman.warning_hot_stay_at_home'
 
   - name: 'Apocalypse'
-    priority: 4                           # Highest — overrides everything
+    priority: 5                           # Highest -- overrides everything
     conditions:
       temperature: { gte: 30 }
       humidity: { gte: 55 }
@@ -106,7 +113,8 @@ Weather speech templates live in per-locale files at `etc/i18n/{locale}/weatherm
 base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
-warning_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
+warning_humid_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
+warning_hot_stay_at_home: 'WARNING: It is so hot that breathing is difficult! Make sure to stay indoors!'
 warning_apocalypse: 'WARNING: Thermal apocalypse outside! Close blinds, seal windows, crank up the AC, and do not leave the house under any circumstances!'
 warning_humid_night: 'WARNING: Humidity levels are too high for comfortable breathing outdoors.'
 warning_chill_night: 'Grab a sweater or light jacket before heading out.'
@@ -116,10 +124,11 @@ soothing_warm_night: 'Beautiful night out there. You could step outside in short
 
 **Polish (`pl_PL/weatherman.yaml`):**
 ```yaml
-base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Balkon Temperatura.temperature }} stopni Celsjusza, wilgotność to {{ Balkon Temperatura.humidity }} procent, a ciśnienie atmosferyczne to {{ Kuchnia Temperatura.pressure }} hektopaskali.'
+base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
 ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie: '
 warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
-warning_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'
+warning_humid_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'
+warning_hot_stay_at_home: 'UWAGA: Jest tak gorąco, że ciężko się oddycha! Koniecznie pozostań w domu!'
 warning_apocalypse: 'UWAGA: Na zewnątrz panuje termiczna apokalipsa! Zasłoń rolety, zamknij okna, ustaw mocną klimatyzację i absolutnie nie wychodź z domu!'
 warning_humid_night: 'UWAGA: Wilgotność na zewnątrz jest zbyt duża, by swobodnie oddychać.'
 warning_chill_night: 'Wychodząc na spacer załóż bluzę lub lekką kurtkę.'

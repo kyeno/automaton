@@ -1,9 +1,8 @@
-#!/usr/bin/env node
 /**
  * Numeric utilities.
  *
  * Provides a simple rounding function that strips trailing decimals beyond
- * one decimal place (e.g., 23.0 → 23, 23.456 → 23.5). Useful for sensor
+ * one decimal place (e.g., 23.0 -> 23, 23.456 -> 23.5). Useful for sensor
  * values displayed to users or spoken via TTS, where extra precision is
  * noisy and unnecessary.
  *
@@ -26,10 +25,10 @@
  * when the result has no fractional part.
  *
  * Examples:
- *   round(23.0, 1)    → 23
- *   round(23.456, 1)  → 23.5
- *   round(98.7, 1)    → 98.7
- *   round(100, 1)     → 100
+ *   round(23.0, 1)   -> 23
+ *   round(23.456, 1) -> 23.5
+ *   round(98.7, 1)   -> 98.7
+ *   round(100, 1)    -> 100
  *
  * @param {number} value - The number to round
  * @param {number} [precision=1] - Maximum decimal places (default: 1)

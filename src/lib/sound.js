@@ -74,7 +74,7 @@ const MARIO_GAME_OVER_NOTES = [
 ]
 
 // ---------------------------------------------------------------------------
-// Sound Class
+// SSound Class
 // ---------------------------------------------------------------------------
 
 /**
@@ -83,7 +83,7 @@ const MARIO_GAME_OVER_NOTES = [
  * Methods are backed by the `beep` CLI program and support both
  * callback-based and fire-and-forget calling conventions.
  */
-class Sound {
+class SSound {
 
     // -- Private helpers ----------------------------------------------------
 
@@ -263,4 +263,4 @@ class Sound {
  * All beep and music methods use the `beep` CLI program internally;
  * callback argument is optional for fire-and-forget usage.
  */
-export default Object.freeze(new Sound())
+export default Object.freeze(new SSound())

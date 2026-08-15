@@ -82,7 +82,7 @@ class TtsWindow extends BaseWindow {
         const trimmed = (text || '').trim()
         if (!trimmed) return
 
-        // Emit to tts:speak — triggers both real audio playback AND our own subscriber,
+        // Emit to tts:speak -- triggers both real audio playback AND our own subscriber,
         // which renders the message uniformly with a ">" prefix.
         EventBus.emit('tts:speak', { text: trimmed })
 

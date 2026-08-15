@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Temporal utilities for time-of-day and season detection.
  *
@@ -39,10 +38,10 @@
  * @type {Object}
  */
 const SEASONS = {
-  spring: [2, 4],    // Mar - May
-  summer: [5, 7],    // Jun - Aug
-  autumn: [8, 10],   // Sep - Nov
-  winter: [11, 1],   // Dec - Feb (wraps)
+    spring: [2, 4],    // Mar - May
+    summer: [5, 7],    // Jun - Aug
+    autumn: [8, 10],   // Sep - Nov
+    winter: [11, 1],   // Dec - Feb (wraps)
 }
 
 // ---------------------------------------------------------------------------
@@ -76,18 +75,18 @@ const SEASONS = {
  * @type {Array}
  */
 const SUN_TIMES = [
-  [8, 16],   // January
-  [7, 17],   // February
-  [6, 18],   // March
-  [6, 19],   // April
-  [5, 21],   // May
-  [5, 21],   // June
-  [5, 21],   // July
-  [5, 20],   // August
-  [6, 19],   // September
-  [7, 17],   // October
-  [7, 16],   // November
-  [8, 16],   // December
+    [8, 16],   // January
+    [7, 17],   // February
+    [6, 18],   // March
+    [6, 19],   // April
+    [5, 21],   // May
+    [5, 21],   // June
+    [5, 21],   // July
+    [5, 20],   // August
+    [6, 19],   // September
+    [7, 17],   // October
+    [7, 16],   // November
+    [8, 16],   // December
 ]
 
 /**
@@ -97,7 +96,7 @@ const SUN_TIMES = [
 const EVENING_EXTENSION_HOURS = 2
 
 // ---------------------------------------------------------------------------
-// Temporal Class
+// STemporal Class
 // ---------------------------------------------------------------------------
 
 /**
@@ -111,7 +110,7 @@ const EVENING_EXTENSION_HOURS = 2
  * {@link SEASONS} configuration and {@link SUN_TIMES} data.
  * @ignore
  */
-class Temporal {
+class STemporal {
 
     // -- Private helpers ----------------------------------------------------
 
@@ -131,24 +130,24 @@ class Temporal {
      * @private
      */
     #computePeriods(sunrise, sunset) {
-      const daylight = sunset - sunrise
-      const q = daylight / 4
-      const nightStart = (sunset + EVENING_EXTENSION_HOURS) % 24
+        const daylight = sunset - sunrise
+        const q = daylight / 4
+        const nightStart = (sunset + EVENING_EXTENSION_HOURS) % 24
 
-      // Continuous ranges -- no gaps between consecutive periods.
-      // Each period's "from" equals the previous period's "to" + 1,
-      // ensuring every hour 0-23 maps to exactly one period.
-      const morningEnd = Math.round(sunrise + q)
-      const noonEnd = Math.round(sunrise + 2 * q)
-      const afternoonEnd = Math.round(sunrise + 3 * q)
+        // Continuous ranges -- no gaps between consecutive periods.
+        // Each period's "from" equals the previous period's "to" + 1,
+        // ensuring every hour 0-23 maps to exactly one period.
+        const morningEnd = Math.round(sunrise + q)
+        const noonEnd = Math.round(sunrise + 2 * q)
+        const afternoonEnd = Math.round(sunrise + 3 * q)
 
-      return {
-        morning:   [sunrise, morningEnd],
-        noon:      [morningEnd + 1, noonEnd],
-        afternoon: [noonEnd + 1, afternoonEnd],
-        evening:   [afternoonEnd + 1, nightStart - 1],
-        night:     [nightStart, sunrise - 1],
-      }
+        return {
+            morning:   [sunrise, morningEnd],
+            noon:      [morningEnd + 1, noonEnd],
+            afternoon: [noonEnd + 1, afternoonEnd],
+            evening:   [afternoonEnd + 1, nightStart - 1],
+            night:     [nightStart, sunrise - 1],
+        }
     }
 
     /**
@@ -162,7 +161,7 @@ class Temporal {
      * @private
      */
     #inHourRange(h, from, to) {
-      return from <= to
+        return from <= to
         ? h >= from && h <= to
         : h >= from || h <= to
     }
@@ -178,7 +177,7 @@ class Temporal {
      * @private
      */
     #inMonthRange(m, from, to) {
-      return from <= to
+        return from <= to
         ? m >= from && m <= to
         : m >= from || m <= to
     }
@@ -190,7 +189,7 @@ class Temporal {
      * @returns {boolean}
      */
     isMorning() {
-      return this.#checkPeriod('morning')
+        return this.#checkPeriod('morning')
     }
 
     /**
@@ -198,7 +197,7 @@ class Temporal {
      * @returns {boolean}
      */
     isNoon() {
-      return this.#checkPeriod('noon')
+        return this.#checkPeriod('noon')
     }
 
     /**
@@ -206,7 +205,7 @@ class Temporal {
      * @returns {boolean}
      */
     isAfternoon() {
-      return this.#checkPeriod('afternoon')
+        return this.#checkPeriod('afternoon')
     }
 
     /**
@@ -214,7 +213,7 @@ class Temporal {
      * @returns {boolean}
      */
     isEvening() {
-      return this.#checkPeriod('evening')
+        return this.#checkPeriod('evening')
     }
 
     /**
@@ -222,7 +221,7 @@ class Temporal {
      * @returns {boolean}
      */
     isNight() {
-      return this.#checkPeriod('night')
+        return this.#checkPeriod('night')
     }
 
     /**
@@ -233,13 +232,13 @@ class Temporal {
      * @private
      */
     #checkPeriod(period) {
-      const now = new Date()
-      const h = now.getHours()
-      const m = now.getMonth()
-      const [sunrise, sunset] = SUN_TIMES[m]
-      const periods = this.#computePeriods(sunrise, sunset)
-      const [from, to] = periods[period]
-      return this.#inHourRange(h, from, to)
+        const now = new Date()
+        const h = now.getHours()
+        const m = now.getMonth()
+        const [sunrise, sunset] = SUN_TIMES[m]
+        const periods = this.#computePeriods(sunrise, sunset)
+        const [from, to] = periods[period]
+        return this.#inHourRange(h, from, to)
     }
 
     // -- Season predicates --------------------------------------------------
@@ -249,7 +248,7 @@ class Temporal {
      * @returns {boolean}
      */
     isSpring() {
-      return this.#checkSeason('spring')
+        return this.#checkSeason('spring')
     }
 
     /**
@@ -257,7 +256,7 @@ class Temporal {
      * @returns {boolean}
      */
     isSummer() {
-      return this.#checkSeason('summer')
+        return this.#checkSeason('summer')
     }
 
     /**
@@ -265,7 +264,7 @@ class Temporal {
      * @returns {boolean}
      */
     isAutumn() {
-      return this.#checkSeason('autumn')
+        return this.#checkSeason('autumn')
     }
 
     /**
@@ -273,7 +272,7 @@ class Temporal {
      * @returns {boolean}
      */
     isWinter() {
-      return this.#checkSeason('winter')
+        return this.#checkSeason('winter')
     }
 
     /**
@@ -284,8 +283,8 @@ class Temporal {
      * @private
      */
     #checkSeason(seasonName) {
-      const [from, to] = SEASONS[seasonName]
-      return this.#inMonthRange(new Date().getMonth(), from, to)
+        const [from, to] = SEASONS[seasonName]
+        return this.#inMonthRange(new Date().getMonth(), from, to)
     }
 
     // -- Duration formatting ------------------------------------------------
@@ -301,27 +300,27 @@ class Temporal {
      * @returns {string} Human-readable duration string
      */
     millisecondsToHumanReadable(ms) {
-      if (!Number.isFinite(ms) || ms < 0) return '0ms'
-      if (ms === 0) return '0ms'
+        if (!Number.isFinite(ms) || ms < 0) return '0ms'
+        if (ms === 0) return '0ms'
 
-      const days = Math.floor(ms / 86_400_000)
-      const hours = Math.floor((ms % 86_400_000) / 3_600_000)
-      const minutes = Math.floor((ms % 3_600_000) / 60_000)
-      const seconds = Math.floor((ms % 60_000) / 1_000)
-      const millis = ms % 1_000
+        const days = Math.floor(ms / 86_400_000)
+        const hours = Math.floor((ms % 86_400_000) / 3_600_000)
+        const minutes = Math.floor((ms % 3_600_000) / 60_000)
+        const seconds = Math.floor((ms % 60_000) / 1_000)
+        const millis = ms % 1_000
 
-      // If sub-second, show only milliseconds
-      if (ms < 1_000) return `${ms}ms`
+        // If sub-second, show only milliseconds
+        if (ms < 1_000) return `${ms}ms`
 
-      const parts = []
-      if (days > 0) parts.push(`${days}d`)
-      if (hours > 0) parts.push(`${hours}h`)
-      if (minutes > 0) parts.push(`${minutes}min`)
-      if (seconds > 0) parts.push(`${seconds}sec`)
-      // Milliseconds only shown when no larger units present and value is small
-      else if (parts.length === 0 && millis > 0) parts.push(`${millis}ms`)
+        const parts = []
+        if (days > 0) parts.push(`${days}d`)
+        if (hours > 0) parts.push(`${hours}h`)
+        if (minutes > 0) parts.push(`${minutes}min`)
+        if (seconds > 0) parts.push(`${seconds}sec`)
+        // Milliseconds only shown when no larger units present and value is small
+        else if (parts.length === 0 && millis > 0) parts.push(`${millis}ms`)
 
-      return parts.join(' ')
+        return parts.join(' ')
     }
 
     /**
@@ -335,17 +334,17 @@ class Temporal {
      * @returns {string} Human-readable duration string
      */
     secondsToHumanReadable(totalSeconds) {
-      if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '0sec'
-      if (totalSeconds === 0) return '0sec'
+        if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '0sec'
+        if (totalSeconds === 0) return '0sec'
 
-      const hours = Math.floor(totalSeconds / 3600)
-      const minutes = Math.floor((totalSeconds % 3600) / 60)
-      const seconds = totalSeconds % 60
-      const parts = []
-      if (hours > 0) parts.push(`${hours}h`)
-      if (minutes > 0) parts.push(`${minutes}min`)
-      parts.push(`${seconds}sec`)
-      return parts.join(' ')
+        const hours = Math.floor(totalSeconds / 3600)
+        const minutes = Math.floor((totalSeconds % 3600) / 60)
+        const seconds = totalSeconds % 60
+        const parts = []
+        if (hours > 0) parts.push(`${hours}h`)
+        if (minutes > 0) parts.push(`${minutes}min`)
+        parts.push(`${seconds}sec`)
+        return parts.join(' ')
     }
 
     /**
@@ -357,13 +356,13 @@ class Temporal {
      * @returns {string} e.g. "every 5s", "every 5m", "every 2h", or "disabled"
      */
     msToHuman(ms) {
-      if (!ms || ms <= 0) return 'disabled'
-      const secs = Math.round(ms / 1_000)
-      if (secs < 60) return `every ${secs}s`
-      const mins = Math.round(secs / 60)
-      if (mins < 60) return `every ${mins}m`
-      const hours = Math.round(mins / 60)
-      return `every ${hours}h`
+        if (!ms || ms <= 0) return 'disabled'
+        const secs = Math.round(ms / 1_000)
+        if (secs < 60) return `every ${secs}s`
+        const mins = Math.round(secs / 60)
+        if (mins < 60) return `every ${mins}m`
+        const hours = Math.round(mins / 60)
+        return `every ${hours}h`
     }
 
     // -- Convenience --------------------------------------------------------
@@ -375,12 +374,12 @@ class Temporal {
      * @returns {'morning'|'noon'|'afternoon'|'evening'|'night'|null} The matching period or null.
      */
     getCurrentTimePeriod() {
-      if (this.isMorning()) return 'morning'
-      if (this.isNoon()) return 'noon'
-      if (this.isAfternoon()) return 'afternoon'
-      if (this.isEvening()) return 'evening'
-      if (this.isNight()) return 'night'
-      return null
+        if (this.isMorning()) return 'morning'
+        if (this.isNoon()) return 'noon'
+        if (this.isAfternoon()) return 'afternoon'
+        if (this.isEvening()) return 'evening'
+        if (this.isNight()) return 'night'
+        return null
     }
 }
 
@@ -394,4 +393,4 @@ class Temporal {
  * All day-period and season predicates use the current system clock;
  * duration formatters accept numeric arguments.
  */
-export default Object.freeze(new Temporal())
+export default Object.freeze(new STemporal())

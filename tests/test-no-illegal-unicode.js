@@ -2,16 +2,23 @@
 /**
  * Illegal Unicode punctuation check.
  *
- * Scans source files under src/ and etc/ for decorative Unicode characters
- * that have no place in code, comments, or log messages per CONTRIBUTING.md:
+ * Scans JavaScript and YAML files under src/ and etc/ -- including *.dist
+ * templates -- for decorative Unicode characters that have no place in code,
+ * comments, config values, or log messages per CONTRIBUTING.md:
  *   - Arrows (U+2192 U+21D2 U+27A1 U+27A4 U+2190 U+21D0) -- use "->" / "<-"
  *   - Em/en dashes (U+2014 U+2013) -- use regular dash "-"
  *   - Curly/smart quotes (U+201C U+201D U+2018 U+2019 ...) -- use straight '"'/'"'
  *   - Ellipsis (U+2026) -- use three dots "..."
  *   - Bullets (U+2022 U+2023 U+25AA U+25AB) -- use "-" or "*"
+ *   - Warning sign (U+26A0), circles (U+25CF U+25CB) -- use ASCII "[!]", "*", "o",
+ *     or "\uXXXX" escapes inside string literals
+ *   - Math relational symbols (U+2264 U+2265) -- use "<=" / ">="
+ *   - Degree sign (U+00B0) -- spell it out ("deg", "degrees")
+ *   - Box-drawing characters (U+2500-U+257F) -- use ASCII "-","+","|" or
+ *     "\uXXXX" escapes inside string literals
  *
  * Natural language diacritics are allowed (Polish accented chars, Cyrillic, etc.)
- * since they appear in i18n strings inside source code. Only decorative
+ * since they appear in i18n strings and config content. Only decorative
  * punctuation is flagged.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -56,18 +63,38 @@ var ILLEGAL_CHARS = [
     { char: '\u2023', name: 'triangular bullet' },
     { char: '\u25AA', name: 'black small square' },
     { char: '\u25AB', name: 'white small square' },
+    // Warning / status glyphs
+    { char: '\u26A0', name: 'warning sign' },
+    // Circles used as decorative icons (use ASCII or \uXXXX escapes in strings)
+    { char: '\u25CF', name: 'black circle' },
+    { char: '\u25CB', name: 'white circle' },
+    // Math relational symbols -- use "<=" / ">="
+    { char: '\u2264', name: 'less-than or equal to' },
+    { char: '\u2265', name: 'greater-than or equal to' },
+    // Degree sign -- spell it out ("deg", "degrees")
+    { char: '\u00B0', name: 'degree sign' },
 ];
 
-/** Build a Set of illegal Unicode code points for O(1) lookups. */
-var ILLEGAL_CODEPOINTS = new Set();
-for (var i = 0; i < ILLEGAL_CHARS.length; i++) {
-    ILLEGAL_CODEPOINTS.add(ILLEGAL_CHARS[i].char.charCodeAt(0));
-}
+// Ranges of illegal code points (inclusive). Covers whole blocks that are
+// always decorative, e.g. box-drawing characters used for tree diagrams.
+var ILLEGAL_RANGES = [
+    { from: 0x2500, to: 0x257F, name: 'box-drawing character' },
+];
 
-/** Map from single-char string to its human-readable label. */
-var CHAR_LABELS = {};
-for (var j = 0; j < ILLEGAL_CHARS.length; j++) {
-    CHAR_LABELS[ILLEGAL_CHARS[j].char] = ILLEGAL_CHARS[j].name;
+/**
+ * Look up the label for an illegal code point, or null when it is legal.
+ * Checks single-character entries first, then inclusive ranges.
+ * @param {number} cp - Unicode code point
+ * @returns {?string} Human-readable label when the code point is illegal
+ */
+function findIllegalLabel(cp) {
+    for (var i = 0; i < ILLEGAL_CHARS.length; i++) {
+        if (ILLEGAL_CHARS[i].char.codePointAt(0) === cp) return ILLEGAL_CHARS[i].name;
+    }
+    for (var r = 0; r < ILLEGAL_RANGES.length; r++) {
+        if (cp >= ILLEGAL_RANGES[r].from && cp <= ILLEGAL_RANGES[r].to) return ILLEGAL_RANGES[r].name;
+    }
+    return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -80,11 +107,25 @@ function shouldExclude(relPath) {
         if (parts[i].startsWith('_')) return true;
     }
     if (/node_modules/.test(relPath)) return true;
-    if (/\.dist$/.test(relPath)) return true;
+    // Note: *.dist templates are intentionally NOT excluded -- they are committed
+    // source content and must follow the same conventions as active files.
     return false;
 }
 
-function collectJsFiles(dir) {
+// File extensions scanned by this check. Templates named "<name>.<ext>.dist"
+// are matched on their base extension so they get the same treatment.
+var SCANNED_EXTENSIONS = ['.js', '.yaml', '.yml'];
+
+/** @returns {boolean} true when the entry name matches a scanned extension */
+function hasScannedExtension(entryName) {
+    var base = entryName.replace(/\.dist$/, '');
+    for (var k = 0; k < SCANNED_EXTENSIONS.length; k++) {
+        if (base.endsWith(SCANNED_EXTENSIONS[k])) return true;
+    }
+    return false;
+}
+
+function collectSourceFiles(dir) {
     var results = [];
     try {
         var entries = readdirSync(dir);
@@ -99,9 +140,9 @@ function collectJsFiles(dir) {
         if (shouldExclude(rel)) continue;
         var st = statSync(full);
         if (st.isDirectory()) {
-            var sub = collectJsFiles(full);
+            var sub = collectSourceFiles(full);
             for (var j = 0; j < sub.length; j++) results.push(sub[j]);
-        } else if (entry.endsWith('.js')) {
+        } else if (hasScannedExtension(entry)) {
             results.push(full);
         }
     }
@@ -116,7 +157,7 @@ console.log('');
 console.log('-- Illegal Unicode Punctuation Check --');
 console.log('');
 
-var files = collectJsFiles(SRC_DIR).concat(collectJsFiles(ETC_DIR));
+var files = collectSourceFiles(SRC_DIR).concat(collectSourceFiles(ETC_DIR));
 var violations = [];
 
 for (var fi = 0; fi < files.length; fi++) {
@@ -127,17 +168,19 @@ for (var fi = 0; fi < files.length; fi++) {
 
     for (var li = 0; li < lines.length; li++) {
         var lineText = lines[li];
-        for (var ci = 0; ci < lineText.length; ci++) {
-            var cp = lineText.charCodeAt(ci);
-            if (!ILLEGAL_CODEPOINTS.has(cp)) continue;
-            var ch = lineText[ci];
-            violations.push({
-                file: relPath,
-                line: li + 1,          // 1-based
-                char: ch,
-                label: CHAR_LABELS[ch] || ('unknown U+' + cp.toString(16).toUpperCase()),
-                snippet: lineText.trim().substring(Math.max(0, ci - 20), Math.min(lineText.trim().length, ci + 21))
-            });
+        for (var ci = 0; ci < lineText.length;) {
+            var cp = lineText.codePointAt(ci);
+            var label = findIllegalLabel(cp);
+            if (label !== null) {
+                violations.push({
+                    file: relPath,
+                    line: li + 1,          // 1-based
+                    char: String.fromCodePoint(cp),
+                    label: label,
+                    snippet: lineText.substring(Math.max(0, ci - 25), Math.min(lineText.length, ci + 26)).trim()
+                });
+            }
+            ci += cp > 0xFFFF ? 2 : 1;     // astral chars occupy two UTF-16 units
         }
     }
 }

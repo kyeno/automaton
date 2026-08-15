@@ -21,7 +21,7 @@ import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
 
 // ---------------------------------------------------------------------------
-// ChannelManager (singleton)
+// SChannelManager (singleton)
 // ---------------------------------------------------------------------------
 
 /**
@@ -29,7 +29,7 @@ import LoggerService from '../service/loggerService.js'
  * Provides lookup by id, shortcut key, and builds mapping structures
  * for status bar and keyboard navigation.
  */
-class ChannelManager {
+class SChannelManager {
     #channels = []
     #byId = new Map()
     #byShortcut = new Map()
@@ -125,5 +125,5 @@ class ChannelManager {
 }
 
 // Export a singleton instance
-const channels = new ChannelManager()
+const channels = new SChannelManager()
 export default channels

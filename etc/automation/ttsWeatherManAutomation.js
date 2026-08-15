@@ -214,7 +214,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /**
      * Resolve a dotted i18n key against the loaded weatherman bundle.
-     * Example: 'weatherman.hot_warning' -> bundle['hot_warning']
+     * Example: 'weatherman.warning_apocalypse' -> bundle['warning_apocalypse']
      * The first segment ('weatherman') is stripped as the namespace prefix.
      * @param {string} key - Dot-separated key (e.g., "weatherman.base")
      * @param {*} fallback - Default value if key not found

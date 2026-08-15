@@ -68,7 +68,7 @@ export default class ExampleInteraction extends InteractionBase {
     }
 
     /**
-     * Main execution logic — called whenever the interaction is triggered.
+     * Main execution logic -- called whenever the interaction is triggered.
      *
      * @param {Object} triggerData - Data from the event trigger
      */

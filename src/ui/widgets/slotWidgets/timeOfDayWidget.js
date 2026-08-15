@@ -2,7 +2,7 @@
  * Time-of-Day Slot Widget.
  *
  * Renders the current time-of-day period (morning, noon, afternoon, evening, night)
- * using the Temporal utility from lib/date.js.
+ * using the temporal utilities from lib/date.js.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).

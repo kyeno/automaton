@@ -36,8 +36,8 @@ export default function renderState(config = {}) {
     const isTrue = value === true
 
     const icon = isTrue
-        ? (iconTrue || '●')
-        : (iconFalse || '○')
+        ? (iconTrue || '\u25cf')
+        : (iconFalse || '\u25cb')
 
     return { icon, label: label || '' }
 }

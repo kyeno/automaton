@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * OpenAI-compatible API provider.
  *

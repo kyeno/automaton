@@ -91,18 +91,18 @@ class SAutomationContainer {
 
         const customDir = path.join(PROJECT_ROOT, dirRelative)
 
-         try {
-             const autoloader = new Autoloader()
-             const modules = await autoloader.preloadPath(customDir)
+        try {
+            const autoloader = new Autoloader()
+            const modules = await autoloader.preloadPath(customDir)
 
-             for (const [fileName, moduleExport] of Object.entries(modules)) {
-                 // Skip non-JS modules (e.g., YAML configs have no .js extension,
-                 // but guard against future autoloaders that might pick them up)
-                 if (!fileName.endsWith('.js') && !fileName.includes('Automation')) continue
+            for (const [fileName, moduleExport] of Object.entries(modules)) {
+                // Skip non-JS modules (e.g., YAML configs have no .js extension,
+                // but guard against future autoloaders that might pick them up)
+                if (!fileName.endsWith('.js') && !fileName.includes('Automation')) continue
 
-                 // Autoloader.preloadPath already resolves mod.default ?? mod,
-                 // so moduleExport IS the class constructor directly.
-                 const AutomationClass = moduleExport
+                // Autoloader.preloadPath already resolves mod.default ?? mod,
+                // so moduleExport IS the class constructor directly.
+                const AutomationClass = moduleExport
                 if (typeof AutomationClass !== 'function') {
                     LoggerService.warn(
                         `Skipping "${fileName}" -- no callable default export found`,

@@ -7,9 +7,9 @@
 
 base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
-hot_warning: 'Warning, it is very hot today!'
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
-warning_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
+warning_humid_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
+warning_hot_stay_at_home: 'WARNING: It is so hot that breathing is difficult! Make sure to stay indoors!'
 warning_apocalypse: 'WARNING: Thermal apocalypse outside! Close blinds, seal windows, crank up the AC, and do not leave the house under any circumstances!'
 warning_humid_night: 'WARNING: Humidity levels are too high for comfortable breathing outdoors.'
 warning_chill_night: 'Grab a sweater or light jacket before heading out.'

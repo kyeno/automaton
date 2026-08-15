@@ -89,7 +89,7 @@ strip_ai_formatting: false
 
 # Periodic AI messenger settings for the built-in AI Periodic Service.
 # Sends a localized prompt to the AI at regular intervals, triggering
-# the full flow: tool execution → AI response → TTS (if enabled).
+# the full flow: tool execution -> AI response -> TTS (if enabled).
 # In the UI, these messages appear with a <system> prefix (yellow color).
 ai_periodic_message:
   # Interval in milliseconds between periodic messages (default: 900000 = 15 min).
