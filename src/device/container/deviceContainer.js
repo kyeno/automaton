@@ -368,10 +368,18 @@ class SDeviceContainer {
     /**
      * Get all registered devices.
      *
+     * @param {{includeBridge?: boolean}} [options={}] - Filtering options.
+     * @param {boolean} [options.includeBridge=true] - When false, omit the Zigbee2MQTT bridge/coordinator entry.
      * @returns {Object} Map of device name -> Device instance
      */
-    getAll() {
-        return this.#devices
+    getAll({ includeBridge = true } = {}) {
+        if (includeBridge) return this.#devices
+        const result = {}
+        for (const [name, device] of Object.entries(this.#devices)) {
+            if (device instanceof Bridge) continue
+            result[name] = device
+        }
+        return result
     }
 
     // -- Dynamic device management ------------------------------------

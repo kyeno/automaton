@@ -26,8 +26,7 @@ import LoggerService from '../service/loggerService.js'
 
 /**
  * Manages window/channel definitions loaded from automaton.yaml.
- * Provides lookup by id, shortcut key, and builds mapping structures
- * for status bar and keyboard navigation.
+ * Provides lookup by internal id and numeric shortcut key.
  */
 class SChannelManager {
     #channels = []
@@ -97,19 +96,6 @@ class SChannelManager {
      */
     getByShortcut(shortcut) {
         return this.#byShortcut.get(Number(shortcut)) || null
-    }
-
-    /**
-     * Build an id->shortcut map for legacy status bar activity tracking.
-     * Example: { logs: 1, device: 2, ai: 3 }
-     * @returns {Object}
-     */
-    getIdToShortcutMap() {
-        const map = {}
-        for (const ch of this.getAll()) {
-            map[ch.id] = ch.shortcut
-        }
-        return map
     }
 
     /**

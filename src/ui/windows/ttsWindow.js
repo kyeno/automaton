@@ -18,7 +18,7 @@
 
 import EventBus from '../../service/eventBus.js'
 import { tsPrefix } from '../../lib/terminal.js'
-import { Colors } from '../../lib/terminal.js'
+import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ class TtsWindow extends BaseWindow {
         this.#speakUnsub = EventBus.subscribe('tts:speak', ({ text }) => {
             if (!text) return
 
-            this.printMessage(text, `${tsPrefix()} ${Colors.bold}${Colors.yellow}>${Colors.reset} `)
+            this.printMessage(text, `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.yellow}>${AnsiColors.reset} `)
             EventBus.emit('window:activity', this.#channelShortcut)
         })
     }
@@ -125,7 +125,7 @@ class TtsWindow extends BaseWindow {
      */
     #showWelcome() {
         // Action: * TTS monitor has joined the channel.
-        this.print(`${tsPrefix()} ${Colors.italic}${Colors.white}* TTS monitor is now active.${Colors.reset}`)
+        this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* TTS monitor is now active.${AnsiColors.reset}`)
     }
 }
 

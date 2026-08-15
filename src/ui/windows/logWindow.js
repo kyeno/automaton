@@ -17,6 +17,7 @@
 import Transport from 'winston-transport'
 import EventBus from '../../service/eventBus.js'
 import { tsPrefix } from '../../lib/terminal.js'
+import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
 // ---------------------------------------------------------------------------
@@ -97,14 +98,14 @@ class UiLogTransport extends Transport {
         const padding = '\u00A0'.repeat(MAX_LEVEL_WIDTH - levelLabel.length)
 
         const levelColors = {
-            error: '\x1b[31m',   // red
-            warn: '\x1b[33m',    // yellow
-            info: '\x1b[36m',    // cyan
-            debug: '\x1b[90m',   // dim gray
+            error: AnsiColors.red,
+            warn: AnsiColors.yellow,
+            info: AnsiColors.cyan,
+            debug: AnsiColors.grey,
         }
-        const reset = '\x1b[0m'      // full reset (clears color + bold)
-        const bold = '\x1b[1m'
-        const contextColor = '\x1b[97m'  // bright white for namespace/context
+        const reset = AnsiColors.reset
+        const bold = AnsiColors.bold
+        const contextColor = AnsiColors.white
         const color = levelColors[level] || reset
 
         // Context gets bold emphasis (like IRC nick/channel in BitchX), log level does not

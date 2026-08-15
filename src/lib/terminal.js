@@ -2,9 +2,8 @@
  * Terminal utility functions for ANSI-aware text manipulation and formatting.
  *
  * Provides string helpers that correctly handle invisible ANSI escape sequences
- * when computing visible length, padding, wrapping, and cell rendering. Also
- * exports a frozen map of common ANSI color codes to avoid duplication across
- * UI modules.
+ * when computing visible length, padding, wrapping, and cell rendering. Color
+ * constants live in `enum/ansiColors` -- imported here only where needed internally.
  *
  * @module lib/terminal
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -16,32 +15,7 @@
 'use strict'
 
 import I18nLoader from '../service/i18nLoader.js'
-
-// ---------------------------------------------------------------------------
-// ANSI Color Map -- frozen singleton
-// ---------------------------------------------------------------------------
-
-/**
- * Common ANSI SGR color codes for terminal output.
- * Frozen to prevent accidental mutation at runtime.
- *
- * @type {Object<string, string>}
- */
-const Colors = Object.freeze({
-    reset:   '\x1b[0m',
-    bold:    '\x1b[1m',
-    dim:     '\x1b[2m',
-    italic:  '\x1b[3m',
-    cyan:    '\x1b[36m',
-    green:   '\x1b[32m',
-    magenta: '\x1b[35m',
-    yellow:  '\x1b[33m',
-    red:     '\x1b[31m',
-    grey:    '\x1b[90m',
-    white:   '\x1b[97m',
-})
-
-export { Colors }
+import AnsiColors from '../enum/ansiColors.js'
 
 // ---------------------------------------------------------------------------
 // ANSI String Utilities
@@ -97,12 +71,12 @@ export function colCell(text, color, width, align = 'left') {
         const raw = String(text)
         const vlen = raw.length
         if (vlen >= width) {
-            return color + raw + Colors.reset
+            return color + raw + AnsiColors.reset
         }
         const spaces = ' '.repeat(width - vlen)
         return align === 'right'
-        ? color + spaces + raw + Colors.reset
-        : color + raw + spaces + Colors.reset
+        ? color + spaces + raw + AnsiColors.reset
+        : color + raw + spaces + AnsiColors.reset
 }
 
 // ---------------------------------------------------------------------------
@@ -359,5 +333,5 @@ export function formatTime(date, includeSeconds = true) {
  */
 export function tsPrefix(date) {
         const d = date ? (typeof date === 'object' && date instanceof Date ? date : new Date(date)) : new Date()
-        return `${Colors.dim}[${formatTime(d)}]${Colors.reset}`
+        return `${AnsiColors.dim}[${formatTime(d)}]${AnsiColors.reset}`
 }

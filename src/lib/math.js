@@ -36,7 +36,7 @@
  */
 export function round(value, precision = 1) {
     const factor = Math.pow(10, precision)
-    const rounded = Math.round(value * factor) / factor
-    // Return plain integer when there's no fractional remainder
-    return Number.isInteger(rounded) ? rounded : rounded
+    // JS numbers carry no trailing zeros, so the division already yields a
+    // plain integer (e.g., 23.0 -> 23) whenever there is no fractional part.
+    return Math.round(value * factor) / factor
 }

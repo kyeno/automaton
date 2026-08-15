@@ -237,56 +237,15 @@ class SToolBuilder {
             'AiAssistant'
         )
 
-        // Determine human-readable action for the event payload
-        let interactionAction = action ?? 'STATE'
-        if ('position' in args && typeof args.position === 'number') {
-            interactionAction = `SET_POSITION=${Math.max(0, Math.min(100, Math.round(args.position)))}`
-        }
-
-        // Emit device interaction event for UI consumption
-        EventBus.emit('ai:deviceInteraction', {
-            device: deviceName,
-            action: interactionAction,
-            tool: funcName
-        })
-
-        // --- Read state (filtered for AI relevance) ---
-        if (funcName === 'get_device_state' || action === 'STATE') {
-            const cached = await device.getCachedState()
-            const stateLast = cached?.stateLast ?? {}
-            return JSON.stringify({
-                device: deviceName,
-                state: this.#filterStateForAI(stateLast),
-                last_updated: cached?.stateLastAt ?? null,
-                origin: cached?.stateOrigin ?? 'unknown'
-            }, null, 2)
-        }
-
-        // --- Position-based command (roller shutter) ---
-        if ('position' in args && typeof args.position === 'number') {
-            const pos = Math.max(0, Math.min(100, Math.round(args.position)))
-            device.receiveCommand({ position: pos }, true)
-            return JSON.stringify({
-                device: deviceName,
-                action: 'set_position',
-                position: pos,
-                status: 'sent'
-            })
-        }
-
-        // --- Standard command (ON/OFF/OPEN/CLOSE/STOP) ---
-        if (action) {
-            device.receiveCommand(action, true)
-            return JSON.stringify({
-                device: deviceName,
-                action: action,
-                status: 'sent'
-            })
-        }
-
-        return JSON.stringify({
-            device: deviceName,
-            error: `No action specified in arguments: ${JSON.stringify(args)}`
+        // Delegate to the shared dispatcher. readState mirrors the original
+        // condition so get_device_state always returns state even with an action.
+        const readState = funcName === 'get_device_state' || action === 'STATE'
+        return this.#dispatchToDevice(device, deviceName, {
+            action,
+            position: args.position,
+            toolLabel: funcName,
+            readState,
+            rawArgs: args
         })
     }
 
@@ -378,21 +337,51 @@ class SToolBuilder {
             'AiAssistant'
         )
 
+        // No explicit action means "read current state"; delegate to the shared
+        // dispatcher for event emission and command handling.
+        const readState = !action || action === 'STATE'
+        return this.#dispatchToDevice(device, deviceName, {
+            action,
+            position: intent.position,
+            toolLabel: 'json_intent',
+            readState
+        })
+    }
+
+    /**
+     * Shared dispatch logic for native tool calls and parsed JSON intents.
+     *
+     * Both entry points normalize their inputs before delegating here so the
+     * behavior stays identical: emits the UI interaction event, then performs
+     * exactly one of state read, roller-shutter position set, or standard
+     * command send, returning a JSON-stringified result for the model.
+     *
+     * @param {DeviceBase} device - Resolved live device instance
+     * @param {string} deviceName - Device friendly name used in result payloads
+     * @param {{action?: string|null, position?: number|undefined, toolLabel: string, readState: boolean, rawArgs?: Object}} opts - Normalized operation parameters
+     * @returns {Promise<string>} JSON-stringified result for the model
+     * @private
+     */
+    async #dispatchToDevice(device, deviceName, { action = null, position, toolLabel = 'unknown', readState = false, rawArgs = {} }) {
+        const hasPosition = typeof position === 'number'
+        // Clamp once -- reused by both the event payload and the command branch
+        const clampedPos = hasPosition ? Math.max(0, Math.min(100, round(position))) : null
+
         // Determine human-readable action for the event payload
         let interactionAction = action ?? 'STATE'
-        if (intent.position !== undefined && typeof intent.position === 'number') {
-            interactionAction = `SET_POSITION=${Math.max(0, Math.min(100, Math.round(intent.position)))}`
+        if (hasPosition) {
+            interactionAction = `SET_POSITION=${clampedPos}`
         }
 
         // Emit device interaction event for UI consumption
         EventBus.emit('ai:deviceInteraction', {
             device: deviceName,
             action: interactionAction,
-            tool: 'json_intent'
+            tool: toolLabel
         })
 
-        // --- Read state (STATE action or no explicit action, filtered for AI) ---
-        if (!action || action === 'STATE') {
+        // --- Read state (filtered for AI relevance) ---
+        if (readState) {
             const cached = await device.getCachedState()
             const stateLast = cached?.stateLast ?? {}
             return JSON.stringify({
@@ -403,27 +392,32 @@ class SToolBuilder {
             }, null, 2)
         }
 
-        // --- Position-based command ---
-        if (intent.position !== undefined) {
-            const pos = Math.max(0, Math.min(100, Math.round(intent.position)))
-            device.receiveCommand({ position: pos }, true)
+        // --- Position-based command (roller shutter) ---
+        if (hasPosition) {
+            device.receiveCommand({ position: clampedPos }, true)
             return JSON.stringify({
                 device: deviceName,
                 action: 'set_position',
-                position: pos,
+                position: clampedPos,
                 status: 'sent'
             })
         }
 
         // --- Standard command (ON/OFF/OPEN/CLOSE/STOP) ---
-        device.receiveCommand(action, true)
+        if (action) {
+            device.receiveCommand(action, true)
+            return JSON.stringify({
+                device: deviceName,
+                action: action,
+                status: 'sent'
+            })
+        }
+
         return JSON.stringify({
             device: deviceName,
-            action: action,
-            status: 'sent'
+            error: `No action specified in arguments: ${JSON.stringify(rawArgs)}`
         })
     }
-
     // -- Private Helpers --------------------------------------------------
 
     /**

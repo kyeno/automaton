@@ -16,6 +16,7 @@
 import EventBus from '../../../service/eventBus.js'
 import DeviceContainer from '../../../device/container/deviceContainer.js'
 import { createSubscriptionManager } from './widgetBase.js'
+import { round } from '../../../lib/math.js'
 
 const mgr = createSubscriptionManager()
 
@@ -40,12 +41,11 @@ export default function renderTemp(config = {}) {
 
     const value = cached.temperature
 
-    // Smart formatting: round to 1 decimal if fractional, integer if whole
+    // Smart formatting: round to 1 decimal; drop trailing ".0" for whole values
     let displayValue
     if (typeof value === 'number') {
-        const rounded1 = (Math.round(value * 10) / 10).toFixed(1)
-        // If the decimal is .0, show as integer
-        displayValue = rounded1.endsWith('.0') ? String(Math.floor(value)) : rounded1
+        const rounded = round(value, 1)
+        displayValue = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
     } else {
         displayValue = String(value)
     }

@@ -16,7 +16,8 @@
 
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import EventBus from '../../service/eventBus.js'
-import { Colors, padVisible, colCell } from '../../lib/terminal.js'
+import { padVisible, colCell } from '../../lib/terminal.js'
+import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
 // ---------------------------------------------------------------------------
@@ -103,15 +104,14 @@ class DeviceWindow extends BaseWindow {
      * Devices are grouped by type: Sensors -> Mechanisms -> Remotes.
      */
     refresh() {
-        const allDevices = DeviceContainer.getAll()
+        // Bridge/coordinator entry is excluded at the source (DeviceContainer).
+        const allDevices = DeviceContainer.getAll({ includeBridge: false })
 
         const sensors = []
         const mechanisms = []
         const remotes = []
 
         for (const [name, device] of Object.entries(allDevices)) {
-            if (name === 'bridge') continue
-
             const prefix = device.getLogPrefix?.() || 'Device'
 
             if (prefix === 'Sensor') {
@@ -152,11 +152,11 @@ class DeviceWindow extends BaseWindow {
         const totalDevices = sensors.length + mechanisms.length + remotes.length
         lines.push('')
         lines.push(
-            Colors.dim + 'Devices: ' + totalDevices +
+            AnsiColors.dim + 'Devices: ' + totalDevices +
             ' | Sensors: ' + sensors.length +
             ' | Mechanisms: ' + mechanisms.length +
             ' | Remotes: ' + remotes.length +
-            Colors.reset
+            AnsiColors.reset
         )
 
         // Clear buffer and push all current lines for a fresh dashboard view
@@ -172,8 +172,8 @@ class DeviceWindow extends BaseWindow {
      * @private
      */
     #renderSensors(sensors, lines) {
-        const header = Colors.bold + Colors.cyan +
-            '-- Sensors (' + sensors.length + ') --' + Colors.reset
+        const header = AnsiColors.bold + AnsiColors.cyan +
+            '-- Sensors (' + sensors.length + ') --' + AnsiColors.reset
         lines.push(header)
 
         // Header row (spaces between columns for readability)
@@ -184,7 +184,7 @@ class DeviceWindow extends BaseWindow {
         hdr += ' Press'.padStart(PRESS_W)
         hdr += ' Light'.padStart(LIGHT_W)
         hdr += ' Batt'.padStart(BATT_W)
-        lines.push(Colors.dim + hdr + Colors.reset)
+        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
 
         for (const { name, device } of sensors) {
             const stateLast = device.getStateLast?.() || {}
@@ -197,7 +197,7 @@ class DeviceWindow extends BaseWindow {
             let line = ''
 
             // Name column (bold name, padded to NAME_W visible width)
-            line += padVisible(Colors.bold + name + Colors.reset, NAME_W, 'left')
+            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
 
             // Temperature column (right-aligned, formatted as "24.2*C")
             if (temperature != null) {
@@ -251,8 +251,8 @@ class DeviceWindow extends BaseWindow {
     #renderMechanisms(mechanisms, lines) {
         let totalOn = 0, totalOff = 0, totalUnknown = 0
 
-        const header = Colors.bold + Colors.cyan +
-            '-- Mechanisms (' + mechanisms.length + ') --' + Colors.reset
+        const header = AnsiColors.bold + AnsiColors.cyan +
+            '-- Mechanisms (' + mechanisms.length + ') --' + AnsiColors.reset
         lines.push(header)
 
         // Header row
@@ -261,7 +261,7 @@ class DeviceWindow extends BaseWindow {
         hdr += 'State'.padStart(STATE_W)
         hdr += 'Origin'.padStart(ORIGIN_W)
         hdr += 'Batt'.padStart(BATT_W)
-        lines.push(Colors.dim + hdr + Colors.reset)
+        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
 
         for (const { name, device } of mechanisms) {
             const stateLast = device.getStateLast?.() || {}
@@ -286,10 +286,10 @@ class DeviceWindow extends BaseWindow {
             let line = ''
 
             // Name column
-            line += padVisible(Colors.bold + name + Colors.reset, NAME_W, 'left')
+            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
 
             // State column (cyan, right-aligned)
-            line += colCell(status, Colors.cyan, STATE_W, 'right')
+            line += colCell(status, AnsiColors.cyan, STATE_W, 'right')
 
             // Origin column (color-coded, right-aligned)
             const oColor = this.#getOriginColor(origin)
@@ -308,7 +308,7 @@ class DeviceWindow extends BaseWindow {
 
         // Mechanisms summary
         lines.push(
-            Colors.dim + '  ON: ' + totalOn + ' | OFF: ' + totalOff + ' | Unknown: ' + totalUnknown + Colors.reset
+            AnsiColors.dim + '  ON: ' + totalOn + ' | OFF: ' + totalOff + ' | Unknown: ' + totalUnknown + AnsiColors.reset
         )
     }
 
@@ -318,8 +318,8 @@ class DeviceWindow extends BaseWindow {
      * @private
      */
     #renderRemotes(remotes, lines) {
-        const header = Colors.bold + Colors.cyan +
-            '-- Remotes (' + remotes.length + ') --' + Colors.reset
+        const header = AnsiColors.bold + AnsiColors.cyan +
+            '-- Remotes (' + remotes.length + ') --' + AnsiColors.reset
         lines.push(header)
 
         // Header row
@@ -327,7 +327,7 @@ class DeviceWindow extends BaseWindow {
         hdr += 'Name'.padEnd(NAME_W)
         hdr += 'Action'.padStart(ACTION_W)
         hdr += 'Batt'.padStart(BATT_W)
-        lines.push(Colors.dim + hdr + Colors.reset)
+        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
 
         for (const { name, device } of remotes) {
             const stateLast = device.getStateLast?.() || {}
@@ -337,11 +337,11 @@ class DeviceWindow extends BaseWindow {
             let line = ''
 
             // Name column
-            line += padVisible(Colors.bold + name + Colors.reset, NAME_W, 'left')
+            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
 
             // Action column (grey, right-aligned)
             if (action != null && action !== '') {
-                line += colCell(String(action), Colors.grey, ACTION_W, 'right')
+                line += colCell(String(action), AnsiColors.grey, ACTION_W, 'right')
             } else {
                 line += ' '.repeat(ACTION_W)
             }
@@ -368,9 +368,9 @@ class DeviceWindow extends BaseWindow {
      * @private
      */
     #getOriginColor(origin) {
-        if (origin === 'human') return Colors.green
-        if (origin === 'automation') return Colors.magenta
-        return Colors.grey
+        if (origin === 'human') return AnsiColors.green
+        if (origin === 'automation') return AnsiColors.magenta
+        return AnsiColors.grey
     }
 
     /**
@@ -381,8 +381,8 @@ class DeviceWindow extends BaseWindow {
      * @private
      */
     #getBatteryColor(battery) {
-        if (battery != null && battery <= 15) return Colors.red
-        if (battery != null && battery <= 30) return Colors.yellow
+        if (battery != null && battery <= 15) return AnsiColors.red
+        if (battery != null && battery <= 30) return AnsiColors.yellow
         return ''
     }
 
@@ -397,11 +397,9 @@ class DeviceWindow extends BaseWindow {
         this.#unsubscribes.forEach(unsub => unsub())
         this.#unsubscribes = []
 
-        const allDevices = DeviceContainer.getAll()
+        const allDevices = DeviceContainer.getAll({ includeBridge: false })
 
         for (const [name] of Object.entries(allDevices)) {
-            if (name === 'bridge') continue
-
             const unsub = EventBus.subscribe(`zigbee:${name}`, () => {
                 if (this.isVisible) {
                     this.render()

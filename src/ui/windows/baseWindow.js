@@ -16,7 +16,8 @@
 'use strict'
 
 import StateService from '../../service/stateService.js'
-import { wrapAnsi } from '../../lib/terminal.js'
+import { wrapAnsi, visibleLen } from '../../lib/terminal.js'
+import AnsiColors from '../../enum/ansiColors.js'
 
 // ---------------------------------------------------------------------------
 // Constants (overridable via ui.yaml windows.max_buffer_lines / layout.min_width)
@@ -307,7 +308,7 @@ class BaseWindow {
                 count += wrapAnsi(entry, wrapWidth).length
             } else {
                 const { text, prefix } = entry
-                const prefixVisibleLen = prefix.replace(/\x1b\[[0-9;]*m/g, '').length
+                const prefixVisibleLen = visibleLen(prefix)
                 const effectiveWidth = Math.max(
                     wrapWidth - prefixVisibleLen,
                     MIN_EFFECTIVE_WIDTH
@@ -334,7 +335,7 @@ class BaseWindow {
             return wrapAnsi(entry, wrapWidth)
         }
         const { text, prefix } = entry
-        const prefixVisibleLen = prefix.replace(/\x1b\[[0-9;]*m/g, '').length
+        const prefixVisibleLen = visibleLen(prefix)
         const effectiveWidth = Math.max(
             wrapWidth - prefixVisibleLen,
             MIN_EFFECTIVE_WIDTH
@@ -404,28 +405,8 @@ class BaseWindow {
         term.hideCursor(true)
 
         if (this.#forceFullRender) {
-            // --- FULL RENDER: clear entire slot and redraw everything -------
-            this.#layout.clearSlot('main')
-
-            const visualLines = []
-            this.#buffer.forEach(entry => {
-                visualLines.push(...this.#wrapEntry(entry, wrapWidth))
-            })
-
-            // Apply scroll offset: startIdx counts back from the end
-            const tailStart = Math.max(0, visualLines.length - slot.height - this.#scrollOffset)
-            const linesToRender = visualLines.slice(tailStart, tailStart + slot.height)
-
-            // Show "-- More --" indicator when backscrolled
-            if (this.#scrollOffset > 0 && linesToRender.length < slot.height) {
-                const moreLine = this.#buildMoreIndicator(wrapWidth, tailStart, visualLines.length)
-                linesToRender.push(moreLine)
-            }
-
-            linesToRender.forEach((line, index) => {
-                term.moveTo(slot.x + 1, slot.y + 1 + index)
-                term(line)
-            })
+            // --- FULL RENDER: redraw everything from the buffer ---------------
+            this.#renderAll(slot, wrapWidth, this.#scrollOffset)
 
             // Update tracking state for next incremental render
             this.#lastSlotWidth = slot.width
@@ -433,61 +414,37 @@ class BaseWindow {
             this.#forceFullRender = false
 
         } else {
-            // --- INCREMENTAL RENDER: only process new entries ---------------
+            // --- INCREMENTAL RENDER: only process new entries -----------------
             const newEntries = this.#buffer.slice(this.#bufferEntryCountAtLastRender)
-            
+
             if (newEntries.length > 0 || this.#scrollOffset !== 0) {
-                // If we have new content while backscrolled, we need to decide:
-                // either auto-scroll to bottom or show activity indicator.
-                // For now, preserve scroll position and just update the view.
-                
                 if (this.#scrollOffset === 0) {
                     // Live-follow mode: append only new lines at absolute positions
-                    
+
                     // First, count how many visual lines were already on screen
                     const oldVisualCount = Math.min(
-                        this.#bufferEntryCountAtLastRender > 0 
+                        this.#bufferEntryCountAtLastRender > 0
                             ? this.#countExistingVisualLines(this.#bufferEntryCountAtLastRender, wrapWidth)
                             : 0,
                         slot.height
                     )
-                    
+
                     // Wrap only new entries
                     const newVisualLines = []
                     newEntries.forEach(entry => {
                         newVisualLines.push(...this.#wrapEntry(entry, wrapWidth))
                     })
-    
-                    // Calculate which lines should be visible (tail of all content)
-                    const totalOldLines = oldVisualCount
-                    const totalNewLines = newVisualLines.length
-                    const overflow = totalOldLines + totalNewLines - slot.height
-    
-                    // Lines to keep from old render (those that remain in viewport)
-                    const firstNewScreenRow = Math.max(0, slot.height - totalNewLines - Math.max(0, overflow < 0 ? 0 : 0))
-                    
-                    // Simpler approach: figure out the start row for each new line
-                    const firstVisibleIdx = Math.max(0, totalOldLines + totalNewLines - slot.height)
-                    
-                    // If existing lines scrolled off top, we need to shift remaining ones up
+
+                    // If existing content scrolled off the top, fall back to a full
+                    // re-render for correctness. scrollOffset is 0 here by guard, so
+                    // #renderAll draws exactly the bottom `slot.height` lines.
+                    const overflow = oldVisualCount + newVisualLines.length - slot.height
                     if (overflow > 0) {
-                        // Some old lines scrolled off. We must re-render since positions changed.
-                        // Fall back to full render for correctness when scroll happens naturally.
-                        this.#layout.clearSlot('main')
-                        
-                        const allVisualLines = []
-                        this.#buffer.forEach(entry => {
-                            allVisualLines.push(...this.#wrapEntry(entry, wrapWidth))
-                        })
-                        const tailSlice = allVisualLines.slice(Math.max(0, allVisualLines.length - slot.height))
-                        tailSlice.forEach((line, index) => {
-                            term.moveTo(slot.x + 1, slot.y + 1 + index)
-                            term(line)
-                        })
+                        this.#renderAll(slot, wrapWidth, 0)
                     } else {
-                        // No overflow -- new lines fit below existing content without pushing anything off-screen.
-                        // This is the true incremental case: just draw at absolute positions.
-                        let screenRow = totalOldLines
+                        // No overflow -- true incremental case: draw the new lines
+                        // below whatever was already on screen.
+                        let screenRow = oldVisualCount
                         newVisualLines.forEach((line) => {
                             if (screenRow < slot.height) {
                                 term.moveTo(slot.x + 1, slot.y + 1 + screenRow)
@@ -498,27 +455,9 @@ class BaseWindow {
                     }
                 } else {
                     // Backscrolled -- do a full re-render to update positions correctly
-                    this.#layout.clearSlot('main')
-                    
-                    const visualLines = []
-                    this.#buffer.forEach(entry => {
-                        visualLines.push(...this.#wrapEntry(entry, wrapWidth))
-                    })
-                    
-                    const tailStart = Math.max(0, visualLines.length - slot.height - this.#scrollOffset)
-                    const linesToRender = visualLines.slice(tailStart, tailStart + slot.height)
-    
-                    if (this.#scrollOffset > 0 && linesToRender.length < slot.height) {
-                        const moreLine = this.#buildMoreIndicator(wrapWidth, tailStart, visualLines.length)
-                        linesToRender.push(moreLine)
-                    }
-    
-                    linesToRender.forEach((line, index) => {
-                        term.moveTo(slot.x + 1, slot.y + 1 + index)
-                        term(line)
-                    })
+                    this.#renderAll(slot, wrapWidth, this.#scrollOffset)
                 }
-                
+
                 this.#bufferEntryCountAtLastRender = this.#buffer.length
             }
         }
@@ -550,6 +489,44 @@ class BaseWindow {
     }
 
     /**
+     * Full-screen render of all buffered entries within the main slot.
+     *
+     * Clears the slot, wraps every entry at the current width, applies the
+     * scroll offset (tail window), appends the "-- More --" indicator when
+     * backscrolled, and draws each line at its absolute position. Shared by
+     * the forced-full, backscrolled, and overflow-fallback paths so they
+     * cannot drift apart.
+     *
+     * @param {{x: number, y: number, width: number, height: number}} slot - Main layout slot
+     * @param {number} wrapWidth - Wrapping width in visible characters
+     * @param {number} scrollOffset - Scroll offset from bottom (0 = live tail)
+     * @private
+     */
+    #renderAll(slot, wrapWidth, scrollOffset) {
+        const term = this.#term
+        this.#layout.clearSlot('main')
+
+        const visualLines = []
+        this.#buffer.forEach(entry => {
+            visualLines.push(...this.#wrapEntry(entry, wrapWidth))
+        })
+
+        // Apply scroll offset: tailStart counts back from the end
+        const tailStart = Math.max(0, visualLines.length - slot.height - scrollOffset)
+        const linesToRender = visualLines.slice(tailStart, tailStart + slot.height)
+
+        // Show "-- More --" indicator when backscrolled
+        if (scrollOffset > 0 && linesToRender.length < slot.height) {
+            linesToRender.push(this.#buildMoreIndicator(wrapWidth, tailStart, visualLines.length))
+        }
+
+        linesToRender.forEach((line, index) => {
+            term.moveTo(slot.x + 1, slot.y + 1 + index)
+            term(line)
+        })
+    }
+
+    /**
      * Build a "-- More --" indicator line with padding matching slot width.
      * @param {number} wrapWidth - Slot wrapping width
      * @param {number} tailStart - Index in visualLines where viewport starts
@@ -559,10 +536,8 @@ class BaseWindow {
      */
     #buildMoreIndicator(wrapWidth, tailStart, totalLines) {
         const label = `-- ${tailStart + 1}/${totalLines} --`
-        const dim = '\x1b[2m'
-        const reset = '\x1b[0m'
         const pad = Math.max(0, wrapWidth - label.length)
-        return `${dim}${label}${' '.repeat(pad)}${reset}`
+        return `${AnsiColors.dim}${label}${' '.repeat(pad)}${AnsiColors.reset}`
     }
 }
 

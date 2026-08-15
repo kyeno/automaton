@@ -64,7 +64,6 @@ class Ui {
     #statusBar
     #input
     #running = false
-    #channelShortcutMap = {}  // id -> shortcut mapping
 
     // -- Initialization ---------------------------------------------------
 
@@ -103,7 +102,6 @@ class Ui {
         let firstChannelId = null
         for (const ch of allChannels) {
             firstChannelId = firstChannelId || ch.id
-            this.#channelShortcutMap[ch.id] = ch.shortcut
 
             const Ctor = windowConstructors[ch.id]
             if (!Ctor) continue
@@ -141,16 +139,14 @@ class Ui {
 
         // Build context object injected into all pluggable commands
         const self = this  // capture Ui reference for closure
+        /** Resolve the currently active window instance (null when none). */
+        const getActiveInstance = () => self.#windows?.[self.#activeWindow]?.instance ?? null
         const ctx = {
             get activeWindow() {
-                return self.#activeWindow && self.#windows[self.#activeWindow]
-                    ? self.#windows[self.#activeWindow].instance
-                    : null
+                return getActiveInstance()
             },
             print(...args) {
-                const win = self.#activeWindow && self.#windows[self.#activeWindow]
-                    ? self.#windows[self.#activeWindow].instance
-                    : null
+                const win = getActiveInstance()
                 if (win && typeof win.print === 'function') win.print(args.join(' '))
             },
             switchWindow: self.switchWindow.bind(self),
@@ -212,12 +208,10 @@ class Ui {
     switchWindow(idOrShortcut) {
         let targetId = String(idOrShortcut)
 
-        // Resolve numeric shortcut to internal ID
-        for (const [chId, shortcut] of Object.entries(this.#channelShortcutMap)) {
-            if (String(shortcut) === targetId) {
-                targetId = chId
-                break
-            }
+        // Resolve numeric shortcut to internal ID via the channel manager
+        const byShortcut = channels.getByShortcut(targetId)
+        if (byShortcut) {
+            targetId = byShortcut.id
         }
 
         if (!this.#windows[targetId]) return
@@ -233,7 +227,7 @@ class Ui {
         this.#windows[targetId].instance.show()
 
         // Notify status bar of active window for activity indicator
-        this.#statusBar.notifyActiveWindow?.(this.#channelShortcutMap[targetId])
+        this.#statusBar.notifyActiveWindow?.(channels.getById(targetId)?.shortcut)
         
         // Update backscroll indicator in status bar
         const win = this.#windows[targetId]?.instance
@@ -404,12 +398,6 @@ class Ui {
         let escapeTimer = null
         let expectingEscapeKey = false
 
-        // Build a shortcut->id map for quick lookup
-        const shortcutToId = {}
-        for (const ch of channels.getAll()) {
-            shortcutToId[String(ch.shortcut)] = ch.id
-        }
-
         try {
             this.#term.on('key', (name, data) => {
                 // Normalize -- terminal-kit sends UPPERCASE over SSH xterm-256color
@@ -443,10 +431,10 @@ class Ui {
                     expectingEscapeKey = false
                     clearTimeout(escapeTimer)
 
-                    const targetChId = shortcutToId[n]
-                    if (targetChId) {
+                    const targetCh = channels.getByShortcut(n)
+                    if (targetCh) {
                         this.#input.markConsumed([n, name])
-                        this.switchWindow(targetChId)
+                        this.switchWindow(targetCh.id)
                         return
                     }
                     // Not a recognized shortcut -- clear consumed and let InputComponent handle it

@@ -21,6 +21,7 @@ import CacheService from './service/cacheService.js'
 import MqttService from './service/mqttService.js'
 import I18nLoader from './service/i18nLoader.js'
 import EventBus from './service/eventBus.js'
+import AnsiColors from './enum/ansiColors.js'
 
 import DeviceContainer from './device/container/deviceContainer.js'
 import AutomationContainer from './automation/container/automationContainer.js'
@@ -208,10 +209,18 @@ process.on('uncaughtException', (err) => {
     StateService.set('lifecycle.lastError', err)
     // Write directly to stderr (fd 2) -- bypasses any terminal clearing
     process.stderr.write(
-        `\n\x1b[1m\x1b[31m=== AUTOMATON CRASHED ===\x1b[0m\n` +
-        `\x1b[31m${err.message}\x1b[0m\n\n` +
-        `${err.stack || ''}\n\n` +
-        `Check var/log/ for details.\n\x1b[0m\n`
+        `
+${AnsiColors.bold}${AnsiColors.red}=== AUTOMATON CRASHED ===${AnsiColors.reset}
+` +
+        `${AnsiColors.red}${err.message}${AnsiColors.reset}
+
+` +
+        `${err.stack || ''}
+
+` +
+        `Check var/log/ for details.
+${AnsiColors.reset}
+`
     )
     gracefulDeath(`crash: ${err.message}`, 1)
 })
@@ -246,7 +255,11 @@ async function initService(name, initFn, optional = false) {
             const errMsg = `Failed to initialize ${name}: ${e.message}`
             LoggerService.error(errMsg, 'Main')
             // Ensure critical init failures are printed to stderr regardless of UI state
-            process.stderr.write(`\n\x1b[1m\x1b[31mCRITICAL ERROR\x1b[0m: ${errMsg}\n${e.stack || ''}\n\n`)
+            process.stderr.write(`
+${AnsiColors.bold}${AnsiColors.red}CRITICAL ERROR${AnsiColors.reset}: ${errMsg}
+${e.stack || ''}
+
+`)
             gracefulDeath(`init failed: ${name}`, 1)
         }
     }

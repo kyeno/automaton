@@ -20,7 +20,7 @@ import EventBus from '../../service/eventBus.js'
 import AiAssistant from '../../ai/aiAssistant.js'
 import I18nLoader from '../../service/i18nLoader.js'
 import { tsPrefix } from '../../lib/terminal.js'
-import { Colors } from '../../lib/terminal.js'
+import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 import ChatMessageOrigin from '../../enum/aiChatMessageOrigin.js'
 
@@ -87,12 +87,12 @@ class AiWindow extends BaseWindow {
         if (!trimmed) return
 
         // Print user message using structured buffering so it re-wraps on resize
-        const userPrefix = `${tsPrefix()} ${Colors.bold}${Colors.cyan}<you>${Colors.reset} `
+        const userPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.cyan}<you>${AnsiColors.reset} `
         this.printMessage(trimmed, userPrefix)
 
         try {
             // Show typing indicator before waiting for response
-            this.print(`${tsPrefix()} ${Colors.italic}${Colors.white}* AI is thinking...${Colors.reset}`)
+            this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* AI is thinking...${AnsiColors.reset}`)
 
             const response = await AiAssistant.processMessage(trimmed)
 
@@ -100,10 +100,10 @@ class AiWindow extends BaseWindow {
             EventBus.emit('window:activity', this.#channelShortcut)
 
             // Print AI response using structured buffering
-            const aiPrefix = `${tsPrefix()} ${Colors.bold}${Colors.magenta}<AI>${Colors.reset} `
+            const aiPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `
             this.printMessage(response, aiPrefix)
         } catch (err) {
-            this.print(`${tsPrefix()} ${Colors.bold}\x1b[31m<AI>${Colors.reset} \x1b[31m[ERROR: ${err.message}]${Colors.reset}`)
+            this.print(`${tsPrefix()} ${AnsiColors.bold}${AnsiColors.red}<AI>${AnsiColors.reset} ${AnsiColors.red}[ERROR: ${err.message}]${AnsiColors.reset}`)
         }
     }
 
@@ -145,7 +145,7 @@ class AiWindow extends BaseWindow {
             } else {
                 messageText = `* AI ${verb} ${action} on ${device}${suffix}`
             }
-            this.print(`${tsPrefix()} ${Colors.italic}${Colors.white}${messageText}${Colors.reset}`)
+            this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}${messageText}${AnsiColors.reset}`)
             EventBus.emit('window:activity', this.#channelShortcut)
         })
     }
@@ -157,8 +157,7 @@ class AiWindow extends BaseWindow {
      */
     #subscribeToSystemMessages() {
         this.#systemMessageUnsub = EventBus.subscribe('ai:systemMessage', ({ text }) => {
-            const sysPrefix = `${tsPrefix()} ${Colors.bold}\x1b[33m<system>${Colors.reset} `
-            this.printMessage(text, sysPrefix)
+            this.printMessage(text, this.#buildSystemPrefix(tsPrefix()))
             EventBus.emit('window:activity', this.#channelShortcut)
         })
     }
@@ -169,10 +168,22 @@ class AiWindow extends BaseWindow {
      */
     #subscribeToPeriodicResponses() {
         this.#periodicResponseUnsub = EventBus.subscribe('ai:periodicResponse', ({ text }) => {
-            const aiPrefix = `${tsPrefix()} ${Colors.bold}${Colors.magenta}<AI>${Colors.reset} `
+            const aiPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `
             this.printMessage(text, aiPrefix)
             EventBus.emit('window:activity', this.#channelShortcut)
         })
+    }
+
+    /**
+     * Build the IRC-style <system> message prefix (bold yellow).
+     * Shared by live system messages and restored history rendering so the
+     * two paths cannot drift apart visually.
+     * @param {string} ts - Timestamp prefix string (from tsPrefix)
+     * @returns {string} Formatted prefix ending with a trailing space
+     * @private
+     */
+    #buildSystemPrefix(ts) {
+        return `${ts} ${AnsiColors.bold}${AnsiColors.yellow}<system>${AnsiColors.reset} `
     }
 
     /**
@@ -198,10 +209,10 @@ class AiWindow extends BaseWindow {
         const displayHost = host || 'unknown'
 
         // IRC-style join line: "-:- AI [<model>@<host>] has joined <channel>"
-        this.print(`${Colors.dim}-:-${Colors.reset} ${Colors.bold}${Colors.magenta}AI${Colors.reset} ${Colors.dim}[${Colors.bold}${Colors.cyan}${model}${Colors.reset}${Colors.dim}@${displayHost}]${Colors.reset} has joined ${this.#channelName}`)
+        this.print(`${AnsiColors.dim}-:-${AnsiColors.reset} ${AnsiColors.bold}${AnsiColors.magenta}AI${AnsiColors.reset} ${AnsiColors.dim}[${AnsiColors.bold}${AnsiColors.cyan}${model}${AnsiColors.reset}${AnsiColors.dim}@${displayHost}]${AnsiColors.reset} has joined ${this.#channelName}`)
 
         // Action: * AI is now online.
-        this.print(`${tsPrefix()} ${Colors.italic}${Colors.white}* AI is now online.${Colors.reset}`)
+        this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* AI is now online.${AnsiColors.reset}`)
 
         // Load conversation history from AiAssistant (restored from Redis on startup)
         const history = AiAssistant.getConversationHistory()
@@ -211,7 +222,7 @@ class AiWindow extends BaseWindow {
         } else {
             // No history -- show default greeting from i18n bundle
             const greeting = I18nLoader.t('ui.default_greeting', 'Hello! How can I help you today?')
-            this.printMessage(greeting, `${tsPrefix()} ${Colors.bold}${Colors.magenta}<AI>${Colors.reset} `)
+            this.printMessage(greeting, `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `)
         }
     }
 
@@ -232,15 +243,15 @@ class AiWindow extends BaseWindow {
                 // User message: check _origin to determine prefix
                 const isSystem = msg._origin === ChatMessageOrigin.SYSTEM
                 if (isSystem) {
-                    this.printMessage(msg.content, `${ts} ${Colors.bold}\x1b[33m<system>${Colors.reset} `)
+                    this.printMessage(msg.content, this.#buildSystemPrefix(ts))
                 } else {
-                    this.printMessage(msg.content, `${ts} ${Colors.bold}${Colors.cyan}<you>${Colors.reset} `)
+                    this.printMessage(msg.content, `${ts} ${AnsiColors.bold}${AnsiColors.cyan}<you>${AnsiColors.reset} `)
                 }
 
             } else if (msg.role === 'assistant') {
                 // Assistant message -- skip if it has tool_calls but no text content
                 if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
-                    this.printMessage(msg.content, `${ts} ${Colors.bold}${Colors.magenta}<AI>${Colors.reset} `)
+                    this.printMessage(msg.content, `${ts} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `)
                 }
 
             } else if (msg.role === 'tool') {
@@ -261,10 +272,10 @@ class AiWindow extends BaseWindow {
                         actionDesc = `interacted with ${device}`
                     }
 
-                    this.print(`${ts} ${Colors.italic}${Colors.white}* AI ${actionDesc}${Colors.reset}`)
+                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI ${actionDesc}${AnsiColors.reset}`)
                 } catch {
                     // Not valid JSON -- just show a generic tool message
-                    this.print(`${ts} ${Colors.italic}${Colors.white}* AI performed an action${Colors.reset}`)
+                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI performed an action${AnsiColors.reset}`)
                 }
             }
         }
