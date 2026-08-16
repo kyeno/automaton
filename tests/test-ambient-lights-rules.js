@@ -1,0 +1,211 @@
+/**
+ * Ambient Lights automation execution tests.
+ *
+ * Exercises the rule-based execute() flow end-to-end using stubbed devices and
+ * fabricated sensor contexts against the real ambient-lights.yaml:
+ *   - bright morning turns off every listed device (incl. balcony socket)
+ *   - settled dusk turns on only the ambient sockets (asymmetric target sets)
+ *   - still-bright evening does nothing
+ *   - flat per-rule "action" fallback dispatches commands (regression test)
+ *   - season conditions and temporal helpers (stubbed Date)
+ * Redis/MQTT are not required -- unavailable services fail open by design.
+ *
+ * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+ *
+ * @author Ratan M. Kyeno
+ * @license AGPL-3.0-only
+ */
+import { config } from 'dotenv'
+config()
+
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import ConfigService from '../src/service/configService.js'
+import LoggerService from '../src/service/loggerService.js'
+import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
+import AmbientLightsAutomation from '../etc/automation/ambientLightsAutomation.js'
+import temporal from '../src/lib/date.js'
+
+process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
+process.env['MQTT_PREFIX'] = process.env['MQTT_PREFIX'] || 'zigbee2mqtt'
+process.env['REDIS_URL'] = process.env['REDIS_URL'] || 'redis://192.168.1.1:6379'
+process.env['CONFIG_PATH'] = process.env['CONFIG_PATH'] || './etc/automaton.yaml'
+
+await ConfigService.init()
+LoggerService.init()
+
+let passed = 0
+let failed = 0
+
+function assert(condition, label) {
+    if (condition) {
+        console.log(`  ✓ ${label}`)
+        passed++
+    } else {
+        console.error(`  ✗ ${label}`)
+        failed++
+    }
+}
+
+/**
+ * Stub global Date with a fixed month/day/hour for deterministic season checks.
+ * @param {number} monthIndex - Zero-based month (0=Jan ... 11=Dec)
+ * @param {number} [day=15] - Day of month
+ * @param {number} [hour=12] - Hour of day
+ * @returns {Function} Restore function returning the original Date
+ */
+function stubDate(monthIndex, day = 15, hour = 12) {
+    const RealDate = global.Date
+    class FakeDate extends RealDate {
+        constructor(...args) {
+            if (args.length === 0) super(2026, monthIndex, day, hour, 0, 0)
+            else super(...args)
+        }
+        static now() {
+            return new RealDate(2026, monthIndex, day, hour, 0, 0).getTime()
+        }
+    }
+    global.Date = FakeDate
+    return () => { global.Date = RealDate }
+}
+
+/**
+ * Create a minimal device stub recording every received command.
+ * @param {string} name - Device display name
+ * @returns {{name: string, calls: object[], getName: Function, receiveCommand: Function}}
+ */
+function makeStubDevice(name) {
+    const calls = []
+    return {
+        name,
+        calls,
+        getName: () => name,
+        receiveCommand: (payload, fromAutomation) => calls.push({ payload, fromAutomation }),
+    }
+}
+
+const ALL_IDS = [
+    'kuchnia_gniazdo', 'kuchnia_gniazdo_led', 'przedp_gniazdo',
+    'sypialnia_gniazdo', 'sypialnia_gniazdo_lustro', 'balkon_gniazdo',
+    'kuchnia_wlacznik_zlew', 'lazienka_wlacznik', 'przedp_wlacznik',
+]
+const AMBIENT_ON_IDS = [
+    'kuchnia_gniazdo', 'kuchnia_gniazdo_led', 'przedp_gniazdo',
+    'sypialnia_gniazdo', 'sypialnia_gniazdo_lustro',
+]
+
+/**
+ * Test harness around the real AmbientLightsAutomation with stubbed devices/context.
+ */
+class TestAmbient extends AmbientLightsAutomation {
+    #devices
+    #context
+    /**
+     * @param {Map<string, object>} devices - Stub device map keyed by target id
+     * @param {{illuminance?: number|null, timeOfDay: string}} context - Fabricated buildContext result
+     */
+    constructor(devices, context) {
+        super()
+        this.#devices = devices
+        this.#context = context
+    }
+    loadDevices() { return this.#devices }
+    async buildContext() { return this.#context }
+}
+
+async function runScenario(context) {
+    const devices = new Map(ALL_IDS.map(id => [id, makeStubDevice(id)]))
+    const auto = new TestAmbient(devices, context)
+    await auto.execute({ trigger: 'test' })
+    return devices
+}
+
+function expectPayload(devices, id, expectedState) {
+    const dev = devices.get(id)
+    if (expectedState === null) {
+        assert(dev.calls.length === 0, `${id}: no command sent`)
+        return
+    }
+    assert(
+        dev.calls.length === 1 && JSON.stringify(dev.calls[0].payload) === JSON.stringify({ state: expectedState }),
+        `${id}: received ${JSON.stringify({ state: expectedState })} exactly once`
+    )
+    assert(dev.calls.every(c => c.fromAutomation === true), `${id}: marked as automation-originated`)
+}
+
+console.log('\n── Ambient lights execution ──\n')
+
+// Bright morning -> OFF for all nine listed devices (incl. balcony socket cleanup)
+let devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
+for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
+
+// Settled dusk -> ON only for the five ambient sockets; others untouched
+devices = await runScenario({ illuminance: 1500, timeOfDay: 'evening' })
+for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPayload(devices, id, null)
+
+// Evening still bright -> nothing happens at all
+devices = await runScenario({ illuminance: 8000, timeOfDay: 'evening' })
+for (const id of ALL_IDS) expectPayload(devices, id, null)
+
+// Flat per-rule "action" fallback (regression: old configs used flat action values)
+{
+    const dir = mkdtempSync(join(tmpdir(), 'automaton-flat-'))
+    const cfgPath = join(dir, 'flat-action.yaml')
+    writeFileSync(cfgPath, [
+        'rules:',
+        "  - name: 'flat off'",
+        '    conditions: {}',
+        '    action: OFF',
+    ].join('\n'))
+
+    class FlatActionAutomation extends RuleBasedAutomationBase {
+        #devices
+        constructor(configPath, devices) {
+            super({ name: 'FlatActionTest', configPath })
+            this.#devices = devices
+        }
+        loadDevices() { return this.#devices }
+        async buildContext() { return { timeOfDay: 'morning' } }
+        resolveCommand(device, targetId, matchingRules) {
+            const rule = matchingRules.find(r => r.action !== undefined)
+            if (!rule) return null
+            const payload = String(rule.action).toUpperCase() === 'OFF' ? { state: 'OFF' } : { state: 'ON' }
+            return { payload }
+        }
+    }
+
+    const dev = makeStubDevice('Stub Light')
+    const auto = new FlatActionAutomation(cfgPath, new Map([['stub_light', dev]]))
+    await auto.execute({ trigger: 'test' })
+    assert(
+        dev.calls.length === 1 && JSON.stringify(dev.calls[0].payload) === '{"state":"OFF"}',
+        'flat "action" fallback dispatches command to every listed device'
+    )
+}
+
+// Season conditions + temporal helpers (deterministic via stubbed Date)
+{
+    const restoreDec = stubDate(11 /* December */)
+    assert(temporal.getCurrentSeason() === 'winter', 'getCurrentSeason(): winter in December')
+    assert(temporal.getLocalDayString(new Date()) === '2026-12-15', 'getLocalDayString(): local YYYY-MM-DD format')
+    const auto = new TestAmbient(new Map(), { timeOfDay: 'morning' })
+    assert(await auto.conditionsMatch({ season: ['winter'] }, {}), 'season [winter] matches in December')
+    assert(!(await auto.conditionsMatch({ season: ['summer'] }, {})), 'season [summer] rejected in December')
+    assert(!(await auto.conditionsMatch({ season: 'spring' }, {})), 'single-string season rejected when mismatched')
+    restoreDec()
+
+    const restoreJul = stubDate(6 /* July */)
+    assert(temporal.getCurrentSeason() === 'summer', 'getCurrentSeason(): summer in July')
+    assert(await auto.conditionsMatch({ season: ['summer', 'autumn'] }, {}), 'multi-value season list matches on one hit')
+    restoreJul()
+}
+
+console.log(`\n${'═'.repeat(50)}`)
+console.log(`  Results: ${passed}/${passed + failed} passed${failed > 0 ? `, ${failed} failed` : ''}`)
+console.log(`${'═'.repeat(50)}\n`)
+
+process.exit(failed > 0 ? 1 : 0)

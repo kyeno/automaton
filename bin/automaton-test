@@ -90,6 +90,7 @@ const testScripts = [
   'test-device-instantiation.js',
   'test-automation-instantiation.js',
   'test-silence-between.js',
+  'test-ambient-lights-rules.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',
   'test-dist-sync.js',

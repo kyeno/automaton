@@ -260,12 +260,14 @@ silence_between: "0500-0900"   # Optional: suppress execution between these loca
 
 rules:
   - name: 'Human-readable rule name'
+    once: true                          # Optional: act at most once per calendar day
     conditions:
       time-of-day: [morning, noon]     # Day period(s)
+      season: [winter]                 # Season(s), optional -- spring/summer/autumn/winter
       illuminance: { gte: 20 }          # Sensor threshold
       temperature: { lt: 25 }
       presence: hostname1               # Network host present
-    targets:                            # Actions when conditions match
+    targets:                            # Per-target actions when conditions match
       alias_a: OPEN                     # Named target action
       alias_b: CLOSE
 ```
@@ -316,6 +318,23 @@ If omitted entirely, automations run normally with no silence period applied.
 
 Multiple operators on the same field create a range: `{ gt: 1800, lte: 11000 }`.
 
+### Daily Once Markers (`once`)
+
+Adding `once: true` to a rule makes it act **at most once per local calendar day**. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a daily marker in Redis and stands down for the rest of that day; humans then have full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. The marker stores the local date and self-resets each day without cleanup logic; storage failures fail open so an unavailable cache never blocks automation.
+
+### Season Conditions
+
+The optional `season` condition restricts a rule to specific meteorological seasons:
+
+| Value | Months |
+|-------|--------|
+| `spring` | March - May |
+| `summer` | June - August |
+| `autumn` | September - November |
+| `winter` | December - February |
+
+Accepts a single value or a list: `season: spring`, `season: [winter]`. Detection lives in `src/lib/date.js` (`getCurrentSeason()`), consistent with the existing season predicates.
+
 ### Target Actions
 
 - **Mechanisms** (lights/outlets): `ON`, `OFF`, `TOGGLE`
@@ -328,7 +347,7 @@ Create `<Name>Automation.js` in `etc/automation/` alongside your YAML. The autol
 
 ```
 salon-rolety.yaml  ->  salonRoletyAutomation.js
-morning-lights.yaml -> morningLightsAutomation.js
+ambient-lights.yaml -> ambientLightsAutomation.js
 ```
 
 Extend `RuleBasedAutomationBase` and override methods as needed. See existing examples for reference.

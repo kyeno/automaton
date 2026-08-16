@@ -3,7 +3,8 @@
  *
  * Extends {@link ../automationBase.js} with context building (sensor readings,
  * time-of-day periods, network presence), YAML config parsing, condition
- * evaluation, and a template-method `execute()` flow. Subclasses implement
+ * evaluation (including optional `season` conditions and per-rule daily `once`
+ * markers), and a template-method `execute()` flow. Subclasses implement
  * {@link loadDevices} and {@link resolveCommand} hooks.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -18,8 +19,10 @@ import fs from 'node:fs'
 
 import temporal from '../../lib/date.js'
 
+import CacheService from '../../service/cacheService.js'
 import LoggerService from '../../service/loggerService.js'
 import { parseDocument as yamlParseDocument } from 'yaml'
+import { slugify } from '../../lib/string.js'
 
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import networkPresence from '../../monitor/networkPresence.js'
@@ -31,6 +34,13 @@ import AutomationBase from './automationBase.js'
  * @type {number}
  */
 const CONTEXT_FAILURE_ESCALATION_THRESHOLD = 5
+
+/**
+ * TTL for per-rule daily "once" markers stored in Redis (48 hours, seconds).
+ * The stored calendar day is authoritative -- the TTL only keeps keys self-cleaning.
+ * @type {number}
+ */
+const ONCE_MARKER_TTL_SECONDS = 172_800
 
 export default class RuleBasedAutomationBase extends AutomationBase {
     /**
@@ -122,7 +132,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     /**
      * Evaluate a single rule's conditions against the built context.
      *
-     * Checks `time-of-day`, `illuminance`, `temperature`, and `presence` constraints.
+     * Checks `time-of-day`, `season`, `illuminance`, `temperature`, and `presence` constraints.
      * A condition key that is absent or falsy is treated as "always passes".
      *
      * @param {Record<string, unknown>} [conditions] - Conditions object from YAML rule
@@ -143,6 +153,17 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
+        // season check
+        if (conditions.season) {
+            const seasons = Array.isArray(conditions.season)
+                ? conditions.season
+                : [conditions.season]
+
+            if (!seasons.includes(temporal.getCurrentSeason())) {
+                return false
+            }
+        }
+
         // presence check
         if (conditions.presence !== undefined) {
             const expected = this.#normalizePresenceCondition(conditions.presence)
@@ -158,7 +179,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'presence') continue // handled above
+            if (key === 'time-of-day' || key === 'season' || key === 'presence') continue // handled above
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -227,10 +248,16 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         for (const rule of rules) {
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
-                if (match) {
-                    matchingRules.push(rule)
-                    this.log(`Rule matched: "${rule.name}"`, 'debug')
+                if (!match) continue
+
+                // Per-rule daily "once" marker -- at most one action per calendar day.
+                if (rule.once && await this.#hasActedToday(rule)) {
+                    this.log(`Rule "${rule.name}" already acted today, skipping`, 'debug')
+                    continue
                 }
+
+                matchingRules.push(rule)
+                this.log(`Rule matched: "${rule.name}"`, 'debug')
             } catch (error) {
                 this.log(`Error evaluating rule "${rule.name}": ${error.message}`, 'error')
             }
@@ -246,6 +273,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // publishes when multiple rules match simultaneously targeting the same device.
         // "Lowest position wins" semantics are applied by subclasses (e.g., blindsResolveCommand).
         const tasks = []
+        let dispatchedCount = 0   // devices that actually received a command
+        let humanSkippedCount = 0 // devices deferred to recent human interaction
 
         for (const [targetKey, device] of devices) {
             // Capture loop variables in closure
@@ -255,15 +284,27 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             tasks.push(async () => {
                 // Skip recently touched devices (Redis-only check)
                 if (await this.checkAndLogHumanInteraction(dev)) {
+                    humanSkippedCount++
                     return
                 }
 
-                // Collect per-target commands from every matching rule
+                // Collect per-target commands from every matching rule.
+                // Simple automations may instead define a flat `action` field on the rule,
+                // which applies uniformly to every listed device -- fall back to it when no
+                // target-specific command was found.
                 const commands = []
                 for (const rule of matchingRules) {
                     const cmd = rule.targets?.[tk]
                     if (cmd !== undefined) {
                         commands.push(cmd)
+                    }
+                }
+
+                if (commands.length === 0) {
+                    for (const rule of matchingRules) {
+                        if (rule.action !== undefined) {
+                            commands.push(rule.action)
+                        }
                     }
                 }
 
@@ -284,13 +325,28 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 const payload = result.payload
                 this.log(`${dev.getName()} -> ${JSON.stringify(payload)}`)
                 dev.receiveCommand(payload, true)
+                dispatchedCount++
             })
         }
 
-        // Run all tasks in parallel - MqttService queue handles global rate-limiting
-        Promise.allSettled(tasks.map(t => t())).catch(err => {
-            this.log(`Task execution error: ${err.message}`, 'error')
-        })
+        // Run all tasks in parallel - MqttService queue handles global rate-limiting.
+        // Await completion so daily "once" markers can be consumed afterwards.
+        try {
+            await Promise.allSettled(tasks.map(t => t()))
+        } catch (error) {
+            this.log(`Task execution error: ${error.message}`, 'error')
+        }
+
+        // Consume the daily slot for `once` rules when we either acted or deferred to
+        // recent human interaction -- after that, humans have full control until the next
+        // day. If nothing happened at all, keep retrying on later ticks.
+        if (dispatchedCount > 0 || humanSkippedCount > 0) {
+            for (const rule of matchingRules) {
+                if (rule.once) {
+                    await this.#markActedToday(rule)
+                }
+            }
+        }
     }
 
     /**
@@ -429,6 +485,52 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * Check whether an `once` rule has already consumed today's action slot.
+     * Reads the daily marker from Redis (`auto:<name>:once:<rule slug>`); the stored
+     * calendar day is compared against the current local date, so markers self-reset
+     * each day without cleanup logic. Fails open when Redis is unavailable or the
+     * entry cannot be parsed -- consistent with checkAndLogHumanInteraction().
+     * 
+     * @param {Object} rule - Rule object carrying an `once: true` flag
+     * @returns {Promise<boolean>} true if this rule already acted today
+     */
+    async #hasActedToday(rule) {
+        try {
+            const key = `auto:${this.name}:once:${slugify(rule.name)}`
+            const stored = await CacheService.get(key)
+            return Boolean(stored && stored.date === temporal.getLocalDayString())
+        } catch (_) {
+            // Redis unavailable / parse issue -- allow the automation to proceed.
+            return false
+        }
+    }
+
+    /**
+     * Consume an `once` rule's daily action slot by writing its marker to Redis.
+     * Called after dispatch completes (commands sent and/or devices deferred to recent
+     * human interaction). Failures are logged but never fatal -- worst case the rule may
+     * act again on a later tick of the same day.
+     * 
+     * @param {Object} rule - Rule object carrying an `once: true` flag
+     * @returns {Promise<void>}
+     */
+    async #markActedToday(rule) {
+        try {
+            const key = `auto:${this.name}:once:${slugify(rule.name)}`
+            const ok = await CacheService.set(
+                key,
+                { date: temporal.getLocalDayString(), at: Date.now() },
+                ONCE_MARKER_TTL_SECONDS
+            )
+            if (!ok) {
+                this.log(`Failed to store once-marker for rule "${rule.name}"`, 'warn')
+            }
+        } catch (error) {
+            this.log(`Error storing once-marker for rule "${rule.name}": ${error.message}`, 'warn')
+        }
+    }
 
     /**
      * Check if a numeric value satisfies range bounds defined in config.

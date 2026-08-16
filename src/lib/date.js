@@ -13,7 +13,8 @@
  * - **Season predicates**: `isSpring()`, `isSummer()`, `isAutumn()`, `isWinter()`
  * - **Duration formatters**: `millisecondsToHumanReadable()`,
  *   `secondsToHumanReadable()`, `msToHuman()`
- * - **Convenience**: `getCurrentTimePeriod()`
+ * - **Convenience**: `getCurrentTimePeriod()`, `getCurrentSeason()`,
+ *   `getLocalDayString()`
  *
  * @module lib/date
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -380,6 +381,32 @@ class STemporal {
         if (this.isEvening()) return 'evening'
         if (this.isNight()) return 'night'
         return null
+    }
+
+    /**
+     * Return a human-readable string for the current season.
+     * Every month maps to exactly one meteorological season, so this always resolves.
+     * @returns {'spring'|'summer'|'autumn'|'winter'} The matching season name.
+     */
+    getCurrentSeason() {
+        if (this.isSpring()) return 'spring'
+        if (this.isSummer()) return 'summer'
+        if (this.isAutumn()) return 'autumn'
+        return 'winter'
+    }
+
+    /**
+     * Format a date as its local calendar-day string "YYYY-MM-DD".
+     * Uses local time components (not UTC) so day boundaries follow the system timezone;
+     * used e.g. by automation daily "once" markers.
+     * @param {Date} [date=new Date()] - Date to format
+     * @returns {string} Local day in ISO-like "YYYY-MM-DD" form
+     */
+    getLocalDayString(date = new Date()) {
+        const y = date.getFullYear()
+        const m = String(date.getMonth() + 1).padStart(2, '0')
+        const d = String(date.getDate()).padStart(2, '0')
+        return `${y}-${m}-${d}`
     }
 }
 
