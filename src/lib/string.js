@@ -48,8 +48,10 @@ export function stripMarkdown(str) {
     cleaned = cleaned.replace(/__([^_]+)__/g, '$1')
 
     // Strip italic (*text* or _text_)
+    // Underscore variant requires non-word characters on both sides so that
+    // snake_case identifiers (state_last_updated) are never mangled.
     cleaned = cleaned.replace(/\*([^*]+)\*/g, '$1')
-    cleaned = cleaned.replace(/_([^_]+)_/g, '$1')
+    cleaned = cleaned.replace(/(?<![\w])_([^_\n]+)_(?![\w])/g, '$1')
 
     // Strip strikethrough (~~text~~)
     cleaned = cleaned.replace(/~~([^~]+)~~/g, '$1')
@@ -57,11 +59,12 @@ export function stripMarkdown(str) {
     // Strip headers (# ## ### etc.)
     cleaned = cleaned.replace(/^#+\s*/gm, '')
 
-    // Strip links [text](url) -> text
-    cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-
-    // Strip images ![alt](url) -> alt text only
+    // Strip images ![alt](url) -> alt text only (must run before links so the
+    // link rule cannot consume the bracket part and leave a stray "!")
     cleaned = cleaned.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+
+    // Strip links [text](url) -> text (lookbehind excludes leftover image syntax)
+    cleaned = cleaned.replace(/(?<!!)\[([^\]]+)\]\([^)]+\)/g, '$1')
 
     // Strip blockquote markers (> text)
     cleaned = cleaned.replace(/^>\s*/gm, '')

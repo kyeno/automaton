@@ -95,6 +95,7 @@ const testScripts = [
   'test-origin-classification.js',
   'test-dist-sync.js',
   'test-ai-intent-parsing.js',
+  'test-string-utils.js',
   // Note: test-jsdoc-coverage.js moved to npm run lint:check
   'test-sound.js',
   'test-sound-mario.js',
