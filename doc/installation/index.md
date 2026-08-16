@@ -88,7 +88,7 @@ The `etc/` directory contains `.yaml.dist` and `.js.dist` templates. You can eit
 JavaScript files in `etc/automation/` and `etc/interaction/` are loaded automatically by the autoloader (only files ending in `.js`). Rename a `.js.dist` example to `.js` to activate it, then customize device names and logic:
 
 ```bash
-cp etc/interaction/balkonWlacznikInteraction.js.dist \
+cp etc/interaction/exampleInteraction.js.dist \
    etc/interaction/my-custom-interaction.js
 ```
 

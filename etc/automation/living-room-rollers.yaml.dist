@@ -6,7 +6,7 @@
 # device names, thresholds and rules for your home.
 #
 # Each automation also needs a companion JavaScript class that extends
-# RuleBasedAutomationBase (see salonRoletyAutomation.js.dist for reference).
+# RuleBasedAutomationBase (see exampleAutomation.js.dist for reference).
 
 targets:
   - name: 'Living Room Roller Left'

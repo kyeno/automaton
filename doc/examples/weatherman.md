@@ -1,14 +1,8 @@
-# Example Automations
-
-This document describes the example automations shipped with Automaton. Each one demonstrates a different pattern you can adapt for your own home setup. More examples will be added over time.
-
----
-
-## ttsWeatherMan
+# TTS Weather Man
 
 The **ttsWeatherMan** automation is a rule-based weather announcer that builds a speech message from a base sentence template and condition-matched additions, then routes it through the AI → TTS pipeline (or falls back to direct TTS if the AI provider is unavailable). It supports live sensor data interpolation inside i18n strings using `{{ DeviceName.property }}` syntax.
 
-### How It Works
+## How It Works
 
 1. On each timer tick, the automation loads its locale-specific i18n bundle (`etc/i18n/{locale}/weatherman.yaml`).
 2. A base sentence (e.g., *"It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius..."*) is resolved — placeholders are replaced with real-time sensor values pulled from Zigbee devices via MQTT.
@@ -16,7 +10,7 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 4. If an AI assistant is available, the built message is prefixed with a creative instruction key (`sentence_ai_prefix`) and sent through `AiAssistant.processMessage()` for natural-language rewriting before being spoken aloud. Otherwise, the raw interpolated text goes straight to TTS.
 5. System-originated messages appear in the UI with a yellow `<system>` prefix and are excluded from conversation caching so they don't extend Redis TTLs indefinitely.
 
-### Dynamic Sensor System
+## Dynamic Sensor System
 
 The base class reads every entry under `config.sensors` at runtime. Each entry maps a logical name → Zigbee device name, where the logical name also serves as both:
 - The property key extracted from the device's state object (e.g., `{ humidity: 'Outdoor Temperature' }` reads `state.humidity`)
@@ -24,7 +18,7 @@ The base class reads every entry under `config.sensors` at runtime. Each entry m
 
 Adding new sensor types requires **zero code changes** — just add them to the YAML config. Supported numeric operators: `lt`, `lte`, `gt`, `gte`.
 
-### Configuration File
+## Configuration File
 
 Located at `etc/automation/tts-weatherman.yaml`:
 
@@ -93,7 +87,7 @@ rules:
     sentence: 'weatherman.soothing_warm_night'
 ```
 
-### Interpolation Syntax
+## Interpolation Syntax
 
 Two placeholder types are supported inside i18n strings:
 
@@ -104,7 +98,7 @@ Two placeholder types are supported inside i18n strings:
 
 If a device or property isn't found during interpolation, it resolves to `"N/A"`.
 
-### Language Bundles
+## Language Bundles
 
 Weather speech templates live in per-locale files at `etc/i18n/{locale}/weatherman.yaml`:
 
@@ -138,7 +132,7 @@ soothing_warm_night: 'Jest przepiękna noc. Można wyjść w krótkich spodenkac
 
 To add support for another language, create a new `weatherman.yaml` in your locale directory with translated keys matching those used in the automation's YAML config.
 
-### File Map
+## File Map
 
 | Component | Path |
 |-----------|------|
@@ -146,9 +140,3 @@ To add support for another language, create a new `weatherman.yaml` in your loca
 | Configuration template | `etc/automation/tts-weatherman.yaml.dist` |
 | English i18n bundle | `etc/i18n/en_US/weatherman.yaml` |
 | Polish i18n bundle | `etc/i18n/pl_PL/weatherman.yaml` |
-
----
-
-## More Examples Coming Soon
-
-Additional example automations will be added here as they become available. If you'd like to contribute an example, see [CONTRIBUTING.md](../CONTRIBUTING.md).

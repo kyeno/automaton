@@ -74,8 +74,8 @@ export default MyClass
 | Private fields/methods | `#` prefix (ES private) | `#config`, `#validate()` |
 | Constants | UPPER_SNAKE_CASE | `CONFIG_SCHEMA`, `REQUIRED_ENV_VARS` |
 | Config YAML filenames | lowercase with hyphens | `ambient-lights.yaml` |
-| Custom automation JS | PascalCase matching YAML prefix | `salon-rolety.yaml` → `salonRoletyAutomation.js` |
-| Custom interaction JS | PascalCase matching interaction name | `balkonWlacznikInteraction.js` |
+| Custom automation JS | PascalCase matching YAML prefix | `bedroom-rollers.yaml` → `bedroomRollersAutomation.js` |
+| Custom interaction JS | PascalCase matching interaction name | `garageDoorInteraction.js` |
 
 ### JSDoc Requirements
 
@@ -107,9 +107,9 @@ Custom automations, interactions, and devices are discovered by an autoloader th
 
 Examples:
 ```
-salon-rolety.yaml        → salonRoletyAutomation.js
+bedroom-rollers.yaml    → bedroomRollersAutomation.js
 ambient-lights.yaml     → ambientLightsAutomation.js
-balkon-wlacznik          → balkonWlacznikInteraction.js  (referenced by name in interaction.yaml)
+garage-door             → garageDoorInteraction.js       (referenced by name in interaction.yaml)
 ```
 
 Deviations from this pattern result in files being silently ignored by the autoloader.

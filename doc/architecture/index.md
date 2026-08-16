@@ -25,7 +25,10 @@
 │   │   └── commands/           # Slash-command reference
 │   │       └── index.md        # Quick ref, custom commands, context API
 │   ├── configuration.md        # Comprehensive configuration guide
-│   ├── example-automations.md  # Included example automations (ttsWeatherMan, etc.)
+│   ├── examples/               # Included example automations
+│   │   ├── index.md            # Overview and navigation
+│   │   ├── ambient-lights.md   # Ambient lights automation walkthrough
+│   │   └── weatherman.md       # TTS weather announcer walkthrough
 │   └── TODO.md                 # Roadmap and known issues
 ├── etc/                        # Configuration directory
 │   ├── automaton.yaml          # Main configuration file
@@ -72,7 +75,7 @@
 Automaton is organized around several core concepts:
 
 - **Devices** — Represent Zigbee entities (mechanisms, remotes, sensors) or network hosts. Each device subscribes to its MQTT topic and caches state in Redis.
-- **Automations** — Rule-based logic that evaluates conditions (time of day, sensor readings, network presence) and triggers device commands on a configurable timer interval.
+- **Automations** — Rule-based logic that evaluates conditions (time of day, season, sensor readings, network presence) and triggers device commands on a configurable timer interval. Rules may carry `once:` daily markers so they act at most once per local calendar day, leaving humans free to override afterwards.
 - **Interactions** — Event-driven responses to Zigbee remote actions (button presses). Defined declaratively in YAML with optional custom JavaScript for complex behavior.
 - **AI Assistant** — Optional LLM-powered chat interface (accessible via the terminal UI) that can query device states and control devices using function calling. Tested and proven stable against the **gemma-4-E2B-it** model family — a compact model capable of i18n-aware prompts and reliable tool calling. This model family is recommended as the smallest option that handles both multilingual conversations and structured function calls at the time of writing.
 - **TTS Service** — Optional text-to-speech integration that reads AI responses aloud through a configured audio endpoint.

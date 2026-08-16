@@ -2,9 +2,10 @@
  * Ambient Lights automation execution tests.
  *
  * Exercises the rule-based execute() flow end-to-end using stubbed devices and
- * fabricated sensor contexts against the real ambient-lights.yaml:
- *   - bright morning turns off every listed device (incl. balcony socket)
- *   - settled dusk turns on only the ambient sockets (asymmetric target sets)
+ * fabricated sensor contexts against a self-contained rule set modeled on
+ * ambient-lights.yaml.dist (no local configuration required):
+ *   - bright morning turns off every listed device (sockets + wall switch)
+ *   - settled dusk turns on only the outlets (asymmetric target sets)
  *   - still-bright evening does nothing
  *   - flat per-rule "action" fallback dispatches commands (regression test)
  *   - season conditions and temporal helpers (stubbed Date)
@@ -23,6 +24,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { createClient } from 'redis'
+
 import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
@@ -36,6 +39,19 @@ process.env['CONFIG_PATH'] = process.env['CONFIG_PATH'] || './etc/automaton.yaml
 
 await ConfigService.init()
 LoggerService.init()
+
+// Best-effort cleanup: remove daily once-markers left over from previous runs so
+// repeated executions on the same day still exercise every rule (no-op without Redis).
+{
+    const client = createClient({ url: process.env['REDIS_URL'], socket: { connectTimeout: 1500, reconnectStrategy: false } })
+    try {
+        await client.connect()
+        const keys = await client.keys('auto:AmbientLightsAutomation:once:*')
+        if (keys.length > 0) await client.del(...keys)
+    } catch (_) { /* Redis unavailable -- markers fail open by design */ } finally {
+        await client.quit().catch(() => {})
+    }
+}
 
 let passed = 0
 let failed = 0
@@ -88,14 +104,53 @@ function makeStubDevice(name) {
 }
 
 const ALL_IDS = [
-    'kuchnia_gniazdo', 'kuchnia_gniazdo_led', 'przedp_gniazdo',
-    'sypialnia_gniazdo', 'sypialnia_gniazdo_lustro', 'balkon_gniazdo',
-    'kuchnia_wlacznik_zlew', 'lazienka_wlacznik', 'przedp_wlacznik',
+    'kitchen_outlet', 'hallway_outlet', 'living_switch',
 ]
 const AMBIENT_ON_IDS = [
-    'kuchnia_gniazdo', 'kuchnia_gniazdo_led', 'przedp_gniazdo',
-    'sypialnia_gniazdo', 'sypialnia_gniazdo_lustro',
+    'kitchen_outlet', 'hallway_outlet',
 ]
+
+// Self-contained rule set mirroring ambient-lights.yaml.dist -- keeps the suite
+// runnable on any machine without a local ambient-lights.yaml present.
+const TEST_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'automaton-ambient-test-'))
+const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'ambient-lights-test.yaml')
+writeFileSync(TEST_CONFIG_PATH, [
+    'targets:',
+    "  - name: 'Kitchen Outlet'",
+    '    id: kitchen_outlet',
+    "  - name: 'Hallway Outlet'",
+    '    id: hallway_outlet',
+    "  - name: 'Living Room Switch'",
+    '    id: living_switch',
+    '',
+    'sensors:',
+    "  illuminance: 'Outdoor Luminance'",
+    '',
+    'triggers_zigbee:',
+    "  - 'Outdoor Luminance'",
+    '',
+    'timer_interval_ms: 30000',
+    '',
+    'rules:',
+    "  - name: 'Bright morning - turn off leftover lights'",
+    '    once: true',
+    '    conditions:',
+    '      time-of-day: [morning]',
+    '      illuminance: { gte: 20 }',
+    '    targets:',
+    '      kitchen_outlet: OFF',
+    '      hallway_outlet: OFF',
+    '      living_switch: OFF',
+    '',
+    "  - name: 'Settled dusk - turn on ambient lamps'",
+    '    once: true',
+    '    conditions:',
+    '      time-of-day: [evening]',
+    '      illuminance: { lt: 2000 }',
+    '    targets:',
+    '      kitchen_outlet: ON',
+    '      hallway_outlet: ON',
+].join('\n'))
 
 /**
  * Test harness around the real AmbientLightsAutomation with stubbed devices/context.
@@ -108,7 +163,7 @@ class TestAmbient extends AmbientLightsAutomation {
      * @param {{illuminance?: number|null, timeOfDay: string}} context - Fabricated buildContext result
      */
     constructor(devices, context) {
-        super()
+        super(TEST_CONFIG_PATH)
         this.#devices = devices
         this.#context = context
     }
@@ -138,11 +193,11 @@ function expectPayload(devices, id, expectedState) {
 
 console.log('\n── Ambient lights execution ──\n')
 
-// Bright morning -> OFF for all nine listed devices (incl. balcony socket cleanup)
+// Bright morning -> OFF for every listed device (sockets + wall switch)
 let devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
 for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
 
-// Settled dusk -> ON only for the five ambient sockets; others untouched
+// Settled dusk -> ON only for the two outlets; the wall switch stays untouched
 devices = await runScenario({ illuminance: 1500, timeOfDay: 'evening' })
 for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPayload(devices, id, null)

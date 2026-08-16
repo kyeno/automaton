@@ -79,21 +79,21 @@ console.log('\n── AI intent parsing ──\n')
 // --- The exact regression from the field log (two unquoted pseudo-calls) --------
 expectIntents(
     'observed log: two set_device_state pseudo-calls',
-    'set_device_state{action: "OPEN", device_name: "Salon Roleta Okno Lewe"}\n' +
-    'set_device_state{action: "OPEN", device_name: "Salon Roleta Okno Prawe"}',
+    'set_device_state{action: "OPEN", device_name: "Living Room Roller Left"}\n' +
+    'set_device_state{action: "OPEN", device_name: "Living Room Roller Right"}',
     [
-        { device: 'Salon Roleta Okno Lewe', action: 'OPEN' },
-        { device: 'Salon Roleta Okno Prawe', action: 'OPEN' }
+        { device: 'Living Room Roller Left', action: 'OPEN' },
+        { device: 'Living Room Roller Right', action: 'OPEN' }
     ]
 )
 
 // --- Lenient pseudo-call rescue path --------------------------------------------
-expectIntents('get_device_state pseudo-call (device only)', 'get_device_state{device_name: "Balkon Temperatura"}', [{ device: 'Balkon Temperatura' }])
-expectIntents('prose prefix before a single call', 'Jasne, otwieram:\nset_device_state{action:"CLOSE", device_name:"Sypialnia Roleta"}', [{ device: 'Sypialnia Roleta', action: 'CLOSE' }])
-expectIntents('paren-style arguments with = separators', 'set_device_state(device_name="Kuchnia Gniazdo", action="ON")', [{ device: 'Kuchnia Gniazdo', action: 'ON' }])
-expectIntents('unquoted numeric position', 'set_device_state { device_name: "Salon Roleta", position: 40 }', [{ device: 'Salon Roleta', position: 40 }])
+expectIntents('get_device_state pseudo-call (device only)', 'get_device_state{device_name: "Outdoor Temperature"}', [{ device: 'Outdoor Temperature' }])
+expectIntents('prose prefix before a single call', 'Sure, closing now:\nset_device_state{action:"CLOSE", device_name:"Bedroom Roller Shutter"}', [{ device: 'Bedroom Roller Shutter', action: 'CLOSE' }])
+expectIntents('paren-style arguments with = separators', 'set_device_state(device_name="Kitchen Outlet", action="ON")', [{ device: 'Kitchen Outlet', action: 'ON' }])
+expectIntents('unquoted numeric position', 'set_device_state { device_name: "Living Room Roller", position: 40 }', [{ device: 'Living Room Roller', position: 40 }])
 expectIntents('string-valued position', 'set_device_state{device_name: "X", position: "55"}', [{ device: 'X', position: 55 }])
-expectIntents('bare unquoted braces without tool name', '{action:"CLOSE", device_name:"Sypialnia Roleta"}', [{ device: 'Sypialnia Roleta', action: 'CLOSE' }])
+expectIntents('bare unquoted braces without tool name', '{action:"CLOSE", device_name:"Bedroom Roller Shutter"}', [{ device: 'Bedroom Roller Shutter', action: 'CLOSE' }])
 
 // --- Strict JSON path (well-formed output) --------------------------------------
 expectIntents('strict flat JSON object', '{"device_name":"X","action":"ON"}', [{ device: 'X', action: 'ON' }])
@@ -105,7 +105,7 @@ expectIntents('multiple strict objects in one message', '[{"device_name":"A","ac
 ])
 
 // --- Negative cases: no intent must be inferred from prose -----------------------
-expectIntents('plain prose with no call syntax', 'Jasne, otwieram rolety w salonie. Miłego dnia!', null)
+expectIntents('plain prose with no call syntax', 'Sure, opening the living room rollers now. Have a nice day!', null)
 expectIntents('empty string', '', null)
 expectIntents('null input', null, null)
 expectIntents('non-string input', 12345, null)

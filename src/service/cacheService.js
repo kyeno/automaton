@@ -227,7 +227,7 @@ class SCacheService {
      * time without relying on PTTL (which is not reliably available across all
      * redis v4 client interfaces).
      *
-     * @param {string} deviceSlug - Slugified device name (e.g., "salon_roleta_okno_lewe")
+     * @param {string} deviceSlug - Slugified device name (e.g., "living_room_roller_left")
      * @param {number} ttlSeconds - Cooldown duration in seconds (e.g., 900 = 15 min)
      * @returns {boolean} True on success
      */

@@ -259,7 +259,7 @@ export default class DeviceBase {
 
     // -- Private state ----------------------------------------------------
 
-    /** Device display name (e.g., `"Salon Gora"`) */
+    /** Device display name (e.g., `"Living Room Light"`) */
     #name = ''
     /** Zigbee2MQTT device ID or friendly-name slug */
     #id = ''

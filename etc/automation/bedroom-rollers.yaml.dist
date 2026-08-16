@@ -1,7 +1,7 @@
 # Bedroom Roller Shutter Automation Configuration
 # Controls multiple roller shutters in a bedroom based on outdoor conditions.
 #
-# Copy this file to "sypialnia-rolety.yaml" (or your own name) and customize.
+# Copy this file to "bedroom-rollers.yaml" (or your own name) and customize.
 
 targets:
   - name: 'Bedroom Roller Left'

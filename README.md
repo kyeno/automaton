@@ -46,7 +46,7 @@ For detailed setup instructions, see [Installation & Requirements](doc/installat
 |----------|-------------|
 | [Installation & Requirements](doc/installation/index.md) | Runtime deps, system packages, first-time setup |
 | [Configuration Guide](doc/configuration.md) | Every config file, environment variable, and i18n bundle explained |
-| [Example Automations](doc/example-automations.md) | Included example automations and how they work |
+| [Example Automations](doc/examples/index.md) | Included example automations and how they work |
 | [Terminal UI](doc/ui/index.md) | Windows, channels, layout, input modes, slash commands |
 | [Architecture](doc/architecture/index.md) | Project structure, core concepts, CLI usage, testing |
 | [TODO & Roadmap](doc/TODO.md) | Planned features and known issues |

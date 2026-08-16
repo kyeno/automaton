@@ -96,7 +96,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Dynamically read every sensor defined in config.sensors.
         // Each entry maps a logical name -> Zigbee device name.
         // The logical name also serves as the property key on the device's state object.
-        // E.g., { humidity: 'Balkon Temperatura' } reads state.humidity from that device.
+        // E.g., { illuminance: 'Outdoor Luminance' } reads state.illuminance from that device.
         const ctx = {}
         const sensors = this.config.sensors ?? {}
 

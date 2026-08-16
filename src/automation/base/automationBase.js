@@ -152,7 +152,7 @@ export default class AutomationBase {
      *
      * Invoked either by an EventBus trigger or by the periodic timer.
      *
-     * @param {{trigger: string}|null} [triggerData] - Trigger metadata (e.g., `{trigger: 'zigbee:Salon Gora'}`)
+     * @param {{trigger: string}|null} [triggerData] - Trigger metadata (e.g., `{trigger: 'zigbee:Living Room Light'}`)
      * @throws {Error} If not overridden
      */
     execute(triggerData = null) {

@@ -189,14 +189,14 @@ export default class Remote extends DeviceBase {
      * device's friendly name (slugified) as the interaction key. Returns true
      * if a matching interaction was found and executed, false otherwise.
      *
-     * @param {string} deviceName - Device friendly name (e.g., "Salon Pilot Rolety")
+     * @param {string} deviceName - Device friendly name (e.g., "Garage Remote Control")
      * @param {Object} triggerData - Data including at least {action}
      * @returns {boolean} true if routed to an interaction
      * @private
      */
     #routeToInteraction(deviceName, triggerData) {
         // Interactions are registered with snake_case names from YAML config.
-        // Slugify the device name to match: "Salon Pilot Rolety" -> "salon_pilot_rolety".
+        // Slugify the device name to match: "Garage Remote Control" -> "garage_remote_control".
         const interactionKey = slugify(deviceName)
         const interaction = InteractionContainer.getInteraction(interactionKey)
         if (!interaction) return false

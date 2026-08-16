@@ -41,7 +41,7 @@ class SEventBus {
      * Publish an event on a channel. No payload is passed;
      * subscribers react by reading fresh state themselves.
      *
-     * @param {string} channel - The event channel name (e.g., "zigbee:Balkon Swiatlo")
+     * @param {string} channel - The event channel name (e.g., "zigbee:Outdoor Luminance")
      */
     publish(channel) {
         const callbacks = this.#subscribers.get(channel)

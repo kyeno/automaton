@@ -178,8 +178,8 @@ class SToolBuilder {
      *
      * Matches `args.device_name` against registered devices using
      * normalized (diacritic-stripped, underscore-joined) names so that
-     * LLM-supplied identifiers like `"salon_roleta"` match friendly names
-     * such as `"Salon Roleta"`. Both sides are sanitized identically.
+     * LLM-supplied identifiers like `"kitchen_lamp"` match friendly names
+     * such as `"Kitchen Lamp"`. Both sides are sanitized identically.
      *
      * @param {Object} args - Parsed arguments from the LLM tool call.
      * @returns {DeviceBase|null} The resolved device, or null.

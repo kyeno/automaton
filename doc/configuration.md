@@ -94,7 +94,7 @@ ai_periodic_message:
 
 On startup, detailed diagnostics show its enabled/disabled state, resolved interval, AI availability, and whether the i18n message was found. The message itself is loaded from the i18n bundle (`periodic.message` key), so it respects the configured language. To customize what the AI is asked about periodically, edit the `periodic.message` value in your `etc/i18n/{locale}/ai.yaml`.
 
-For rule-based alternatives using the automation engine (e.g., weather announcements with sensor interpolation), see [Example Automations](./example-automations.md).
+For rule-based alternatives using the automation engine (e.g., weather announcements with sensor interpolation), see [Example Automations](./examples/index.md).
 
 ### UI Section
 
@@ -346,7 +346,7 @@ Accepts a single value or a list: `season: spring`, `season: [winter]`. Detectio
 Create `<Name>Automation.js` in `etc/automation/` alongside your YAML. The autoloader expects PascalCase naming matching the YAML filename prefix:
 
 ```
-salon-rolety.yaml  ->  salonRoletyAutomation.js
+bedroom-rollers.yaml -> bedroomRollersAutomation.js
 ambient-lights.yaml -> ambientLightsAutomation.js
 ```
 
@@ -429,7 +429,7 @@ ui:
   default_greeting: "Hello! How can I help?"
 ```
 
-> The `devices.mechanism` section only needs entries for devices with **non-obvious** names. A device named "Kitchen Light" doesn't need an annotation, but "Balkon Gniazdo" controlling balcony lighting does.
+> The `devices.mechanism` section only needs entries for devices with **non-obvious** names. A device named "Kitchen Light" doesn't need an annotation, but a socket named "Patio Outlet" powering the garden light strip does.
 
 ### TTS Bundle (`tts.yaml`)
 

@@ -7,8 +7,8 @@
  * and prints the EXACT payload that would be sent to the LLM provider.
  *
  * Usage:
- *   node tests/test-ai-prompt-generation.js "Jaka jest temperatura na zewnątrz?"
- *   node tests/test-ai-prompt-generation.js "Włącz światło w kuchni" "I zamknij rolety"
+ *   node tests/test-ai-prompt-generation.js "What is the temperature outside?"
+ *   node tests/test-ai-prompt-generation.js "Turn on the kitchen light" "And close the blinds"
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
