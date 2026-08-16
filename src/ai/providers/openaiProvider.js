@@ -109,7 +109,7 @@ class OpenAiProvider {
             throw new Error('AI_API_URL is required (e.g. http://host:port/v1)')
         }
         if (!this.#model) {
-            throw new Error('AI_MODEL is required')
+            throw new Error('Model is required - pass config.model or set the "model" option in etc/automaton.yaml')
         }
 
         this.#initialized = true

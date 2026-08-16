@@ -196,7 +196,8 @@ class SCacheService {
      *
      * @param {string} key - Cache key
      * @param {Object} item - Value to cache
-     * @param {number} [ttl] - Optional TTL in seconds (defaults to {@link DEFAULT_TTL_SECONDS})
+     * @param {number} [ttl] - Optional TTL in seconds (defaults to {@link DEFAULT_TTL_SECONDS}).
+     *                          Passing 0 or a negative value stores the item without expiration.
      * @returns {boolean} True on success
      */
     async set(key, item, ttl) {
@@ -215,6 +216,27 @@ class SCacheService {
             return true
         } catch (e) {
             LoggerService.error(`Redis SET error for key "${key}": ${e.message}`, 'CacheService')
+            return false
+        }
+    }
+
+    /**
+     * Delete a cached item by key.
+     *
+     * @param {string} key - Cache key
+     * @returns {boolean} True on success
+     */
+    async delete(key) {
+        if (!this.isConnected()) {
+            LoggerService.warn(`Redis is not connected, cannot delete key: ${key}`, 'CacheService')
+            return false
+        }
+
+        try {
+            await this.#redis.del(key)
+            return true
+        } catch (e) {
+            LoggerService.error(`Redis DEL error for key "${key}": ${e.message}`, 'CacheService')
             return false
         }
     }

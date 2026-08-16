@@ -25,7 +25,7 @@ import BaseWindow from './baseWindow.js'
 // ---------------------------------------------------------------------------
 
 // Fixed width for log level labels -- ensures right brackets align on fixed-width fonts.
-// Current levels: [DEBUG](7), [INFO](6), [WARN](6), [ERROR](7), [CRIT](6), [TRACE](7)
+// Current levels: [DEBUG](7), [INFO](6), [WARN](6), [ERROR](7)
 // Using 8 to give headroom for future longer levels while keeping alignment stable.
 const MAX_LEVEL_WIDTH = 8
 

@@ -3,8 +3,9 @@
  *
  * Uses terminal-kit's 'key' event (enabled by grabInput()) to accumulate
  * characters into a buffer. Handles Enter (submit), Backspace (delete),
- * Arrow keys (history), and Ctrl+C (cancel). Renders the prompt+buffer
- * in the layout's 'input' slot only.
+ * and Arrow keys (history); Ctrl+C exits the application via Ui's own key
+ * handler, which is registered before this component's listener. Renders
+ * the prompt+buffer in the layout's 'input' slot only.
  *
  * Prompt is dynamically set via setChannel(channelName) so each window
  * shows its IRC-style channel name (e.g., [!log], [#automaton]).
@@ -28,8 +29,9 @@ import StateService from '../../service/stateService.js'
 /**
  * Persistent bottom-row command prompt widget.
  * Accumulates keystrokes into a buffer, handles Enter (submit), Backspace,
- * Arrow keys (history navigation), and Ctrl+C (cancel). Renders the prompt
- * with the current channel name in the layout's 'input' slot.
+ * and Arrow keys (history navigation). Ctrl+C terminates the UI -- handled
+ * earlier by Ui's own key listener. Renders the prompt with the current
+ * channel name in the layout's 'input' slot.
  */
 class InputComponent {
     #term
@@ -143,14 +145,6 @@ class InputComponent {
         // Ignore standalone Escape (used as prefix for Alt shortcuts)
         if (n === 'escape') return
 
-        // Ctrl+C: clear the current buffer
-        if (n === 'ctrl_c' || n === 'ctrlc') {
-            this.#currentBuffer = ''
-            this.#cursorPos = 0
-            this.#renderPrompt()
-            return
-        }
-
         // Enter: submit the command
         if (n === 'return' || n === 'enter') {
             this.#submitCommand()
@@ -208,7 +202,7 @@ class InputComponent {
             return
         }
 
-        // Up arrow: navigate command history (newer entries)
+        // Up arrow: navigate command history (older entries)
         if (n === 'up') {
             if (this.#history.length > 0) {
                 if (this.#historyIndex < this.#history.length - 1) {
@@ -221,7 +215,7 @@ class InputComponent {
             return
         }
 
-        // Down arrow: navigate command history (older entries)
+        // Down arrow: navigate command history (newer entries)
         if (n === 'down') {
             if (this.#historyIndex > 0) {
                 this.#historyIndex--

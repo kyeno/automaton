@@ -162,7 +162,9 @@ class SCommandContainer {
         // --- Phase 1: exact match -----------------------------------------
         const cmd = this.#commands.get(trimmed.toLowerCase())
         if (cmd) {
-            try { await cmd.execute('') } catch (error) {}
+            try { await cmd.execute('') } catch (error) {
+                LoggerService.warn(`Command "${trimmed}" failed: ${error.message}`, 'CommandContainer')
+            }
             return true
         }
 
@@ -171,11 +173,14 @@ class SCommandContainer {
             const prefix = `${name} `
             if (trimmed.toLowerCase().startsWith(prefix)) {
                 const args = trimmed.slice(prefix.length)
-                try { await instance.execute(args) } catch (error) {}
+                try { await instance.execute(args) } catch (error) {
+                    LoggerService.warn(`Command "${name}" failed: ${error.message}`, 'CommandContainer')
+                }
                 return true
             }
         }
 
+        LoggerService.warn(`Unknown command: "${trimmed}"`, 'CommandContainer')
         return false
     }
 

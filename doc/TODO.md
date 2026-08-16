@@ -54,6 +54,9 @@ personas:
 
 ## BitchX UI
 
+- BUG: Sometimes, when the software is running for prolonged time and in screen, the log
+  window won't refresh itself automatically. You need to swap windows back and
+  forth.
 - BUG: When running in `screen` and typing a long message it produces really weird results
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)

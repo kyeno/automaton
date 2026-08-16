@@ -12,7 +12,7 @@
 'use strict'
 
 /**
- * @param {object} config -- Slot configuration from ui.yaml
+ * @param {object} config -- Slot configuration from etc/automaton.yaml
  * @returns {string} Rendered separator text
  */
 export default function renderSeparator(config = {}) {

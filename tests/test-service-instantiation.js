@@ -35,6 +35,7 @@ assert(CacheService !== null, 'CacheService exported')
 assert(typeof CacheService.init === 'function', 'has init()')
 assert(typeof CacheService.get === 'function', 'has get()')
 assert(typeof CacheService.set === 'function', 'has set()')
+assert(typeof CacheService.delete === 'function', 'has delete()')
 assert(typeof CacheService.isConnected === 'function', 'has isConnected()')
 assert(typeof CacheService.disconnect === 'function', 'has disconnect()')
 

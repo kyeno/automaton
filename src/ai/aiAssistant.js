@@ -247,7 +247,7 @@ class SAiAssistant {
         this.#messages = [
             { role: 'system', content: this.getEffectiveSystemPrompt() }
         ]
-        CacheService.set(CONVERSATION_KEY, '', 0).catch(() => {})
+        CacheService.delete(CONVERSATION_KEY).catch(() => {})
         LoggerService.info('Conversation cleared', 'AiAssistant')
     }
 

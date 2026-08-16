@@ -1,7 +1,8 @@
 /**
  * Core library autoloader.
- *  Recursively scans a directory for `.js` modules and dynamically imports them,
+ *  Scans a single directory level for `.js` files and dynamically imports them,
  *  returning a key-value map where keys are the file names (without extension).
+ *  Subdirectories are not scanned.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -29,7 +30,7 @@ class Autoloader {
     // -- Public API -------------------------------------------------------
 
     /**
-     * Preload all `.js` modules in a directory.
+     * Preload all `.js` modules directly inside a directory (no recursion).
      *
      * Returns a plain object mapping each module's base name (without `.js`)
      * to its default export or the namespace object when no default exists.
