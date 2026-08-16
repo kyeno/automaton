@@ -272,9 +272,26 @@ class SToolBuilder {
             stripped = fencedMatch[1].trim()
         }
 
-        // Extract individual JSON objects using regex to find {...} blocks
-        const jsonMatches = [...stripped.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)]
-        if (jsonMatches.length === 0) return null
+        // Stage 1 -- strict JSON (well-formed output). Preserves original behavior exactly.
+        const strictIntents = this.#extractStrictJsonIntents(stripped)
+        if (strictIntents.length > 0) return strictIntents
+
+        // Stage 2 -- lenient rescue for small models that emit loose pseudo-call syntax
+        // instead of valid JSON (unquoted keys, function-name prefix, "(" args, etc.).
+        return this.#extractLenientToolCalls(stripped)
+    }
+
+    /**
+     * Extract intents from well-formed JSON blocks in the text. Only valid JSON objects are
+     * considered here, supporting both flat ({device_name/action}) and wrapped
+     * ({name/parameters}) shapes. This is the original, conservative parsing path.
+     * @param {string} text - Fence-stripped assistant content
+     * @returns {Array<Intent>} Parsed intents (may be empty when nothing is valid JSON)
+     * @private
+     */
+    #extractStrictJsonIntents(text) {
+        const jsonMatches = [...text.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)]
+        if (jsonMatches.length === 0) return []
 
         const intents = []
         for (const match of jsonMatches) {
@@ -290,23 +307,82 @@ class SToolBuilder {
                 const p = parsed.parameters
                 const devName = p.device_name || p.device
                 if (!devName) continue
-                intents.push({
-                    device: devName,
-                    action: p.action ?? undefined,
-                    position: typeof p.position === 'number' ? p.position : (typeof p.position === 'string' ? parseInt(p.position) : undefined)
-                })
+                intents.push({ device: devName, action: p.action ?? undefined, position: this.#toPosition(p.position) })
                 continue
             }
 
             // Format 2: {"device": "...", "action": "..."} or {"device_name": "..."}
             if (parsed.device || parsed.device_name) {
-                intents.push({
-                    device: parsed.device || parsed.device_name,
-                    action: parsed.action ?? undefined,
-                    position: typeof parsed.position === 'number' ? parsed.position : (typeof parsed.position === 'string' ? parseInt(parsed.position) : undefined)
-                })
+                intents.push({ device: parsed.device || parsed.device_name, action: parsed.action ?? undefined, position: this.#toPosition(parsed.position) })
                 continue
             }
+        }
+
+        return intents
+    }
+
+    /**
+     * Extract intents from loose pseudo-call syntax that small models emit when they do not
+     * produce valid JSON or native tool_calls. Two strategies are combined:
+     *   1. Tool-name keyed -- each known function name starts a segment; every balanced argument
+     *      block ({...} or (...)) inside it is parsed with tolerant key matching.
+     *   2. Bare brace fallback -- unquoted object keys inside {...} blocks are quoted so the text
+     *      becomes valid JSON, accepting any block that carries a device_name/device field.
+     * @param {string} text - Fence-stripped assistant content (strict parsing already failed)
+     * @returns {Array<Intent>|null} Parsed intents, or null when none could be recovered
+     * @private
+     */
+    #extractLenientToolCalls(text) {
+        const TOOL_NAMES = ['set_device_state', 'get_device_state']
+
+        // Collect every occurrence of a known tool name to split the message into per-call segments.
+        const positions = []
+        for (const name of TOOL_NAMES) {
+            let idx = text.indexOf(name)
+            while (idx !== -1) {
+                positions.push(idx)
+                idx = text.indexOf(name, idx + name.length)
+            }
+        }
+        positions.sort((a, b) => a - b)
+
+        const intents = []
+        for (let i = 0; i < positions.length; i++) {
+            const segStart = positions[i]
+            const segEnd = i + 1 < positions.length ? positions[i + 1] : text.length
+            const segment = text.slice(segStart, segEnd)
+
+            const blocks = this.#allBalancedBlocks(segment)
+            if (blocks.length === 0) {
+                // No delimiters -- treat everything after the function name as loose key/value pairs.
+                const args = this.#parseArgPairs(segment)
+                if (args && args.device) {
+                    intents.push({ device: args.device, action: args.action ?? undefined, position: args.position })
+                }
+                continue
+            }
+
+            for (const inner of blocks) {
+                const args = this.#parseArgPairs(inner)
+                if (!args || !args.device) continue
+                intents.push({ device: args.device, action: args.action ?? undefined, position: args.position })
+            }
+        }
+        if (intents.length > 0) return intents
+
+        // Fallback: bare brace blocks with unquoted keys -> quote keys, then JSON.parse.
+        const bareBlocks = [...text.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)]
+        for (const match of bareBlocks) {
+            let parsed
+            try {
+                parsed = JSON.parse(this.#quoteBareKeys(match[0]))
+            } catch {
+                continue
+            }
+            if (!parsed || typeof parsed !== 'object') continue
+            const devName = parsed.device_name || parsed.device
+            if (!devName) continue
+            intents.push({ device: devName, action: parsed.action ?? undefined, position: this.#toPosition(parsed.position) })
         }
 
         return intents.length > 0 ? intents : null
@@ -418,6 +494,98 @@ class SToolBuilder {
             error: `No action specified in arguments: ${JSON.stringify(rawArgs)}`
         })
     }
+    /**
+     * Scan text and return the inner content of every top-level balanced argument container
+     * ({...} or (...)), skipping past nested delimiters of the same kind. Unbalanced trailing
+     * fragments are ignored so partial output never yields garbage.
+     * @param {string} str - Text to scan
+     * @returns {Array<string>} Inner contents of all complete balanced blocks found
+     * @private
+     */
+    #allBalancedBlocks(str) {
+        const results = []
+        let i = 0
+        while (i < str.length) {
+            if (str[i] === '{' || str[i] === '(') {
+                const open = str[i]
+                const close = open === '{' ? '}' : ')'
+                let depth = 0
+                for (let j = i; j < str.length; j++) {
+                    if (str[j] === open) depth++
+                    else if (str[j] === close) {
+                        depth--
+                        if (depth === 0) {
+                            results.push(str.slice(i + 1, j))
+                            i = j
+                            break
+                        }
+                    }
+                }
+                if (depth !== 0) break // unbalanced remainder -- stop scanning
+            }
+            i++
+        }
+        return results
+    }
+
+    /**
+     * Extract device/action/position from a raw argument string regardless of whether keys are
+     * quoted and whether ":" or "=" is used as the separator. Values may be double-quoted,
+     * single-quoted, or bare tokens. Fields that are absent come back undefined.
+     * @param {string} inner - Inner content of an argument block (without outer delimiters)
+     * @returns {{device?: string, action?: string, position?: number}|null} Parsed arguments, or null when nothing usable was found
+     * @private
+     */
+    #parseArgPairs(inner) {
+        const pick = (key) => {
+            const re = new RegExp(
+                '(?:^|[,{\\s])' + key + '\\s*[:=]\\s*(?:"([^"]*)"|\'([^\']*)\'|([A-Za-z0-9][A-Za-z0-9_.]*))',
+                'i'
+            )
+            const m = inner.match(re)
+            if (!m) return undefined
+            const value = m[1] ?? m[2] ?? m[3]
+            return value === undefined ? undefined : String(value).trim()
+        }
+
+        let device = pick('device_name') || pick('device')
+        if (device !== undefined && device.trim() === '') device = undefined
+        const actionRaw = pick('action')
+        const action = actionRaw !== undefined && actionRaw.trim() !== '' ? actionRaw.trim() : undefined
+        const position = this.#toPosition(pick('position'))
+
+        if (!device && !action && position === undefined) return null
+        return { device, action, position }
+    }
+
+    /**
+     * Quote bare (unquoted) object keys that precede a colon so loose pseudo-JSON such as
+     * {action:"ON", device_name:"X"} becomes valid JSON {"action":"ON","device_name":"X"}.
+     * Already-quoted keys are left untouched because they are not preceded by a delimiter/space.
+     * @param {string} s - Raw brace block text
+     * @returns {string} Text with bare object keys quoted
+     * @private
+     */
+    #quoteBareKeys(s) {
+        return s.replace(/([{,\s])([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
+    }
+
+    /**
+     * Normalize a raw position value into an integer, returning undefined when the value is not
+     * a usable number. Accepts numbers and numeric strings; ignores anything else.
+     * @param {*} value - Raw position from parsed arguments
+     * @returns {number|undefined} Integer position or undefined
+     * @private
+     */
+    #toPosition(value) {
+        if (typeof value === 'number' && !isNaN(value)) return Math.trunc(value)
+        if (typeof value === 'string') {
+            const n = parseInt(value, 10)
+            if (!isNaN(n)) return n
+        }
+        return undefined
+    }
+
     // -- Private Helpers --------------------------------------------------
 
     /**
