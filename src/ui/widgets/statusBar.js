@@ -87,7 +87,7 @@ class StatusBar {
      * and triggers refresh reactively.
      */
     init() {
-        const { lines } = this._loadConfig()
+        const { lines } = this.#loadConfig()
 
         // Collect all widgets across every line (left + right sections)
         const tempWidgets = []
@@ -171,7 +171,7 @@ class StatusBar {
         // Save cursor position to prevent it from jumping during input typing
         this.#term.saveCursor()
 
-        const { lines } = this._loadConfig()
+        const { lines } = this.#loadConfig()
         const terminalWidth = r.width
 
         for (let i = 0; i < lines.length; i++) {
@@ -388,6 +388,8 @@ class StatusBar {
 
     /**
      * Hide the status bar -- clear its rendered lines.
+     * Erased rows are clamped to the slot height so extra configured lines can
+     * never cause erasure past the status region into the input row.
      */
     hide() {
         if (!this.#term) return
@@ -395,12 +397,14 @@ class StatusBar {
         const r = this.#layout.getSlot('status')
         if (!r) return
 
-        const { lines } = this._loadConfig()
+        const { lines } = this.#loadConfig()
+        // Clamp to the actual slot height -- config may define more lines than the layout allocates
+        const rows = Math.min(lines.length, r.height)
 
         this.#layout.moveToSlot('status')
-        for (let i = 0; i < lines.length; i++) {
+        for (let i = 0; i < rows; i++) {
             this.#term.eraseLine()
-            if (i < lines.length - 1) {
+            if (i < rows - 1) {
                 this.#term.nextLine()
             }
         }
@@ -425,7 +429,7 @@ class StatusBar {
      * Supports both new structure (lines[].left / lines[].right) and old flat widgets.
      * @returns {{lines: Array}} Parsed configuration with normalized line structure
      */
-    _loadConfig() {
+    #loadConfig() {
         try {
             const cfg = ConfigService.getSection('status_bar')
             if (!cfg) return { lines: [{ left: [], right: [] }, { left: [], right: [] }] }

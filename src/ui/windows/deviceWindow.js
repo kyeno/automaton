@@ -65,7 +65,8 @@ class DeviceWindow extends BaseWindow {
         // Listen for 'devices:ready' from DeviceContainer. This fires once after
         // initial device discovery completes, and again when a device is dynamically
         // added. DeviceWindow reacts by subscribing to all known zigbee:<device> channels.
-        EventBus.subscribe('devices:ready', () => this.#resubscribeDevices())
+        // Unsub stored so destroy() releases it like every other subscription.
+        this.#unsubscribes.push(EventBus.subscribe('devices:ready', () => this.#resubscribeDevices()))
     }
 
     // -- Public API -------------------------------------------------------
