@@ -17,7 +17,7 @@ triggers_zigbee:
   - 'Outdoor Luminance'
   - 'Outdoor Temperature'
 
-timer_interval_ms: 60000
+timer_interval: "1m"
 
 rules:
   - name: 'Night - close all'

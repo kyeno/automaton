@@ -14,8 +14,8 @@
 'use strict'
 
 export default {
-    // Top-level numeric settings
-    human_interaction_cooldown_ms: { type: 'number', required: false },
+    // Top-level duration settings -- legacy plain number or human-readable string ("25m")
+    human_interaction_cooldown_ms: { type: ['number', 'string'], required: false },
 
     // i18n section
     ai_language: { type: 'string', enum: ['pl', 'en'], required: true },
@@ -25,7 +25,7 @@ export default {
     model: { type: 'string', required: true },
     max_tokens: { type: 'number', required: true },
     temperature: { type: 'number', required: true },
-    conversation_ttl_sec: { type: 'number', required: false },
+    conversation_ttl_sec: { type: ['number', 'string'], required: false },
     max_conversation_turns: { type: 'number', required: false },
 
     // Paths section (optional - provides config file paths and directory paths)

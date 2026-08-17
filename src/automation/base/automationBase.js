@@ -29,6 +29,9 @@ const DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS = 15 * 60 * 1_000
 /** Default timer interval -- `0` means timer is disabled; automation is event-driven only. */
 const DEFAULT_TIMER_INTERVAL_MS = 0
 
+/** Maximum acceptable timer interval -- setInterval clamps silently above 32 bits (~24.8 days). */
+const MAX_SETTABLE_INTERVAL_MS = 0x7FFFFFFF
+
 // ---------------------------------------------------------------------------
 // AutomationBase (abstract)
 // ---------------------------------------------------------------------------
@@ -134,15 +137,39 @@ export default class AutomationBase {
 
     /**
      * Return the interval in milliseconds for the periodic timer.
-     * Reads `timer_interval_ms` from config, falling back to DEFAULT_TIMER_INTERVAL_MS.
+     * Prefers the human-readable `timer_interval` string ("90s", "3m 45s", "1h")
+     * parsed via temporal.humanToMs(); falls back to legacy numeric
+     * `timer_interval_ms`, then DEFAULT_TIMER_INTERVAL_MS. Invalid or oversized
+     * values log a warning and disable the timer (fail-open, consistent with
+     * silence_between handling).
      * Return null or 0 to disable the timer (event-driven only).
      *
      * @return {number|null} Interval in milliseconds, or null/0 to disable
      */
     getTimerIntervalMs() {
-        return typeof this.config?.timer_interval_ms === 'number'
-            ? this.config.timer_interval_ms
-            : DEFAULT_TIMER_INTERVAL_MS
+        const human = this.config?.timer_interval
+        if (typeof human === 'string') {
+            const ms = temporal.humanToMs(human)
+            if (ms == null || ms > MAX_SETTABLE_INTERVAL_MS) {
+                LoggerService.warn(
+                    `Invalid timer_interval "${human}" (expected e.g. "90s", "3m 45s" or "1h"). Timer disabled.`,
+                    `Auto:${this.name}`
+                )
+                return DEFAULT_TIMER_INTERVAL_MS
+            }
+            return ms
+        }
+
+        const legacy = this.config?.timer_interval_ms
+        if (typeof legacy !== 'number') return DEFAULT_TIMER_INTERVAL_MS
+        if (legacy > MAX_SETTABLE_INTERVAL_MS) {
+            LoggerService.warn(
+                `timer_interval_ms ${legacy} exceeds maximum (${MAX_SETTABLE_INTERVAL_MS}). Timer disabled.`,
+                `Auto:${this.name}`
+            )
+            return DEFAULT_TIMER_INTERVAL_MS
+        }
+        return legacy
     }
 
     // -- Abstract method ----------------------------------------------------
@@ -214,26 +241,39 @@ export default class AutomationBase {
 
     /**
      * Return the human-interaction cooldown in milliseconds.
-     * Reads `human_interaction_cooldown_ms` from ConfigService, otherwise defaults
-     * to DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS (15 minutes).
-     * @returns {number} Cooldown in milliseconds
+     * Reads `human_interaction_cooldown_ms` from ConfigService -- either legacy plain
+     * milliseconds or a human-readable duration ("25m", "1h"). Missing values silently
+     * default to DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS (15 minutes); present but
+     * invalid values log a warning and fall back to that same default (fail-open).
+     * A value of 0 disables the cooldown.
+     * @returns {number} Cooldown in milliseconds (>= 0)
      */
     getHumanInteractionCooldownMs() {
-        return ConfigService.get('human_interaction_cooldown_ms', DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS)
+        const raw = ConfigService.get('human_interaction_cooldown_ms')
+        if (raw == null) return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms == null || ms < 0) {
+            LoggerService.warn(
+                `Invalid human_interaction_cooldown_ms ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS)})`,
+                `Auto:${this.name}`
+            )
+            return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
+        }
+        return ms
     }
 
     /**
-     * Check whether the current local time falls within the configured silent period.
-     * The config key is `silence_between` with format `"HHmm-HHmm"` (e.g., "0500-0900"
-     * or overnight "2300-0600"). Returns false when no config is set so that existing
-     * automations are unaffected. Invalid formats produce a one-time warning and fall
-     * through to normal behaviour (fail-open).
+     * Parse the configured `silence_between` window ("HHmm-HHmm") into minutes-of-day bounds.
+     * Returns null when unset, malformed, or degenerate (start === end -- treated as a
+     * no-op), logging a warning for malformed values so existing automations are
+     * unaffected (fail-open). Shared by isInSilentPeriod()/isInSilentPeriodAt() and by
+     * subclasses that need raw session boundaries (e.g., weatherman day-position markers).
      *
-     * @returns {boolean} true if execution should be suppressed right now
+     * @returns {{startMin: number, endMin: number}|null} Window bounds in minutes from midnight
      */
-    isInSilentPeriod() {
+    parseSilenceWindow() {
         const silenceConfig = this.config?.silence_between
-        if (!silenceConfig || typeof silenceConfig !== 'string') return false
+        if (!silenceConfig || typeof silenceConfig !== 'string') return null
 
         // Parse "HHmm-HHmm" -- e.g. "0500-0900", "2300-0600"
         const match = String(silenceConfig).match(/^(\d{4})-(\d{4})$/)
@@ -242,30 +282,51 @@ export default class AutomationBase {
                 `Invalid silence_between format "${silenceConfig}", expected "HHmm-HHmm". Ignoring.`,
                 `Auto:${this.name}`
             )
-            return false
+            return null
         }
 
-        const parseToMinutes = (hhmm) => {
-            const hours = parseInt(hhmm.slice(0, 2), 10)
-            const minutes = parseInt(hhmm.slice(2, 4), 10)
-            return hours * 60 + minutes
-        }
+        const toMinutes = (hhmm) => parseInt(hhmm.slice(0, 2), 10) * 60 + parseInt(hhmm.slice(2, 4), 10)
+        const startMin = toMinutes(match[1])
+        const endMin   = toMinutes(match[2])
 
-        const startMinutes = parseToMinutes(match[1])
-        const endMinutes   = parseToMinutes(match[2])
-
-        const now = new Date()
-        const currentMinutes = now.getHours() * 60 + now.getMinutes()
-
-        if (startMinutes < endMinutes) {
-            // Normal range: e.g., 0500-0900 -> between 5 AM and 9 AM
-            return currentMinutes >= startMinutes && currentMinutes < endMinutes
-        } else if (startMinutes > endMinutes) {
-            // Overnight wrap: e.g., 2300-0600 -> from 11 PM to 6 AM next day
-            return currentMinutes >= startMinutes || currentMinutes < endMinutes
-        }
         // start === end means the window covers either all or no time -- treat as no-op.
-        return false
+        if (startMin === endMin) return null
+        return { startMin, endMin }
+    }
+
+    /**
+     * Check whether a specific moment falls within the configured silent period.
+     * Generalizes isInSilentPeriod() for arbitrary dates -- used by automations that need
+     * to predict upcoming suppressed ticks (e.g., weatherman day-position markers).
+     * Overnight wrap-around windows ("2300-0600") are supported; malformed configs fail open.
+     *
+     * @param {Date} [date=new Date()] - Moment to check
+     * @returns {boolean} true if the given moment is inside the silent window
+     */
+    isInSilentPeriodAt(date = new Date()) {
+        const win = this.parseSilenceWindow()
+        if (!win) return false
+
+        const minutes = date.getHours() * 60 + date.getMinutes()
+        if (win.startMin < win.endMin) {
+            // Normal range: e.g., 0500-0900 -> between 5 AM and 9 AM
+            return minutes >= win.startMin && minutes < win.endMin
+        }
+        // Overnight wrap: e.g., 2300-0600 -> from 11 PM to 6 AM next day
+        return minutes >= win.startMin || minutes < win.endMin
+    }
+
+    /**
+     * Check whether the current local time falls within the configured silent period.
+     * The config key is `silence_between` with format `"HHmm-HHmm"` (e.g., "0500-0900"
+     * or overnight "2300-0600"). Returns false when no config is set so that existing
+     * automations are unaffected. Invalid formats produce a warning and fall through
+     * to normal behaviour (fail-open).
+     *
+     * @returns {boolean} true if execution should be suppressed right now
+     */
+    isInSilentPeriod() {
+        return this.isInSilentPeriodAt(new Date())
     }
 
     /**

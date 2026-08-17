@@ -30,7 +30,7 @@ import { PROJECT_ROOT } from '../../lib/projectRoot.js'
  * Schema node definition for recursive config validation.
  *
  * @typedef {Object} ConfigSchemaNode
- * @property {'string'|'number'|'boolean'|'object'|'array'} [type] - Expected JavaScript type
+ * @property {'string'|'number'|'boolean'|'object'|'array'|Array<'string'|'number'|'boolean'|'object'|'array'>} [type] - Expected JavaScript type(s); an array allows any of the listed types
  * @property {boolean} [required] - Whether this key must be present
  * @property {unknown[]} [enum] - Allowed values (mutually exclusive with `type` checking)
  * @property {Record<string, ConfigSchemaNode>} [properties] - Child schema for nested objects
@@ -196,12 +196,13 @@ class ConfigBase {
 
             const actualValue = value[key]
 
-            // Type checking
+            // Type checking (a schema may list several allowed types as an array)
             if (def.type && actualValue !== undefined) {
                 const actualType = Array.isArray(actualValue) ? 'array' : typeof actualValue
-                if (actualType !== def.type) {
+                const allowedTypes = Array.isArray(def.type) ? def.type : [def.type]
+                if (!allowedTypes.includes(actualType)) {
                     errors.push(
-                        `Invalid type for "${fullPath}": expected ${def.type}, got ${actualType}`
+                        `Invalid type for "${fullPath}": expected ${allowedTypes.join(' | ')}, got ${actualType}`
                     )
                     continue
                 }

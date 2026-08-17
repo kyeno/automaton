@@ -15,9 +15,10 @@
 # Controls global automation behavior. Custom automations are defined
 # in separate YAML files under their respective directories.
 
-# Human-interaction cooldown in milliseconds (default: 900000 = 15 min).
-# Automations skip a device for this duration after a human manually changes it.
-human_interaction_cooldown_ms: 900000
+# How long automations skip a device after a human manually changes it.
+# Accepts a human-readable duration ("90s", "25m", "1h") or legacy plain milliseconds;
+# defaults to 15 minutes when omitted. Set to 0 to disable the cooldown entirely.
+human_interaction_cooldown_ms: "15m"
 
 # -- Where to find custom configurations --------------------------
 # These paths can be overridden below under the `paths` section. Defaults are:
@@ -74,9 +75,9 @@ max_tokens: -1
 # Lower = more deterministic; higher = more creative/random.
 temperature: 1.0
 
-# Conversation history TTL in seconds (default: 900 = 15 minutes).
-# After this period of inactivity, the conversation is purged from Redis.
-conversation_ttl_sec: 900
+# Conversation history TTL -- how long idle conversations linger in Redis before purge.
+# Accepts a human-readable duration ("45s", "15m", "1h") or legacy plain seconds.
+conversation_ttl_sec: "15m"
 
 # Maximum number of message turns to retain in context window.
 # Prevents token explosion during very long conversations.
@@ -86,15 +87,6 @@ max_conversation_turns: 15
 # in UI or passing to TTS. Some AI models use bold/italic/emoji that may not
 # render well in terminal UI or sound awkward when spoken.
 strip_ai_formatting: false
-
-# Periodic AI messenger settings for the built-in AI Periodic Service.
-# Sends a localized prompt to the AI at regular intervals, triggering
-# the full flow: tool execution -> AI response -> TTS (if enabled).
-# In the UI, these messages appear with a <system> prefix (yellow color).
-ai_periodic_message:
-  # Interval in milliseconds between periodic messages (default: 900000 = 15 min).
-  # Set to 0 to disable the periodic messenger entirely.
-  interval_ms: 900000
 # ================================================================
 
 # ================================================================

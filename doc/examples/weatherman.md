@@ -7,8 +7,21 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 1. On each timer tick, the automation loads its locale-specific i18n bundle (`etc/i18n/{locale}/weatherman.yaml`).
 2. A base sentence (e.g., *"It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius..."*) is resolved — placeholders are replaced with real-time sensor values pulled from Zigbee devices via MQTT.
 3. Condition rules are evaluated against the current context built dynamically from all sensors defined in `config.sensors`. When multiple rules match simultaneously, only the one with the highest `priority` fires (higher number wins; default is 0).
-4. If an AI assistant is available, the built message is prefixed with a creative instruction key (`sentence_ai_prefix`) and sent through `AiAssistant.processMessage()` for natural-language rewriting before being spoken aloud. Otherwise, the raw interpolated text goes straight to TTS.
+4. If an AI assistant is available, the built message is framed with day-position markers (see below), prefixed with a creative instruction key (`sentence_ai_prefix`) and sent through `AiAssistant.processMessage()` for natural-language rewriting before being spoken aloud. Otherwise, the raw interpolated text goes straight to TTS -- no markers are added on that path.
 5. System-originated messages appear in the UI with a yellow `<system>` prefix and are excluded from conversation caching so they don't extend Redis TTLs indefinitely.
+
+## Daily Cycle Markers
+
+When routing through AI, each announcement is positioned within its **daily session** — the continuous stretch of active ticks between two `silence_between` windows (with `"0230-1030"` one session runs ~10:30 → ~02:30). The position is computed purely from wall clock + config at run time; nothing is stored, so behaviour is deterministic per moment:
+
+| Marker | Condition | Prompt placement |
+|--------|-----------|------------------|
+| first | Run happened less than one timer interval after the session began | Opening line after `ai_prefix`, before the message |
+| last | Session ends less than one timer interval after this run | Same opening-line slot |
+| only | Both (session shorter than the timer interval) | Same slot; takes priority over first/last |
+| next | Neither first nor last | Closing line *after* the message, containing `{% next_interval %}` |
+
+Because timer ticks are spaced at least one interval apart even across process restarts (`setInterval` re-anchors on boot), a run less than an interval away from a session boundary can never have had a neighbour in that same session -- making first/last detection exact for timer-driven runs. The only residual error is a missed "first" marker when the process was down across the wake-up boundary. Markers require a valid positive timer interval; first/last additionally require a valid `silence_between`. The small model inflects the localized unit words (e.g., Polish *"za godzinę"*) into natural speech as part of its rewrite.
 
 ## Dynamic Sensor System
 
@@ -23,8 +36,8 @@ Adding new sensor types requires **zero code changes** — just add them to the 
 Located at `etc/automation/tts-weatherman.yaml`:
 
 ```yaml
-timer_interval_ms: 3600000   # Milliseconds between runs (set to 0 to disable)
-silence_between: "0230-1030" # Suppress execution during this time window
+timer_interval: "1h"            # Human-readable interval ("90s", "3m 45s", "1h"); omit to go event-driven
+silence_between: "0230-1030"    # Suppress execution during this time window
 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
@@ -94,7 +107,8 @@ Two placeholder types are supported inside i18n strings:
 | Placeholder | Example | Resolves To |
 |-------------|---------|-------------|
 | `{{ DeviceName.property }}` | `{{ Outdoor Temperature.temperature }}` | Live sensor value from Zigbee2MQTT (locale-formatted numbers) |
-| `{% keyword %}` | `{% time %}` | Special function output (currently only `time` is supported; uses the configured `time_format`) |
+| `{% time %}` | `{% time %}` | Current local time using the configured `time_format` |
+| `{% next_interval %}` | resolved inside `ai_message_next` | Localized duration phrase until the next non-silent announcement (e.g., "1 godzin"); pre-resolved by the automation, not a user-facing template keyword |
 
 If a device or property isn't found during interpolation, it resolves to `"N/A"`.
 
@@ -106,6 +120,16 @@ Weather speech templates live in per-locale files at `etc/i18n/{locale}/weatherm
 ```yaml
 base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
+# Day-position markers + unit words for {% next_interval %} (see Daily Cycle Markers)
+ai_message_first: 'This is the first update of today.'
+ai_message_last: 'This is the last update of tonight.'
+ai_message_only: 'This is the only update of today.'
+ai_message_next: 'Next update in {% next_interval %}.'
+duration_units:
+  day: 'days'
+  hour: 'hours'
+  minute: 'minutes'
+  second: 'seconds'
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 warning_humid_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
 warning_hot_stay_at_home: 'WARNING: It is so hot that breathing is difficult! Make sure to stay indoors!'
@@ -120,6 +144,16 @@ soothing_warm_night: 'Beautiful night out there. You could step outside in short
 ```yaml
 base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
 ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie: '
+# Markery pozycji w dobie + słowa jednostek dla {% next_interval %} (patrz Daily Cycle Markers)
+ai_message_first: 'To jest pierwsza wiadomość dzisiejszego dnia.'
+ai_message_last: 'To jest ostatnia wiadomość dzisiejszej nocy.'
+ai_message_only: 'To jest jedyna wiadomość tej doby.'
+ai_message_next: 'Następna wiadomość za {% next_interval %}.'
+duration_units:
+  day: 'dni'
+  hour: 'godzin'
+  minute: 'minut'
+  second: 'sekund'
 warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
 warning_humid_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'
 warning_hot_stay_at_home: 'UWAGA: Jest tak gorąco, że ciężko się oddycha! Koniecznie pozostań w domu!'

@@ -5,6 +5,11 @@
  * direct TTS if AI unavailable). Supports {{ DeviceName.property }} string
  * interpolation for live sensor data in i18n strings.
  *
+ * When routing through AI, day-position markers derived purely from clock + config
+ * (no stored state) frame the core content: an opening line marks the first / last /
+ * only announcement of each daily session (the stretch between two silence windows),
+ * while "next update in {% next_interval %}" closes middle-of-session runs.
+ *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  *
@@ -26,6 +31,7 @@ import AiAssistant from '../../src/ai/aiAssistant.js'
 import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 import { round } from '../../src/lib/math.js'
+import temporal from '../../src/lib/date.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -45,6 +51,9 @@ const INTERPOLATION_REGEX = /\{\{\s*([\w\s]+?)\.([\w]+)\s*\}\}/g
 
 /** Regex to match {% keyword %} special-function placeholders in i18n strings. */
 const TIME_INTERPOLATION_REGEX = /\{%\s*(\w+)\s*%\}/g
+
+/** Scan horizon when predicting the next non-silent tick -- two days exceeds any sane config. */
+const NEXT_ANNOUNCEMENT_HORIZON_MS = 48 * 3600 * 1000
 
 // ---------------------------------------------------------------------------
 // Class
@@ -159,8 +168,19 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
+        // Determine where this announcement sits within its daily session so the AI
+        // prompt can frame the core content with first/last/only/next context.
+        const meta = this.computeDayPosition(new Date())
+        if (meta.isFirst || meta.isLast || meta.nextIntervalMs != null) {
+            this.log(
+                `Day position: first=${meta.isFirst}, last=${meta.isLast}` +
+                (meta.nextIntervalMs != null ? `, next in ${temporal.millisecondsToHumanReadable(meta.nextIntervalMs)}` : ''),
+                'debug'
+            )
+        }
+
         // Route output through AI->TTS or direct TTS
-        await this.#speak(message)
+        await this.#speak(message, meta)
     }
 
     /**
@@ -180,6 +200,105 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     resolveCommand(_device, _targetKey, _matchingRules) {
         return null
     }
+
+    /**
+     * Compute where an announcement sits within its daily "session" -- the continuous
+     * stretch between two silence windows (with silence_between "0230-1030", one session
+     * runs from ~10:30 until ~02:30 next morning). Pure function of clock and config: no
+     * state is kept, so results are deterministic per wall-clock time.
+     *
+     * Because timer ticks are spaced at least one interval apart even across process
+     * restarts (setInterval re-anchors on boot), a run less than one interval after the
+     * session began can never have had a predecessor in that same session -- making
+     * first/last detection exact for timer-driven runs. The only residual error is a
+     * missed "first" marker when the process was down across the wake-up boundary.
+     *
+     * Exposed without the # prefix (like AutomationBase._initialized/_timer) so unit
+     * tests can verify the matrix without MQTT or AI providers.
+     *
+     * @param {Date} [now=new Date()] - Moment to evaluate
+     * @returns {{isFirst: boolean, isLast: boolean, nextIntervalMs: number|null}}
+     *   isFirst/isLast require both a positive timer interval and a valid silence window;
+     *   nextIntervalMs is milliseconds until the next non-silent tick, or null when the
+     *   timer is disabled or no such tick exists within the scan horizon.
+     */
+    computeDayPosition(now = new Date()) {
+        const result = { isFirst: false, isLast: false, nextIntervalMs: null }
+
+        const intervalMs = this.getTimerIntervalMs()
+        if (!(intervalMs > 0)) return result            // event-driven only -- nothing periodic to predict
+        if (this.isInSilentPeriodAt(now)) return result // defensive: markers are meaningless mid-silence
+
+        // Next announcement = first upcoming tick outside the silent window. For pure
+        // timer runs this resolves in one step (ticks sit exactly `intervalMs` apart);
+        // the loop also stays correct for hypothetical out-of-band trigger invocations.
+        let t = now.getTime() + intervalMs
+        const horizon = now.getTime() + NEXT_ANNOUNCEMENT_HORIZON_MS
+        while (t <= horizon) {
+            if (!this.isInSilentPeriodAt(new Date(t))) {
+                result.nextIntervalMs = t - now.getTime()
+                break
+            }
+            t += intervalMs
+        }
+
+        const win = this.parseSilenceWindow()
+        if (!win) return result   // no silence window -> no sessions -> no first/last notion
+
+        result.isFirst = now.getTime() - this.#sessionBeganAt(win, now) < intervalMs
+        result.isLast  = this.#sessionEndsAt(win, now) - now.getTime() < intervalMs
+        return result
+    }
+
+    /**
+     * Assemble the full prompt sent to the AI for a weather update. Layout: creative
+     * prefix -> optional day-position opener (first / last / only) -> core message ->
+     * optional "next update in ..." closer. Returns the plain message unchanged when
+     * nothing was added, so callers can detect marker-less runs cheaply.
+     *
+     * Exposed without the # prefix so unit tests can verify assembly order and i18n
+     * degradation without a live AI provider; #speak() is the sole production caller.
+     *
+     * @param {string} message - Interpolated core speech text
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position computed by {@link computeDayPosition}
+     * @returns {string} Full AI prompt (equals `message` when no markers apply)
+     */
+    buildAiPrompt(message, meta = {}) {
+        const parts = []
+
+        // Creative instruction prefix (existing behaviour).
+        const aiPrefixKey = this.config.sentence_ai_prefix
+        if (aiPrefixKey && this.#bundle) {
+            const prefixText = this.#resolveI18n(aiPrefixKey, '')
+            if (prefixText) parts.push(prefixText)
+        }
+
+        // Opening day-position marker -- exactly one of first / last / only applies per run.
+        let openerKey = null
+        if (meta.isFirst && meta.isLast)      openerKey = 'weatherman.ai_message_only'
+        else if (meta.isFirst)                openerKey = 'weatherman.ai_message_first'
+        else if (meta.isLast)                 openerKey = 'weatherman.ai_message_last'
+        if (openerKey) {
+            const opener = this.#interpolate(this.#resolveI18n(openerKey, ''))
+            if (opener) parts.push(opener)
+        }
+
+        parts.push(message)
+
+        // Closing "next update" line -- middle-of-session runs only. Skipped gracefully
+        // when the bundle lacks the template or localized duration words.
+        if (!meta.isFirst && !meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
+            const template = this.#resolveI18n('weatherman.ai_message_next', '')
+            const phrase = temporal.msToHumanPhrase(meta.nextIntervalMs, this.#bundle?.duration_units ?? {})
+            if (template && phrase) {
+                parts.push(this.#interpolate(template, null, { next_interval: phrase }))
+            }
+        }
+
+        return parts.length === 1 ? message : parts.join('\n')
+    }
+
 
     // -- Private Helpers ----------------------------------------------------
 
@@ -236,19 +355,20 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /**
      * Replace {{ DeviceName.property }} placeholders with live sensor data,
-     * and {% keyword %} placeholders with locale-aware values (e.g., {% time %}).
+     * and {% keyword %} placeholders with locale-aware values (e.g., {% time %},
+     * or {% next_interval %} when a pre-resolved value is supplied via specialValues).
      * If device or property not found, replaces with INTERPOLATION_MISSING.
      * @param {string} text - Template string with placeholders
      * @param {Object} [_context] - Unused context param (kept for signature compat)
+     * @param {Record<string, string>} [specialValues] - Pre-resolved values for extra
+     *   {% keyword %} placeholders; keywords without an entry pass through unchanged
      * @returns {string} Text with all placeholders resolved
      */
-    #interpolate(text, _context) {
+    #interpolate(text, _context, specialValues = {}) {
         // First resolve special-function placeholders like {% time %}.
         let result = text.replace(TIME_INTERPOLATION_REGEX, (_match, keyword) => {
-            switch (keyword) {
-                case 'time': return I18nLoader.formatTime()
-                default:     return `{% ${keyword} %}`   // unknown -> pass through unchanged
-            }
+            if (keyword === 'time') return I18nLoader.formatTime()
+            return specialValues[keyword] ?? `{% ${keyword} %}`   // unknown -> pass through unchanged
         })
 
         // Then resolve device-property placeholders
@@ -279,10 +399,13 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     }
 
     /**
-     * Send the built message to TTS, optionally routing through AI first.
+     * Send the built message to TTS, optionally routing through AI first. When the AI
+     * handles it, day-position markers frame the core content via buildAiPrompt().
      * @param {string} message - Final interpolated speech text
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position computed by {@link computeDayPosition}
      */
-    async #speak(message) {
+    async #speak(message, meta = {}) {
         const trimmedMessage = message.trim()
         if (!trimmedMessage) {
             this.log('Empty message after building, skipping TTS', 'debug')
@@ -292,18 +415,15 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         this.log(`Sending weather update (${trimmedMessage.length} chars)`, 'info')
 
         // Build the full prompt BEFORE any emissions, so Window 3 sees exactly
-        // what will be sent to the AI (including creative prefix when applicable).
+        // what will be sent to the AI (creative prefix and day-position markers included).
         let displayText = trimmedMessage
         let aiPrompt = trimmedMessage
 
         if (AiAssistant.isAvailable()) {
-            const aiPrefixKey = this.config.sentence_ai_prefix
-            if (aiPrefixKey && this.#bundle) {
-                const prefixText = this.#resolveI18n(aiPrefixKey, '')
-                if (prefixText) {
-                    aiPrompt = prefixText + '\n' + trimmedMessage
-                    displayText = aiPrompt   // UI shows the full prompt including prefix
-                }
+            const fullPrompt = this.buildAiPrompt(trimmedMessage, meta)
+            if (fullPrompt !== trimmedMessage) {
+                aiPrompt = fullPrompt
+                displayText = fullPrompt   // UI shows the full prompt including prefix/markers
             }
         }
 
@@ -337,5 +457,38 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             EventBus.emit('tts:speak', { text: trimmedMessage })
             this.log('Weather update sent via direct TTS', 'debug')
         }
+    }
+
+    /**
+     * Epoch ms of the most recent past occurrence of the silence-window END boundary --
+     * i.e., the moment the current announcement session began ("wake-up"). For a normal
+     * window like "0230-1030" at 15:00 this is today's 10:30; at 01:45 it is yesterday's.
+     * Note: local-midnight arithmetic assumes a 24 h day (DST transitions shift results
+     * by an hour for runs near midnight on those days -- acceptable for speech markers).
+     * @param {{startMin: number, endMin: number}} win - Parsed silence window
+     * @param {Date} now - Reference moment (assumed outside the silent window)
+     * @returns {number} Epoch milliseconds
+     */
+    #sessionBeganAt(win, now) {
+        const DAY_MS = 86_400_000
+        let epoch = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + win.endMin * 60_000
+        if (epoch > now.getTime()) epoch -= DAY_MS   // today's wake-up hasn't happened yet -> yesterday's
+        return epoch
+    }
+
+    /**
+     * Epoch ms of the next upcoming occurrence of the silence-window START boundary --
+     * i.e., the moment the current announcement session will end ("sleep"). For a normal
+     * window like "0230-1030" this is tonight's/tomorrow's 02:30 depending on the clock.
+     * Same DST caveat as {@link #sessionBeganAt}.
+     * @param {{startMin: number, endMin: number}} win - Parsed silence window
+     * @param {Date} now - Reference moment (assumed outside the silent window)
+     * @returns {number} Epoch milliseconds
+     */
+    #sessionEndsAt(win, now) {
+        const DAY_MS = 86_400_000
+        let epoch = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + win.startMin * 60_000
+        if (epoch <= now.getTime()) epoch += DAY_MS  // today's sleep already passed -> tomorrow's
+        return epoch
     }
 }

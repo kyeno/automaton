@@ -50,10 +50,6 @@ formatting:
   decimal_separator: ","
   thousand_separator: " "
 
-# Wiadomość wysyłana przez AI Periodic Service do AI w regularnych odstępach czasu
-periodic:
-  message: 'Jaka jest temperatura i wilgotność NA ZEWNĄTRZ i jakie jest ciśnienie atmosferyczne? KONIECZNIE świeżo sprawdź czujniki! Nie pisz "hPa", pisz "hektopaskali". Postaraj się sformułować wypowiedź kreatywnie i inteligentnie, jakbyś był prezenterem pogody. Nie mów o prognozowaniu, bo niczego nie przewidujesz. Nie mów jakiego czujnika używasz, czy w jakim pomieszczeniu się on znajduje.'
-
 # Wiadomości AI dla interfejsu użytkownika (np. dla aiWindow.js)
 ui:
   default_greeting: "Cześć! W czym mogę pomóc?"

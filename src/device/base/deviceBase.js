@@ -17,10 +17,12 @@
 'use strict'
 
 import CacheService from '../../service/cacheService.js'
+import ConfigService from '../../service/configService.js'
 import EventBus from '../../service/eventBus.js'
 import LoggerService from '../../service/loggerService.js'
 import DeviceStateOrigin from '../../enum/deviceStateOrigin.js'
 import { slugify } from '../../lib/string.js'
+import temporal from '../../lib/date.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,10 +52,11 @@ const AI_ECHO_WINDOW_MS = 30_000
 const CORRELATOR_DEFAULT_TTL_MS = 30_000
 
 /**
- * How long (seconds) automations should skip a device after detecting human
- * interaction. Matches DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS from AutomationBase
- * (15 minutes). Used when setting the Redis cooldown key so automations can
- * check remaining time via getHumanCooldownRemaining().
+ * Fallback duration (seconds) for the human-interaction cooldown applied to a
+ * device, used only when main config omits or misconfigures
+ * `human_interaction_cooldown_ms`. Mirrors DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
+ * from AutomationBase (15 minutes). Written as the Redis cooldown key TTL so
+ * automations can check remaining time via getHumanCooldownRemaining().
  * @type {number}
  */
 const HUMAN_INTERACTION_COOLDOWN_SECONDS = 15 * 60
@@ -458,6 +461,31 @@ export default class DeviceBase {
         }
     }
 
+    /**
+     * Resolve the human-interaction cooldown duration in whole seconds for the
+     * Redis cooldown key TTL. Reads `human_interaction_cooldown_ms` from main
+     * config -- either legacy plain milliseconds or a human-readable duration
+     * ("25m", "1h") via temporal.parseDurationMs(). Missing values silently fall back
+     * to HUMAN_INTERACTION_COOLDOWN_SECONDS; present but invalid ones log a warning
+     * and use the same fallback; an explicit zero disables the cooldown entirely
+     * (returns 0, caller skips writing the key).
+     * @private
+     * @returns {number} Cooldown in whole seconds (>= 0)
+     */
+    #humanCooldownSeconds() {
+        const raw = ConfigService.get('human_interaction_cooldown_ms')
+        if (raw == null) return HUMAN_INTERACTION_COOLDOWN_SECONDS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms == null || ms < 0) {
+            LoggerService.warn(
+                `Invalid human_interaction_cooldown_ms ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default ${HUMAN_INTERACTION_COOLDOWN_SECONDS}s`,
+                `${this.getLogPrefix()}:${this.#name}`
+            )
+            return HUMAN_INTERACTION_COOLDOWN_SECONDS
+        }
+        return Math.max(0, Math.round(ms / 1000))
+    }
+
     // -- MQTT message handling --------------------------------------------
 
     /**
@@ -525,7 +553,10 @@ export default class DeviceBase {
                         this.log(`Failed to cache state: ${err.message}`)
                     })
                     try {
-                        CacheService.setHumanCooldown(slugify(this.#name), HUMAN_INTERACTION_COOLDOWN_SECONDS).catch(() => {})
+                        const cooldownSec = this.#humanCooldownSeconds()
+                        if (cooldownSec > 0) {
+                            CacheService.setHumanCooldown(slugify(this.#name), cooldownSec).catch(() => {})
+                        }
                     } catch (_) {}
 
                     this.#stateLast = parsed

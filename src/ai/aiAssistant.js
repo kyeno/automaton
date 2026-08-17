@@ -26,6 +26,7 @@ import ToolBuilder    from './toolBuilder.js'
 import I18nLoader     from '../service/i18nLoader.js'
 import ChatMessageOrigin from '../enum/aiChatMessageOrigin.js'
 import { stripMarkdown } from '../lib/string.js'
+import temporal from '../lib/date.js'
 
 // ---------------------------------------------------------------------------
 // Type Definitions
@@ -355,7 +356,7 @@ class SAiAssistant {
      */
     #loadConfig() {
         try {
-            this.#conversationTtlSec = ConfigService.get('conversation_ttl_sec', DEFAULT_CONVERSATION_TTL_SEC)
+            this.#conversationTtlSec = this.#resolveConversationTtl()
             this.#maxTurns = ConfigService.get('max_conversation_turns', DEFAULT_MAX_TURNS)
             LoggerService.debug('Loaded AI config from ConfigService', 'AiAssistant')
         } catch (error) {
@@ -367,6 +368,34 @@ class SAiAssistant {
         if (i18nPrompt && typeof i18nPrompt === 'string' && i18nPrompt.trim()) {
             this.#systemPrompt = i18nPrompt.trim()
         }
+    }
+
+    /**
+     * Resolve conversation history TTL in whole seconds from main config.
+     * Accepts legacy plain seconds or a human-readable duration ("15m", "900s")
+     * parsed via temporal.humanToMs(); missing values silently fall back to
+     * DEFAULT_CONVERSATION_TTL_SEC, present-but-invalid ones warn first (fail-open).
+     * @private
+     * @returns {number} TTL in whole seconds (> 0)
+     */
+    #resolveConversationTtl() {
+        const raw = ConfigService.get('conversation_ttl_sec')
+        if (raw == null) return DEFAULT_CONVERSATION_TTL_SEC
+        let sec = null
+        if (typeof raw === 'number' && Number.isFinite(raw)) {
+            sec = Math.round(raw)
+        } else if (typeof raw === 'string') {
+            const ms = temporal.humanToMs(raw)
+            if (ms != null) sec = Math.round(ms / 1000)
+        }
+        if (sec == null || !(sec > 0)) {
+            LoggerService.warn(
+                `Invalid conversation_ttl_sec ${JSON.stringify(raw)} (expected e.g. "15m" or plain seconds); using default ${DEFAULT_CONVERSATION_TTL_SEC}s`,
+                'AiAssistant'
+            )
+            return DEFAULT_CONVERSATION_TTL_SEC
+        }
+        return sec
     }
 
     /**

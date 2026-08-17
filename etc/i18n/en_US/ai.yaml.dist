@@ -52,10 +52,6 @@ formatting:
   decimal_separator: "."
   thousand_separator: ","
 
-# Message sent by AI Periodic Service to the AI at regular intervals
-periodic:
-  message: "What is the temperature and humidity outside? What is the atmospheric pressure? Do not write 'hPa', write 'hectopascals'. If a value has .00 after the decimal, round to the nearest whole number. Formulate your response creatively and intelligently."
-
 # AI messages for the user interface (e.g., for aiWindow.js)
 ui:
   default_greeting: "Hello! How can I help you today?"

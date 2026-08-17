@@ -26,7 +26,7 @@ The shared `targets:` section maps display names to short ids; each rule's `targ
 Located at `etc/automation/ambient-lights.yaml` (template: `ambient-lights.yaml.dist`). Key fields:
 
 ```yaml
-timer_interval_ms: 30000        # How often rules are evaluated
+timer_interval: "30s"           # How often rules are evaluated ("90s", "3m 45s", "1h"...; legacy timer_interval_ms still works)
 
 sensors:
   illuminance: 'Outdoor Luminance'    # Sensor feeding the evaluation context

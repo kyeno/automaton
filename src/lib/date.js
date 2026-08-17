@@ -12,7 +12,8 @@
  *   `isEvening()`, `isNight()`
  * - **Season predicates**: `isSpring()`, `isSummer()`, `isAutumn()`, `isWinter()`
  * - **Duration formatters**: `millisecondsToHumanReadable()`,
- *   `secondsToHumanReadable()`, `msToHuman()`
+ *   `secondsToHumanReadable()`, `msToHuman()`, `msToHumanPhrase()`
+ * - **Duration parsing**: `humanToMs()`, `parseDurationMs()`
  * - **Convenience**: `getCurrentTimePeriod()`, `getCurrentSeason()`,
  *   `getLocalDayString()`
  *
@@ -95,6 +96,25 @@ const SUN_TIMES = [
  * Accounts for twilight/dusk period when it's still partially light.
  */
 const EVENING_EXTENSION_HOURS = 2
+
+// ---------------------------------------------------------------------------
+// Duration unit factors (shared by msToHumanPhrase / humanToMs)
+// ---------------------------------------------------------------------------
+
+/**
+ * Milliseconds per supported duration unit, keyed by the single-letter token
+ * used in human-readable strings ("1h", "3m 45s"). The bundle-key mapping
+ * (day/hour/minute/second -> d/h/m/s) is kept at call sites so i18n bundles
+ * can name their own words freely.
+ *
+ * @type {Record<string, number>}
+ */
+const DURATION_UNIT_MS = Object.freeze({
+    d: 86_400_000,
+    h: 3_600_000,
+    m: 60_000,
+    s: 1_000,
+})
 
 // ---------------------------------------------------------------------------
 // STemporal Class
@@ -366,6 +386,110 @@ class STemporal {
         if (mins < 60) return `every ${mins}m`
         const hours = Math.round(mins / 60)
         return `every ${hours}h`
+    }
+
+    /**
+     * Convert milliseconds into a localized, speech-oriented duration phrase such as
+     * "2 hours" or "1 godzin 30 minut". Unlike {@link msToHuman}, this method is meant for
+     * spoken / LLM-facing output: unit words are supplied by the caller (typically an i18n
+     * bundle), so this module stays language-agnostic and grammatical agreement for specific
+     * counts (e.g., Polish case endings) is left to downstream consumers such as the small
+     * model that rewrites the final sentence.
+     *
+     * The largest adjacent unit pair whose bigger count is at least 1 wins
+     * (day+hour -> hour+minute -> minute+second). The smaller part is appended only when it
+     * makes up a significant remainder (>= max(half a small unit, 10% of the big unit)), so
+     * clean values stay single-unit ("1 hours") while e.g. 90 s reads "1 minutes 30 seconds"
+     * instead of a misleading rounded "2 minutes". Sub-second values fall back to a rounded
+     * second count; null is returned when nothing resolves.
+     *
+     * @param {number} ms - Duration in milliseconds (positive finite value)
+     * @param {{day?: string, hour?: string, minute?: string, second?: string}} [units]
+     *   Localized unit words keyed by canonical English singular names, e.g.
+     *   `{ day: 'dni', hour: 'godzin' }`. Missing/empty words skip that unit.
+     * @returns {string|null} e.g. "5 hours 30 minutes"; null for invalid input or when no
+     *   usable unit word can express the duration.
+     */
+    msToHumanPhrase(ms, units = {}) {
+        if (!Number.isFinite(ms) || !(ms > 0)) return null
+
+        const pairs = [
+            ['day', 'hour', 'd', 'h'],
+            ['hour', 'minute', 'h', 'm'],
+            ['minute', 'second', 'm', 's'],
+        ]
+        for (const [bigKey, smallKey, bigLetter, smallLetter] of pairs) {
+            const bigMs = DURATION_UNIT_MS[bigLetter]
+            const bigCount = Math.floor(ms / bigMs)
+            if (bigCount < 1) continue
+            const bigWord = units?.[bigKey]
+            if (typeof bigWord !== 'string' || !bigWord.trim()) continue
+
+            let phrase = `${bigCount} ${bigWord.trim()}`
+            const smallMs = DURATION_UNIT_MS[smallLetter]
+            const remainder = ms - bigCount * bigMs
+            if (remainder >= Math.max(smallMs / 2, bigMs * 0.1)) {
+                const smallWord = units?.[smallKey]
+                if (typeof smallWord === 'string' && smallWord.trim()) {
+                    const smallCount = Math.round(remainder / smallMs)
+                    if (smallCount >= 1) phrase += ` ${smallCount} ${smallWord.trim()}`
+                }
+            }
+            return phrase
+        }
+
+        // Sub-second values (or only a second word available).
+        const secCount = Math.round(ms / DURATION_UNIT_MS.s)
+        const secWord = units?.second
+        if (secCount >= 1 && typeof secWord === 'string' && secWord.trim()) {
+            return `${secCount} ${secWord.trim()}`
+        }
+        return null
+    }
+
+
+    /**
+     * Parse a human-readable duration string into milliseconds -- the inverse of the
+     * compact formatters above, intended for config files (`timer_interval: "3m 45s"`).
+     *
+     * Grammar: one or more whitespace-separated "<integer><unit>" tokens where the unit
+     * is `d` (days), `h` (hours), `m` (minutes) or `s` (seconds); case-insensitive.
+     * Examples: `"90s"`, `"3m 45s"`, `"1h"`, `"2d 4h"`. Bare numbers are rejected on
+     * purpose so that units stay explicit and unambiguous.
+     *
+     * @param {string} text - Human-readable duration, e.g. "1h" or "3m 45s"
+     * @returns {number|null} Total milliseconds; null when the input is not a string,
+     *   is empty/malformed, or overflows Number.MAX_SAFE_INTEGER. Callers responsible
+     *   for timers should additionally enforce their own upper bound (see AutomationBase).
+     */
+    humanToMs(text) {
+        if (typeof text !== 'string') return null
+        const trimmed = text.trim()
+        if (!/^(\d+[dhms]\s*)+$/i.test(trimmed)) return null
+
+        let total = 0
+        for (const match of trimmed.matchAll(/(\d+)\s*([dhms])/gi)) {
+            total += parseInt(match[1], 10) * DURATION_UNIT_MS[match[2].toLowerCase()]
+            if (!Number.isSafeInteger(total)) return null
+        }
+        return total
+    }
+
+    /**
+     * Resolve a config duration value into milliseconds, accepting either a legacy
+     * plain number (already milliseconds) or a human-readable string parsed via
+     * humanToMs(). Pure helper for polymorphic config keys such as
+     * `timer_interval` and `human_interaction_cooldown_ms`; callers are responsible
+     * for validating bounds and applying their own fallbacks on null.
+     *
+     * @param {number|string|null|undefined} value - Raw config value
+     * @returns {number|null} Milliseconds; null when the value is missing, not a
+     *   finite number / well-formed duration string, or overflows safe integers.
+     */
+    parseDurationMs(value) {
+        if (typeof value === 'number') return Number.isFinite(value) ? value : null
+        if (typeof value === 'string') return this.humanToMs(value)
+        return null
     }
 
     // -- Convenience --------------------------------------------------------

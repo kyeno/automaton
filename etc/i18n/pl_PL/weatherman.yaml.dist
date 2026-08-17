@@ -9,6 +9,21 @@
 ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie: '
 base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
 
+# AI prompt markers -- injected around the message when routing through AI.
+# first/last mark the opening/closing announcement of each daily session (the stretch
+# between two silence windows); only marks sessions shorter than the timer interval.
+ai_message_first: 'To jest pierwsza wiadomość dzisiejszego dnia.'
+ai_message_last: 'To jest ostatnia wiadomość dzisiejszej nocy.'
+ai_message_only: 'To jest jedyna wiadomość tej doby.'
+ai_message_next: 'Następna wiadomość za {% next_interval %}.'
+
+# Localized unit words for {% next_interval %}; the model inflects them to fit the number.
+duration_units:
+  day: 'dni'
+  hour: 'godzin'
+  minute: 'minut'
+  second: 'sekund'
+
 # Summer
 warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
 warning_humid_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'

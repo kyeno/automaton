@@ -7,6 +7,22 @@
 
 base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
+
+# AI prompt markers -- injected around the message when routing through AI.
+# first/last mark the opening/closing update of each daily session (the stretch between
+# two silence windows); only marks sessions shorter than the timer interval.
+ai_message_first: 'This is the first update of today.'
+ai_message_last: 'This is the last update of tonight.'
+ai_message_only: 'This is the only update of today.'
+ai_message_next: 'Next update in {% next_interval %}.'
+
+# Localized unit words for {% next_interval %}.
+duration_units:
+  day: 'days'
+  hour: 'hours'
+  minute: 'minutes'
+  second: 'seconds'
+
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 warning_humid_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
 warning_hot_stay_at_home: 'WARNING: It is so hot that breathing is difficult! Make sure to stay indoors!'

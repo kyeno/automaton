@@ -5,18 +5,11 @@
 - Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
   module longnames coming out as "<file>\n<copyright>" for lib/* headers
-- Weatherman: Add a line to AI prompt to *never* re-use previously generated
-  sentence and ALWAYS be creative and fresh.
 
 ## Architecture
 - Prefix main config file paths with respective sections!
 - CONSIDER naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
-
-### MQTT & Zigbee Bridge
-
-- **Wildcard subscription `zigbee/#` delivers all traffic to one handler**
-  Every Zigbee message (sensor state + remote actions) shares `#processMessage`. This works but couples all device logic into one callback. Consider per-topic subscriptions as the system grows.
 
 ## AI
 - When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read

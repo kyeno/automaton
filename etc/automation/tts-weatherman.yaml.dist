@@ -12,10 +12,10 @@
 #
 # Copy this file to "tts-weatherman.yaml" and customize for your home.
 
-#timer_interval_ms: 5400000 # 1.5 hours
-timer_interval_ms: 3600000 # 1 hour
-#timer_interval_ms: 900000   # 15 minutes
-#timer_interval_ms: 180000   # 3 min
+#timer_interval: "90m"    # 1.5 hours
+timer_interval: "1h"      # 1 hour
+#timer_interval: "15m"
+#timer_interval: "3m"
 
 silence_between: "0230-1030"     # Suppress execution between these local times (HHmm-HHmm); set to null to disable
 

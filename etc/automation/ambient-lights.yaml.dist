@@ -22,7 +22,7 @@ sensors:
 triggers_zigbee:
   - 'Outdoor Luminance'
 
-timer_interval_ms: 30000
+timer_interval: "30s"
 
 rules:
   - name: 'Bright morning - turn off leftover lights'
