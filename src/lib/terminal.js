@@ -154,8 +154,9 @@ export function wrapAnsi(str, maxWidth) {
             const needed = (currentLine !== leadingAnsi ? 1 : 0) + wLen
 
             if (visibleLength + needed > maxWidth) {
-                // Flush current line
-                lines.push(currentLine)
+                // Flush current line -- skip when nothing accumulated yet so an
+                // over-long leading word does not emit an empty first line
+                if (visibleLength > 0) lines.push(currentLine)
                 // Start new line -- carry leading ANSI codes
                 currentLine = leadingAnsi
                 visibleLength = visibleLen(leadingAnsi)
@@ -187,7 +188,9 @@ export function wrapAnsi(str, maxWidth) {
 
                     lines.push(segment)
                     if (rest && visibleLen(rest) > 0) {
-                        words.splice(wi, 0, rest)
+                        // Insert the remainder AFTER the current slot so wi++ lands on it
+                        // next pass; splicing before would re-process the original word forever.
+                        words.splice(wi + 1, 0, rest)
                     }
                     continue
                 }

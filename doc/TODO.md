@@ -2,7 +2,9 @@
 
 ## General
 - Postpone automations so they don't fire all at once
-- Improve JSDoc generation (it's very messy and buggy)
+- Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
+  classes since it silently drops all their method pages from doc/api output; also fix
+  module longnames coming out as "<file>\n<copyright>" for lib/* headers
 - Weatherman: Add a line to AI prompt to *never* re-use previously generated
   sentence and ALWAYS be creative and fresh.
 
@@ -15,13 +17,6 @@
 
 - **Wildcard subscription `zigbee/#` delivers all traffic to one handler**
   Every Zigbee message (sensor state + remote actions) shares `#processMessage`. This works but couples all device logic into one callback. Consider per-topic subscriptions as the system grows.
-
-### Code Quality & Documentation
-
-- **Dynamic method generation on `Temporal.prototype` (`lib/date.js`)**
-  Day-period methods (`isMorning()`, `isNoon()`, etc.) and season methods are generated
-  via `for...of` loops assigning to `Temporal.prototype`. They're well-documented now ✅,
-  but consider listing them explicitly for better IDE autocompletion and minifier safety.
 
 ## AI
 - When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
@@ -57,7 +52,6 @@ personas:
 - BUG: Sometimes, when the software is running for prolonged time and in screen, the log
   window won't refresh itself automatically. You need to swap windows back and
   forth.
-- BUG: When running in `screen` and typing a long message it produces really weird results
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)

@@ -57,6 +57,9 @@ import InputComponent from './widgets/inputComponent.js'
  */
 class Ui {
 
+    /** Debounce window (ms) that coalesces terminal resize bursts into one render pass. */
+    static RESIZE_DEBOUNCE_MS = 80
+
     #term
     #layout
     #activeWindow = null
@@ -64,6 +67,8 @@ class Ui {
     #statusBar
     #input
     #running = false
+    /** Pending debounce handle for the deferred post-resize render pass. */
+    #resizeTimer = null
 
     // -- Initialization ---------------------------------------------------
 
@@ -162,22 +167,22 @@ class Ui {
 
         await CommandContainer.init(ctx)
 
-        // Terminal resize handling
+        // Terminal resize handling. Slot geometry is refreshed immediately on
+        // every event (cheap pure math), but the expensive work -- full
+        // re-wrapping and redrawing of buffered lines plus a status-bar repaint
+        // -- is debounced so that bursts of resizes (typical when detaching a
+        // screen session in one size and reattaching in another, which emits
+        // several SIGWINCHes back-to-back) collapse into a single render pass
+        // instead of N consecutive heavy synchronous redraws.
         try {
             this.#term.on('resize', () => {
                 try {
-                    const r = this.#layout.getSlot('main')
-                    // Skip render during extreme resize states (height < 5 means
-                    // there's barely any room for content + status bar + input).
-                    if (!r || r.height < 5 || r.width < 10) return
-                    
                     this.#layout.updateSlots()
-                    // Force full re-render of active window on resize (wrapping changes)
-                    if (this.#activeWindow && this.#windows[this.#activeWindow]) {
-                        this.#windows[this.#activeWindow].instance.forceFullRender()
-                        this.#windows[this.#activeWindow].instance.render()
-                    }
-                    this.#statusBar.refresh?.()
+                    if (this.#resizeTimer) clearTimeout(this.#resizeTimer)
+                    this.#resizeTimer = setTimeout(() => {
+                        this.#resizeTimer = null
+                        this.#applyResize()
+                    }, Ui.RESIZE_DEBOUNCE_MS)
                 } catch (e) {
                     LoggerService.warn(`Resize handler error: ${e.message}`, 'UI')
                 }
@@ -287,6 +292,12 @@ class Ui {
         LoggerService.info('UI cleaning up...', 'UI')
         StateService.set('ui.active', false)
 
+        // Drop any debounced resize re-render that has not fired yet
+        if (this.#resizeTimer) {
+            clearTimeout(this.#resizeTimer)
+            this.#resizeTimer = null
+        }
+
         // Destroy all windows first
         for (const win of Object.values(this.#windows)) {
             win.instance.destroy?.()
@@ -365,6 +376,26 @@ class Ui {
 
 
     // -- Private Helpers --------------------------------------------------
+
+    /**
+     * Apply the deferred post-resize work once per debounced burst: skip
+     * rendering during extreme states, force a full re-render of the active
+     * window since wrapping changed with width, and refresh the status bar.
+     * @private
+     */
+    #applyResize() {
+        const r = this.#layout.getSlot('main')
+        // Skip render during extreme resize states (height < 5 means
+        // there's barely any room for content + status bar + input).
+        if (!r || r.height < 5 || r.width < 10) return
+
+        // Force full re-render of active window on resize (wrapping changes)
+        if (this.#activeWindow && this.#windows[this.#activeWindow]) {
+            this.#windows[this.#activeWindow].instance.forceFullRender()
+            this.#windows[this.#activeWindow].instance.render()
+        }
+        this.#statusBar.refresh?.()
+    }
 
     /**
      * Load automaton.yaml configuration and apply it to window instances.

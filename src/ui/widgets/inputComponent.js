@@ -151,38 +151,42 @@ class InputComponent {
             return
         }
 
-        // Backspace: remove character before the cursor
+        // Backspace: remove one full Unicode code point before the cursor
         if (n === 'backspace' || n === 'ctrl_h') {
-            if (this.#cursorPos > 0) {
-                this.#currentBuffer = this.#currentBuffer.slice(0, this.#cursorPos - 1) + this.#currentBuffer.slice(this.#cursorPos)
-                this.#cursorPos--
+            const from = this.#stepLeft(this.#cursorPos)
+            if (from < this.#cursorPos) {
+                this.#currentBuffer = this.#currentBuffer.slice(0, from) + this.#currentBuffer.slice(this.#cursorPos)
+                this.#cursorPos = from
                 this.#renderPrompt()
             }
             return
         }
 
-        // Delete: remove character at the cursor position
+        // Delete: remove one full Unicode code point at the cursor position
         if (n === 'delete') {
-            if (this.#cursorPos < this.#currentBuffer.length) {
-                this.#currentBuffer = this.#currentBuffer.slice(0, this.#cursorPos) + this.#currentBuffer.slice(this.#cursorPos + 1)
+            const to = this.#stepRight(this.#cursorPos)
+            if (to > this.#cursorPos) {
+                this.#currentBuffer = this.#currentBuffer.slice(0, this.#cursorPos) + this.#currentBuffer.slice(to)
                 this.#renderPrompt()
             }
             return
         }
 
-        // Left arrow: move cursor left
+        // Left arrow: move cursor left by one full code point
         if (n === 'left') {
-            if (this.#cursorPos > 0) {
-                this.#cursorPos--
+            const pos = this.#stepLeft(this.#cursorPos)
+            if (pos !== this.#cursorPos) {
+                this.#cursorPos = pos
                 this.#renderPrompt()
             }
             return
         }
 
-        // Right arrow: move cursor right
+        // Right arrow: move cursor right by one full code point
         if (n === 'right') {
-            if (this.#cursorPos < this.#currentBuffer.length) {
-                this.#cursorPos++
+            const pos = this.#stepRight(this.#cursorPos)
+            if (pos !== this.#cursorPos) {
+                this.#cursorPos = pos
                 this.#renderPrompt()
             }
             return
@@ -234,15 +238,85 @@ class InputComponent {
         // Ignore Tab key
         if (n === 'tab') return
 
-        // Single-character keys: insert character at cursor position
-        if (name.length === 1) {
+        // Printable single-code-point keys: insert at the cursor position.
+        // Accepts BMP and astral characters but rejects lone surrogates so a
+        // half of a surrogate pair can never corrupt the buffer on later edits.
+        if (this.#isInsertableChar(name)) {
             this.#currentBuffer = this.#currentBuffer.slice(0, this.#cursorPos) + name + this.#currentBuffer.slice(this.#cursorPos)
-            this.#cursorPos++
+            this.#cursorPos += name.length
             this.#renderPrompt()
         }
     }
 
     // -- Private Helpers --------------------------------------------------
+
+    /**
+     * Step an index left by one full Unicode code point. The step first moves
+     * back one UTF-16 unit; when that lands on the low half of a surrogate
+     * pair it steps back over the matching high half as well, so navigation
+     * and deletion always treat a multi-unit character as a single unit.
+     * @param {number} pos - Current UTF-16 index into #currentBuffer
+     * @returns {number} New index after stepping left (equals pos at buffer start)
+     * @private
+     */
+    #stepLeft(pos) {
+        const s = this.#currentBuffer
+        let p = Math.min(Math.max(0, pos), s.length)
+        if (p === 0) return 0
+        p--
+        // If we landed on the low half of a surrogate pair, consume its high half too
+        if (p > 0) {
+            const lo = s.charCodeAt(p)
+            const hi = s.charCodeAt(p - 1)
+            if (lo >= 0xdc00 && lo <= 0xdfff && hi >= 0xd800 && hi <= 0xdbff) p--
+        }
+        return p
+    }
+
+    /**
+     * Step an index right across one full Unicode code point. If the unit at
+     * pos starts a surrogate pair, the step lands past both halves so pairs are
+     * always treated as a single character by navigation and deletion.
+     * @param {number} pos - Current UTF-16 index into #currentBuffer
+     * @returns {number} New index after stepping right (equals pos at buffer end)
+     * @private
+     */
+    #stepRight(pos) {
+        const s = this.#currentBuffer
+        const p = Math.min(Math.max(0, pos), s.length)
+        if (p >= s.length) return p
+        const cur = s.charCodeAt(p)
+        if (cur >= 0xd800 && cur <= 0xdbff && p + 1 < s.length) {
+            const next = s.charCodeAt(p + 1)
+            if (next >= 0xdc00 && next <= 0xdfff) return p + 2
+        }
+        return p + 1
+    }
+
+    /**
+     * Check whether a key name is one printable Unicode code point that may be
+     * inserted into the buffer. Rejects control keys, multi-character strings,
+     * and lone surrogates which would corrupt later edits.
+     * @param {string} ch - Raw key name from terminal-kit
+     * @returns {boolean} true when the character can be safely inserted
+     * @private
+     */
+    #isInsertableChar(ch) {
+        if (typeof ch !== 'string' || (ch.length !== 1 && ch.length !== 2)) return false
+        const cp = ch.codePointAt(0)
+        if (Number.isNaN(cp)) return false
+        // Control characters and DEL are never printable; rejecting them keeps
+        // invisible bytes out of the buffer no matter how they arrive.
+        if (cp < 0x20 || cp === 0x7f) return false
+        // A two-unit string must form a valid surrogate pair (astral char);
+        // a single unit in the surrogate range is always invalid on its own.
+        if (cp >= 0xd800 && cp <= 0xdbff) {
+            const lo = ch.charCodeAt(1)
+            if (!(lo >= 0xdc00 && lo <= 0xdfff)) return false
+        }
+        if (ch.length === 1 && cp >= 0xdc00 && cp <= 0xdfff) return false
+        return true
+    }
 
     /**
      * Submit the current buffer as a command: push to history, fire callbacks, then clear.
@@ -276,7 +350,9 @@ class InputComponent {
 
     /**
      * Render the prompt and current buffer in the input slot.
-     * Implements a sliding window so long commands scroll properly.
+     * Implements a sliding window so long commands scroll properly; window
+     * edges are kept on code point borders so astral characters are never
+     * split across renders into lone surrogates.
      */
     #renderPrompt() {
         if (!this.#term || !this.#layout) return
@@ -287,7 +363,10 @@ class InputComponent {
         this.#term.hideCursor(true)
 
         const promptLen = this.#promptText.length
-        const maxTextWidth = Math.max(1, slot.width - promptLen)
+        // Reserve one column at row end so the cursor always gets its own free cell;
+        // without it a full-width line clamps the cursor onto the last glyph which
+        // reads as overwrite mode while typing long commands.
+        const maxTextWidth = Math.max(1, slot.width - promptLen - 1)
 
         // Sliding window: adjust viewStart so cursor stays visible
         if (this.#cursorPos < this.#viewStart) {
@@ -300,9 +379,17 @@ class InputComponent {
             this.#viewStart = Math.max(0, this.#currentBuffer.length - maxTextWidth)
         }
 
-        const visibleChunk = this.#currentBuffer.slice(this.#viewStart, this.#viewStart + maxTextWidth)
+        let viewEnd = Math.min(this.#viewStart + maxTextWidth, this.#currentBuffer.length)
 
-        const relCursorPos = this.#cursorPos - this.#viewStart
+        // Keep both window edges on code point borders -- an edge inside a
+        // surrogate pair would render as one invisible replacement character.
+        if (this.#isPairInterior(this.#currentBuffer, this.#viewStart)) this.#viewStart++
+        if (this.#isPairInterior(this.#currentBuffer, viewEnd)) viewEnd--
+        this.#viewStart = Math.min(this.#viewStart, viewEnd)
+
+        const visibleChunk = this.#currentBuffer.slice(this.#viewStart, viewEnd)
+
+        const relCursorPos = Math.max(0, Math.min(this.#cursorPos - this.#viewStart, visibleChunk.length))
 
         const before = visibleChunk.slice(0, relCursorPos)
         const after = visibleChunk.slice(relCursorPos)
@@ -317,11 +404,29 @@ class InputComponent {
         this.#term.eraseLineAfter()
         this.#term.styleReset()
 
-        // Reposition cursor at the correct column
-        const col = slot.x + 1 + promptLen + before.length
+        // Reposition cursor at the correct column; count code points so astral
+        // characters occupy exactly one cell like every other single character.
+        const col = slot.x + 1 + promptLen + [...before].length
         this.#term.moveTo(Math.min(col, slot.x + slot.width), slot.y + 1)
 
         this.#term.hideCursor(false)
+    }
+
+    /**
+     * Check whether a UTF-16 index lands between the two halves of a surrogate
+     * pair, i.e., on the low half whose preceding unit is its high partner.
+     * Window edges and cursor positions must never rest there or rendering
+     * would split the character into an invisible replacement glyph.
+     * @param {string} s - Buffer to inspect
+     * @param {number} pos - UTF-16 index into s
+     * @returns {boolean} true when pos sits inside a surrogate pair
+     * @private
+     */
+    #isPairInterior(s, pos) {
+        if (pos <= 0 || pos >= s.length) return false
+        const lo = s.charCodeAt(pos)
+        const hi = s.charCodeAt(pos - 1)
+        return lo >= 0xdc00 && lo <= 0xdfff && hi >= 0xd800 && hi <= 0xdbff
     }
 }
 

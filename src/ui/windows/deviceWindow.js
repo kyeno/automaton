@@ -47,7 +47,12 @@ const ACTION_W = 10
 class DeviceWindow extends BaseWindow {
 
     #refreshInterval
+    /** Per-device zigbee:<name> listeners -- rebuilt wholesale on devices:ready. */
     #unsubscribes = []
+    /** Lifetime 'devices:ready' listener; kept separate so resubscription never drops it. */
+    #unsubscribeReady = null
+    /** Lines from the last painted frame; used to skip redraws when content is unchanged. */
+    #lastRenderedLines = null
     #channelShortcut
 
     // -- Initialization ---------------------------------------------------
@@ -64,9 +69,11 @@ class DeviceWindow extends BaseWindow {
 
         // Listen for 'devices:ready' from DeviceContainer. This fires once after
         // initial device discovery completes, and again when a device is dynamically
-        // added. DeviceWindow reacts by subscribing to all known zigbee:<device> channels.
-        // Unsub stored so destroy() releases it like every other subscription.
-        this.#unsubscribes.push(EventBus.subscribe('devices:ready', () => this.#resubscribeDevices()))
+        // added. DeviceWindow reacts by rebuilding its per-device subscriptions.
+        // Stored separately from #unsubscribes because #resubscribeDevices() tears
+        // those down on every fire -- keeping the ready listener in that array would
+        // unsubscribe itself right after the first event.
+        this.#unsubscribeReady = EventBus.subscribe('devices:ready', () => this.#resubscribeDevices())
     }
 
     // -- Public API -------------------------------------------------------
@@ -95,6 +102,10 @@ class DeviceWindow extends BaseWindow {
         this.#stopRefreshTimer()
         this.#unsubscribes.forEach(unsub => unsub())
         this.#unsubscribes = []
+        if (this.#unsubscribeReady) {
+            this.#unsubscribeReady()
+            this.#unsubscribeReady = null
+        }
         this.hide()
     }
 
@@ -103,6 +114,8 @@ class DeviceWindow extends BaseWindow {
     /**
      * Gathers current system state and pushes it to the window buffer.
      * Devices are grouped by type: Sensors -> Mechanisms -> Remotes.
+     * Skips the redraw entirely when the rendered content is unchanged from
+     * the previous frame, so the periodic timer does not cause flicker.
      */
     refresh() {
         // Bridge/coordinator entry is excluded at the source (DeviceContainer).
@@ -160,9 +173,33 @@ class DeviceWindow extends BaseWindow {
             AnsiColors.reset
         )
 
+        // Skip the redraw when nothing changed since the previous frame -- the
+        // periodic timer would otherwise force a visible clear+redraw flicker on
+        // every cycle even though the table content is identical.
+        if (this.#sameLines(this.#lastRenderedLines, lines)) {
+            return
+        }
+        this.#lastRenderedLines = lines
+
         // Clear buffer and push all current lines for a fresh dashboard view
         this.clear()
         lines.forEach(line => this.print(line))
+    }
+
+    /**
+     * Compare two rendered line arrays element-wise for strict equality so an
+     * unchanged frame can skip its redraw entirely.
+     * @param {string[]|null} previous - Lines from the last painted frame
+     * @param {string[]} next - Newly built lines
+     * @returns {boolean} true when both frames are identical
+     * @private
+     */
+    #sameLines(previous, next) {
+        if (!previous || previous.length !== next.length) return false
+        for (let i = 0; i < next.length; i++) {
+            if (previous[i] !== next[i]) return false
+        }
+        return true
     }
 
     // -- Section renderers --------------------------------------------------

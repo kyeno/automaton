@@ -60,6 +60,12 @@ class StatusBar {
     #backscrolled = false
     /** Tracks whether the status bar previously showed the narrow warning. */
     #wasNarrow = false
+    /** Whether a coalesced repaint has been scheduled but not yet executed. */
+    #paintPending = false
+    /** Handle of the pending coalesced repaint timer (null when none queued). */
+    #paintTimer = null
+    /** Cached parsed status-bar line structure -- config is static after startup. */
+    #cachedLines = null
 
     // -- Initialization ---------------------------------------------------
 
@@ -145,8 +151,27 @@ class StatusBar {
 
     /**
      * Refresh all status bar lines using BitchX-style Dark Blue Theme rendering.
+     * Coalesces rapid successive calls into a single deferred repaint so bursts
+     * of window:activity events (e.g., one per log line while another window is
+     * focused) do not redraw both rows once per event within the same tick.
      */
     refresh() {
+        if (!this.#term || this.#paintPending) return
+        this.#paintPending = true
+        this.#paintTimer = setTimeout(() => {
+            this.#paintPending = false
+            this.#paintTimer = null
+            this.#paint()
+        }, 0)
+    }
+
+    /**
+     * Paint both status bar rows immediately. The row drawing runs inside a
+     * try/finally so styles and the saved cursor are always restored even when
+     * a widget renderer throws mid-paint.
+     * @private
+     */
+    #paint() {
         if (!this.#term) return
 
         const r = this.#layout.getSlot('status')
@@ -171,6 +196,23 @@ class StatusBar {
         // Save cursor position to prevent it from jumping during input typing
         this.#term.saveCursor()
 
+        try {
+            this.#paintLines(r)
+        } finally {
+            // Always reset styles and restore the saved cursor back to the input
+            // prompt, even when a renderer threw partway through the paint.
+            this.#term.styleReset()
+            this.#term.restoreCursor()
+        }
+    }
+
+    /**
+     * Draw every configured status line row-by-row within the given slot.
+     * Split out of #paint so its whole body can run inside a try/finally.
+     * @param {{x: number, y: number, width: number, height: number}} r - Status layout slot
+     * @private
+     */
+    #paintLines(r) {
         const { lines } = this.#loadConfig()
         const terminalWidth = r.width
 
@@ -297,10 +339,6 @@ class StatusBar {
             this.#term.bgBlue()
             this.#term.eraseLineAfter()
         }
-
-        // Reset styles and restore cursor back to the input prompt
-        this.#term.styleReset()
-        this.#term.restoreCursor()
     }
 
     /**
@@ -414,6 +452,13 @@ class StatusBar {
      * Destroy this component: unsubscribe from all widget events and window activity.
      */
     destroy() {
+        // Drop any coalesced repaint that has not fired yet so it cannot paint
+        // onto a destroyed terminal.
+        if (this.#paintTimer) {
+            clearTimeout(this.#paintTimer)
+            this.#paintTimer = null
+            this.#paintPending = false
+        }
         unsubscribeTemp()
         unsubscribeState()
         if (this.#unsubscribeActivity) {
@@ -427,27 +472,40 @@ class StatusBar {
     /**
      * Load the status bar configuration from ConfigService.
      * Supports both new structure (lines[].left / lines[].right) and old flat widgets.
+     * The parsed line structure is cached after the first call because the config
+     * does not change at runtime -- high-frequency refreshes must not re-resolve
+     * and copy it on every paint.
      * @returns {{lines: Array}} Parsed configuration with normalized line structure
      */
     #loadConfig() {
+        if (this.#cachedLines) {
+            return { lines: this.#cachedLines }
+        }
+
+        let lines = null
         try {
             const cfg = ConfigService.getSection('status_bar')
-            if (!cfg) return { lines: [{ left: [], right: [] }, { left: [], right: [] }] }
-
-            // New structure: lines[] with left/right sections
-            if (cfg.lines && Array.isArray(cfg.lines)) {
-                return { lines: cfg.lines }
-            }
-            // Fallback for old flat slots structure
-            return {
-                lines: [
-                    { left: cfg.slots || [], right: [] },
-                    { left: [], right: [] }
-                ]
+            if (cfg) {
+                // New structure: lines[] with left/right sections
+                if (cfg.lines && Array.isArray(cfg.lines)) {
+                    lines = cfg.lines
+                } else {
+                    // Fallback for old flat slots structure
+                    lines = [
+                        { left: cfg.slots || [], right: [] },
+                        { left: [], right: [] }
+                    ]
+                }
             }
         } catch {
-            return { lines: [{ left: [], right: [] }, { left: [], right: [] }] }
+            lines = null
         }
+
+        if (!lines) {
+            lines = [{ left: [], right: [] }, { left: [], right: [] }]
+        }
+        this.#cachedLines = lines
+        return { lines }
     }
 }
 

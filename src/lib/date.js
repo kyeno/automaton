@@ -107,9 +107,11 @@ const EVENING_EXTENSION_HOURS = 2
  * Day-period boundaries adapt to the current month based on
  * average sunrise / sunset for Central Europe.
  *
- * Methods are generated at class-definition time from the
- * {@link SEASONS} configuration and {@link SUN_TIMES} data.
- * @ignore
+ * All predicates are defined explicitly below so they show up in IDE
+ * autocompletion, survive minification, and get individual pages in the
+ * generated API docs. Each one delegates to the private #checkPeriod() or
+ * #checkSeason() helper which reads the {@link SEASONS} configuration and
+ * {@link SUN_TIMES} data.
  */
 class STemporal {
 

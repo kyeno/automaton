@@ -96,6 +96,8 @@ const testScripts = [
   'test-dist-sync.js',
   'test-ai-intent-parsing.js',
   'test-string-utils.js',
+  'test-input-component.js',
+  'test-terminal-wrap.js',
   // Note: test-jsdoc-coverage.js moved to npm run lint:check
   'test-sound.js',
   'test-sound-mario.js',

@@ -165,12 +165,19 @@ class BaseWindow {
      * The raw `text` is wrapped at render time using the current slot width,
      * with `prefix` applied to the first wrapped line and matching spaces
      * applied to continuation lines. This ensures correct re-wrapping on resize.
+     * Extremely large payloads are truncated before buffering, mirroring print(),
+     * since wrapping/rendering cost scales with length.
      *
      * @param {string} text - Raw message body (unwrapped)
      * @param {string} prefix - Prefix for the first line (e.g. "[HH:mm:ss] <AI> ")
      */
     printMessage(text, prefix) {
-        this.#buffer.push({ text, prefix })
+        const MAX_CHARS = 50_000
+        let body = String(text ?? '')
+        if (body.length > MAX_CHARS) {
+            body = body.slice(0, MAX_CHARS) + '\n... [output truncated]'
+        }
+        this.#buffer.push({ text: body, prefix })
         this.#trimBuffer()
         if (this.#visible) {
             this.render()
@@ -367,6 +374,8 @@ class BaseWindow {
      * Supports incremental rendering: when width hasn't changed and no force flag
      * is set, only new entries since last render are wrapped and appended -- avoiding
      * the costly clearSlot() + full redraw that causes screen flicker.
+     * The draw itself runs inside a try/finally so the cursor is always restored
+     * even when rendering throws mid-frame.
      * @private
      */
     #executeRender() {
@@ -398,11 +407,35 @@ class BaseWindow {
             this.#forceFullRender = true
         }
 
+        // Hide cursor during drawing to prevent flickering
+        const term = this.#term
+        term.hideCursor(true)
+        try {
+            this.#drawFrame(slot)
+        } finally {
+            // Always restore the prompt position and cursor visibility even when
+            // a draw throws mid-way; otherwise the terminal keeps a hidden cursor
+            // and stale positions until the next window switch, which makes the
+            // window look frozen/stale (especially under screen).
+            const refreshInput = StateService.get('ui.refreshInputCursor')
+            if (refreshInput) {
+                refreshInput()
+            }
+            term.hideCursor(false)
+        }
+    }
+
+    /**
+     * Draw the main-slot frame: either a full re-render or an incremental append,
+     * depending on #forceFullRender and scroll state. Split out of #executeRender
+     * so its entire body can run inside a try/finally that guarantees cursor
+     * restoration no matter where a draw fails.
+     * @param {{x: number, y: number, width: number, height: number}} slot - Main layout slot
+     * @private
+     */
+    #drawFrame(slot) {
         const wrapWidth = Math.max(slot.width, MIN_WRAP_WIDTH)
         const term = this.#term
-
-        // Hide cursor during drawing to prevent flickering
-        term.hideCursor(true)
 
         if (this.#forceFullRender) {
             // --- FULL RENDER: redraw everything from the buffer ---------------
@@ -461,15 +494,6 @@ class BaseWindow {
                 this.#bufferEntryCountAtLastRender = this.#buffer.length
             }
         }
-
-        // Restore the input prompt cursor position after rendering
-        const refreshInput = StateService.get('ui.refreshInputCursor')
-        if (refreshInput) {
-            refreshInput()
-        }
-
-        // Show the cursor again
-        term.hideCursor(false)
     }
 
     /**

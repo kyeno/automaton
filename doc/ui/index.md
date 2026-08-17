@@ -123,6 +123,20 @@ See [Commands Reference](./commands/index.md) for full list and custom command g
 
 Used by AiWindow. When you press Enter, your message is sent directly to the AI assistant without being logged to the visible window buffer. The response appears in the main content area. Slash commands are still supported via `/help`, etc.
 
+### Running Under GNU Screen
+
+The UI works inside `screen`, but start the session with a modern terminal type so
+terminal-kit receives the full xterm keymap and color support instead of its
+conservative fallback profile:
+
+```bash
+screen -T xterm-256color
+```
+
+With the default `TERM=screen` everything still functions correctly (basic colors only);
+the flag above simply restores 256-color output and keeps detach/reattach across
+differently sized terminals behaving consistently.
+
 ---
 
 ## Source Code Layout
