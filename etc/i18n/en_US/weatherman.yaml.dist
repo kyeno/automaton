@@ -5,8 +5,33 @@
 #
 # Copy this file to "weatherman.yaml" and customize sentences for your home.
 
-base: 'It is currently {% time %}. The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
-ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words: '
+# Opening time-of-day line -- rendered BEFORE the base sentence by buildTimeSentence()
+# on both output paths (AI rewrite and direct TTS). Style is picked by the global
+# stupid_ai_engine switch (AI section of automaton.yaml): explicit (true/default)
+# pre-renders clock parts as plain digits
+# so even tiny models never convert a clock string into words; smart (false) leaves
+# {% time %} for the model to spell out itself.
+time_sentence:
+  smart:
+    default: 'It is currently {% time %}.'
+  explicit:
+    # Generic frame ("It is 32 minutes past 9 in the morning"); the small model only
+    # inflects forms into natural speech during its rewrite.
+    default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}'
+    # Exact hour (:00) -- no minutes at all.
+    exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}"
+    # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
+
+# Localized day-period words for {% time_of_day %}; same pattern as duration_units below.
+period_words:
+  morning: 'in the morning'
+  noon: 'at noon'
+  afternoon: 'in the afternoon'
+  evening: 'in the evening'
+  night: 'at night'
+
+base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words. Do not use tools -- base your answer only on the provided information: '
 
 # AI prompt markers -- injected around the message when routing through AI.
 # first/last mark the opening/closing update of each daily session (the stretch between

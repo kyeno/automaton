@@ -87,6 +87,14 @@ max_conversation_turns: 15
 # in UI or passing to TTS. Some AI models use bold/italic/emoji that may not
 # render well in terminal UI or sound awkward when spoken.
 strip_ai_formatting: false
+
+# Treat the configured model as a weak ("stupid") engine: components simplify their
+# prompts by pre-rendering linguistic content instead of asking the model to convert
+# raw data into words itself. Currently used by ttsWeatherMan -- its opening time line
+# ships clock parts as plain digits ("Jest 32 minut po godzinie 9 rano") rather than
+# relying on the model to spell out {% time %}; further accommodations will hook into
+# this switch over time. Set false only with a capable model to restore legacy behaviour.
+stupid_ai_engine: true
 # ================================================================
 
 # ================================================================

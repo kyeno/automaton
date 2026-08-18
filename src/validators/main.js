@@ -27,6 +27,7 @@ export default {
     temperature: { type: 'number', required: true },
     conversation_ttl_sec: { type: ['number', 'string'], required: false },
     max_conversation_turns: { type: 'number', required: false },
+    stupid_ai_engine: { type: 'boolean', required: false },
 
     // Paths section (optional - provides config file paths and directory paths)
     paths: {

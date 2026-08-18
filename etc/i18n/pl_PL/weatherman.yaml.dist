@@ -5,9 +5,33 @@
 #
 # Copy this file to "weatherman.yaml" and customize sentences for your home.
 
-# Base
-ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie: '
-base: 'Jest godzina {% time %}. Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
+# Opening time-of-day line -- rendered BEFORE the base sentence by buildTimeSentence()
+# on both output paths (AI rewrite and direct TTS). Style is picked by the global
+# stupid_ai_engine switch (AI section of automaton.yaml): explicit (true/default)
+# pre-renders clock parts as plain digits
+# so even tiny models never convert a clock string into words; smart (false) leaves
+# {% time %} for the model to spell out itself.
+time_sentence:
+  smart:
+    default: 'Jest godzina {% time %}.'
+  explicit:
+    # Generic frame ("Jest 32 minut po godzinie 9 rano"); the small model only inflects
+    # unit/ordinal forms into natural speech during its rewrite.
+    default: 'Jest {% minutes %} minut po godzinie {% hours %} {% time_of_day %}'
+    # Exact hour (:00) -- no minutes at all.
+    exact_hour: 'Jest dokładnie godzina {% hours %} {% time_of_day %}'
+    # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
+
+# Localized day-period words for {% time_of_day %}; same pattern as duration_units below.
+period_words:
+  morning: 'rano'
+  noon: 'w południe'
+  afternoon: 'po południu'
+  evening: 'wieczorem'
+  night: 'w nocy'
+
+ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach: '
+base: 'Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
 
 # AI prompt markers -- injected around the message when routing through AI.
 # first/last mark the opening/closing announcement of each daily session (the stretch

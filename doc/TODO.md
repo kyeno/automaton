@@ -12,7 +12,6 @@
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 
 ## AI
-- Reformat hour rendering for weatherman TTS.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - LATER: Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes

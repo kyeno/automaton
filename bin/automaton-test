@@ -92,6 +92,7 @@ const testScripts = [
   'test-automations-cmd.js',
   'test-silence-between.js',
   'test-weatherman-day-position.js',
+  'test-weatherman-time-phrase.js',
   'test-ambient-lights-rules.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',

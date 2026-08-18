@@ -73,6 +73,7 @@ max_tokens: -1          # -1 = unlimited (provider default)
 temperature: 1.0        # 0.0 (deterministic) to 1.0 (creative)
 conversation_ttl_sec: "15m"   # Conversation history TTL ("45s"/"15m"/... or legacy seconds)
 max_conversation_turns: 15   # Max message turns retained in context
+stupid_ai_engine: true       # Treat the model as weak -- components pre-render linguistic content instead of relying on it
 ```
 
 | Setting | Description |
@@ -82,6 +83,7 @@ max_conversation_turns: 15   # Max message turns retained in context
 | `temperature` | Sampling temperature: lower = more deterministic, higher = more creative |
 | `conversation_ttl_sec` | After this period of inactivity, conversation history is purged from Redis (accepts human-readable durations like `"15m"` or plain seconds) |
 | `max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
+| `stupid_ai_engine` | Weak-model accommodation switch (default `true`): when enabled, components simplify prompts by pre-rendering linguistic content up front -- e.g., TtsWeatherMan ships its opening time line with clock parts as plain digits (*"Jest 32 minut po godzinie 9 rano"*) instead of asking the model to spell out `{% time %}`. Set `false` only with a capable model; further small-model accommodations will hook into this flag |
 
 **Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (e.g., TtsWeatherManAutomation announces on its own timer with silence windows and day-position markers; system-originated messages still appear with a yellow `<system>` prefix and stay out of conversation caching). See [Example Automations](./examples/index.md).
 

@@ -10,6 +10,10 @@
  * only announcement of each daily session (the stretch between two silence windows),
  * while "next update in {% next_interval %}" closes middle-of-session runs.
  *
+ * An opening time-of-day line is rendered before the base sentence on both output
+ * paths; with stupid_ai_engine enabled its clock parts are pre-rendered as plain
+ * digits so tiny models never have to convert a clock string into words.
+ *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  *
@@ -25,6 +29,7 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 
 import RuleBasedAutomationBase from '../../src/automation/base/ruleBasedAutomationBase.js'
 import DeviceContainer from '../../src/device/container/deviceContainer.js'
+import ConfigService from '../../src/service/configService.js'
 import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
 import AiAssistant from '../../src/ai/aiAssistant.js'
@@ -111,6 +116,15 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             return
         }
 
+        // One shared clock instant per run -- the opening time line and the day-position
+        // markers must never mix two different "now"s across a minute boundary.
+        const now = new Date()
+
+        // Opening time-of-day line rendered BEFORE the base sentence on both output paths
+        // (AI rewrite and direct TTS). Empty when the active bundle has no decoupled
+        // time_sentence templates; such bundles keep their inline {% time %} in the base.
+        const timeLine = this.buildTimeSentence(now)
+
         // Start with base sentence + interpolate sensor data
         const baseKey = this.config.sentence_base
         let baseText = this.#resolveI18n(baseKey, '')
@@ -118,7 +132,11 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             this.log(`Base sentence key "${baseKey}" not found in bundle`, 'warn')
             return
         }
-        let message = this.#interpolate(baseText, context)
+        if (timeLine && /{%\s*time\s*%}/.test(baseText)) {
+            this.log('Base sentence still contains {% time %}; the opening line already states the time -- consider removing it from your base template', 'debug')
+        }
+        const baseMessage = this.#interpolate(baseText, context)
+        let message = timeLine ? `${timeLine} ${baseMessage}` : baseMessage
 
         // Evaluate all rules, collect matches, then pick highest priority winner.
         // When multiple rules match, only the one with the highest `priority` fires.
@@ -170,7 +188,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
         // Determine where this announcement sits within its daily session so the AI
         // prompt can frame the core content with first/last/only/next context.
-        const meta = this.computeDayPosition(new Date())
+        const meta = this.computeDayPosition(now)
         if (meta.isFirst || meta.isLast || meta.nextIntervalMs != null) {
             this.log(
                 `Day position: first=${meta.isFirst}, last=${meta.isLast}` +
@@ -299,8 +317,91 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return parts.length === 1 ? message : parts.join('\n')
     }
 
+    /**
+     * Resolve the global "stupid AI engine" switch from the AI section of automaton.yaml.
+     * When enabled (the default), components simplify what they hand to the model by
+     * pre-rendering linguistic content up front so weak engines never have to convert raw
+     * data into words themselves; see the config comment there for current consumers and
+     * planned future hooks. Only an explicit `false` disables the accommodation. Exposed
+     * without the # prefix so unit tests can pin either behaviour per instance without
+     * mutating global config state.
+     * @returns {boolean} true when the configured model should be treated as weak [default]
+     */
+    isStupidAiEngine() {
+        return ConfigService.get('stupid_ai_engine', true) !== false
+    }
+
+    /**
+     * Render the opening time-of-day line for a weather update, or '' when no applicable
+     * template exists. The line is prepended to the base sentence on both output paths
+     * (AI rewrite and direct TTS), which keeps tiny models away from converting clock
+     * strings into words and keeps Piper TTS away from ambiguous bare H:M digits -- the
+     * "N minutes past H + period word" frame stays unambiguous either way.
+     *
+     * Style selection comes from the global stupid_ai_engine switch (AI section of
+     * automaton.yaml, resolved via isStupidAiEngine()): only an explicit false selects
+     * the bundle's "smart" subtree ({% time %} left for the model to spell out in words);
+     * anything else -- true or absent -- keeps the pre-rendered digit frame ("explicit").
+     * Within a style, #pickTimeTemplate() chooses the variant matching the clock fraction
+     * with fallback to its default entry. Clock tokens are pre-resolved from `now` via
+     * the specialValues mechanism so rendering is deterministic per instant.
+     *
+     * Exposed without the # prefix so unit tests can verify rendering and i18n degradation
+     * without MQTT or AI providers; execute() is the sole production caller. The optional
+     * bundle parameter lets tests inject synthetic bundles without touching private state.
+     *
+     * @param {Date} [now=new Date()] - Moment to render
+     * @param {Record<string, unknown>|null} [bundle=this.#bundle] - Weatherman i18n bundle
+     * @returns {string} Interpolated opening line, or '' when nothing applicable exists
+     */
+    buildTimeSentence(now = new Date(), bundle = this.#bundle) {
+        const tree = bundle?.time_sentence
+        if (!tree || typeof tree !== 'object') return ''
+
+        // Global weak-model switch: only an explicit false opts into legacy "model spells
+        // out the hour" behaviour; anything else keeps the digit frame -- fail-safe for tiny models.
+        const style = this.isStupidAiEngine() ? 'explicit' : 'smart'
+        const variants = tree[style]
+        if (!variants || typeof variants !== 'object') return ''
+
+        const tpl = this.#pickTimeTemplate(variants, now)
+        if (!tpl) return ''
+
+        const period = temporal.getCurrentTimePeriod(now)
+        const words = bundle.period_words ?? {}
+        const h24 = now.getHours()
+        return this.#interpolate(tpl, null, {
+            hours: String(I18nLoader.is12HourFormat() ? ((h24 + 11) % 12) + 1 : h24),
+            minutes: String(now.getMinutes()),
+            time_of_day: (period && words[period]) || period || '',
+        })
+    }
+
 
     // -- Private Helpers ----------------------------------------------------
+
+    /**
+     * Pick the variant template for a moment within one style subtree of
+     * bundle.time_sentence. Exact clock fractions win when their locale-specific
+     * template exists (:00 -> exact_hour; :30/:15/:45 -> half_past/quarter_to/quarter_past
+     * -- reserved hooks for future i18n templates, none shipped yet); otherwise fall back
+     * to the generic default entry. Returns '' when nothing usable is present so callers
+     * can skip the opening line gracefully.
+     * @param {Record<string, unknown>} variants - Style subtree under bundle.time_sentence
+     * @param {Date} now - Moment to evaluate
+     * @returns {string} Chosen raw (uninterpolated) template, or ''
+     */
+    #pickTimeTemplate(variants, now) {
+        const m = now.getMinutes()
+        let key = null
+        if (m === 0)          key = 'exact_hour'
+        else if (m === 30)    key = 'half_past'
+        else if (m === 15)    key = 'quarter_past'
+        else if (m === 45)    key = 'quarter_to'
+        return typeof variants[key] === 'string' ? variants[key]
+             : typeof variants.default === 'string' ? variants.default
+             : ''
+    }
 
     /**
      * Load the weatherman i18n bundle from etc/i18n/{locale}/weatherman.yaml.

@@ -208,54 +208,59 @@ class STemporal {
     // -- Day period predicates ----------------------------------------------
 
     /**
-     * Check if the current hour is morning.
+     * Check whether a given moment falls in the morning period.
+     * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
      * @returns {boolean}
      */
-    isMorning() {
-        return this.#checkPeriod('morning')
+    isMorning(date) {
+        return this.#checkPeriod('morning', date)
     }
 
     /**
-     * Check if the current hour is noon.
+     * Check whether a given moment falls in the noon period.
+     * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
      * @returns {boolean}
      */
-    isNoon() {
-        return this.#checkPeriod('noon')
+    isNoon(date) {
+        return this.#checkPeriod('noon', date)
     }
 
     /**
-     * Check if the current hour is afternoon.
+     * Check whether a given moment falls in the afternoon period.
+     * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
      * @returns {boolean}
      */
-    isAfternoon() {
-        return this.#checkPeriod('afternoon')
+    isAfternoon(date) {
+        return this.#checkPeriod('afternoon', date)
     }
 
     /**
-     * Check if the current hour is evening.
+     * Check whether a given moment falls in the evening period.
+     * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
      * @returns {boolean}
      */
-    isEvening() {
-        return this.#checkPeriod('evening')
+    isEvening(date) {
+        return this.#checkPeriod('evening', date)
     }
 
     /**
-     * Check if the current hour is night.
+     * Check whether a given moment falls in the night period.
+     * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
      * @returns {boolean}
      */
-    isNight() {
-        return this.#checkPeriod('night')
+    isNight(date) {
+        return this.#checkPeriod('night', date)
     }
 
     /**
-     * Internal helper to check a specific day period.
+     * Internal helper to check a specific day period at a given moment.
      *
      * @param {'morning'|'noon'|'afternoon'|'evening'|'night'} period
+     * @param {Date} [now=new Date()] - Moment to evaluate
      * @returns {boolean}
      * @private
      */
-    #checkPeriod(period) {
-        const now = new Date()
+    #checkPeriod(period, now = new Date()) {
         const h = now.getHours()
         const m = now.getMonth()
         const [sunrise, sunset] = SUN_TIMES[m]
@@ -495,17 +500,18 @@ class STemporal {
     // -- Convenience --------------------------------------------------------
 
     /**
-     * Return a human-readable string for the current time-of-day period.
+     * Return a human-readable string for the time-of-day period at a given moment.
      * Checks each period predicate and returns the first one that matches.
      *
+     * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
      * @returns {'morning'|'noon'|'afternoon'|'evening'|'night'|null} The matching period or null.
      */
-    getCurrentTimePeriod() {
-        if (this.isMorning()) return 'morning'
-        if (this.isNoon()) return 'noon'
-        if (this.isAfternoon()) return 'afternoon'
-        if (this.isEvening()) return 'evening'
-        if (this.isNight()) return 'night'
+    getCurrentTimePeriod(date = new Date()) {
+        if (this.isMorning(date)) return 'morning'
+        if (this.isNoon(date)) return 'noon'
+        if (this.isAfternoon(date)) return 'afternoon'
+        if (this.isEvening(date)) return 'evening'
+        if (this.isNight(date)) return 'night'
         return null
     }
 
@@ -543,7 +549,8 @@ class STemporal {
 /**
  * Frozen singleton instance providing temporal utilities.
  *
- * All day-period and season predicates use the current system clock;
- * duration formatters accept numeric arguments.
+ * Day-period and season predicates default to the current system clock but accept
+ * an explicit moment for deterministic evaluation; duration formatters accept
+ * numeric arguments.
  */
 export default Object.freeze(new STemporal())
