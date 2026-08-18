@@ -89,6 +89,7 @@ const testScripts = [
   'test-config-validation.js',
   'test-device-instantiation.js',
   'test-automation-instantiation.js',
+  'test-automations-cmd.js',
   'test-silence-between.js',
   'test-weatherman-day-position.js',
   'test-ambient-lights-rules.js',

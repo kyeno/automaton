@@ -11,8 +11,12 @@ The Automaton terminal UI supports slash commands typed into the input bar at th
 | `/pgup` | Scroll page up (back through history) |
 | `/pgdn` | Scroll page down (forward to live tail) |
 | `/status` | Dump StateService contents |
+| `/automations [arg]` | Manage automations: `list`, `debug <name>`, `run <name>` (bare invocation shows usage) |
+| `/interactions` | List all loaded interactions in a tree |
 | `/quit` (`/exit`, `/q`) | Exit Automaton |
 | `/win [arg]` | Switch window by shortcut number or id |
+
+> **Note:** `/automations run <name>` calls that automation's `execute()` immediately with trigger reason `manual` (visible as "Triggered by: manual" under its `Auto:<name>` log context). Normal guards still apply -- silent periods, per-rule daily `once:` markers, and human-interaction cooldowns are respected exactly as for timer or event triggers.
 
 ### Keyboard Shortcuts
 
@@ -26,15 +30,17 @@ Commands use a pluggable container pattern that auto-discovers implementations a
 
 ```
 src/ui/commands/
-├── base/commandBase.js          # Abstract base class
+├── base/commandBase.js           # Abstract base class
 ├── container/commandContainer.js # Singleton registry + autoloader
-├── clearCmd.js                  # /clear command
-├── helpCmd.js                   # /help command
-├── pgdnCmd.js                   # /pgdn command
-├── pgupCmd.js                   # /pgup command
-├── quitCmd.js                   # /quit, /exit, /q
-├── statusCmd.js                 # /status command
-└── winCmd.js                    # /win <shortcut_or_id>
+├── automationsCmd.js             # /automations list|debug|run
+├── clearCmd.js                   # /clear command
+├── helpCmd.js                    # /help command
+├── interactionsCmd.js            # /interactions command
+├── pgdnCmd.js                    # /pgdn command
+├── pgupCmd.js                    # /pgup command
+├── quitCmd.js                    # /quit, /exit, /q
+├── statusCmd.js                  # /status command
+└── winCmd.js                     # /win <shortcut_or_id>
 ```
 
 ### Two-Phase Dispatch
