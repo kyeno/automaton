@@ -83,5 +83,5 @@ rules:
     priority: 2
     conditions:
       time-of-day: [evening, night]
-      temperature: { gt: 18, lte: 20 }
+      temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_night'

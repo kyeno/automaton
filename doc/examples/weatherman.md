@@ -96,9 +96,35 @@ rules:
     priority: 1
     conditions:
       time-of-day: [evening, night]
-      temperature: { gt: 18, lte: 20 }
+      temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_night'
 ```
+
+### Time-of-Day Periods
+
+The `time-of-day` condition matches against five periods derived from average sunrise/sunset for Central Europe (`SUN_TIMES` in `src/lib/date.js`): daylight is split into four equal quarters (morning, noon, afternoon), evening extends two hours past sunset to cover twilight, and night spans the rest. Matching is hour-granular — every hour maps to exactly one period. Because boundaries track daylight length, they shift seasonally:
+
+- In **August** (sunrise ~5:00, sunset ~20:00) *afternoon* ends at **16:00** and *evening* starts at **17:00** — so a `[morning, noon, afternoon]` rule stops matching well before most people stop thinking of it as "day".
+- In **January/December** (8:00–16:00) *evening* begins as early as **15:00**.
+
+Full month-by-month ranges (whole-hour buckets):
+
+| Month | Morning | Noon | Afternoon | Evening | Night |
+|-------|---------|------|-----------|---------|-------|
+| January   | 08–10 | 11–12 | 13–14 | 15–17 | 18–07 |
+| February  | 07–10 | 11–12 | 13–15 | 16–18 | 19–06 |
+| March     | 06–09 | 10–12 | 13–15 | 16–19 | 20–05 |
+| April     | 06–09 | 10–13 | 14–16 | 17–20 | 21–05 |
+| May       | 05–09 | 10–13 | 14–17 | 18–22 | 23–04 |
+| June      | 05–09 | 10–13 | 14–17 | 18–22 | 23–04 |
+| July      | 05–09 | 10–13 | 14–17 | 18–22 | 23–04 |
+| August    | 05–09 | 10–13 | 14–16 | 17–21 | 22–04 |
+| September | 06–09 | 10–13 | 14–16 | 17–20 | 21–05 |
+| October   | 07–10 | 11–12 | 13–15 | 16–18 | 19–06 |
+| November  | 07–09 | 10–12 | 13–14 | 15–17 | 18–06 |
+| December  | 08–10 | 11–12 | 13–14 | 15–17 | 18–07 |
+
+These are long-term averages for ~52°N; real sunrise/sunset varies around them, but whole-hour buckets mean small shifts rarely change the classification except right on a boundary. When designing rules, check this table first — "Warm day" above is a classic example of a rule that silently stops matching once evening begins.
 
 ## Interpolation Syntax
 
