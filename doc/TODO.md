@@ -12,14 +12,15 @@
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 
 ## AI
-- When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
-- Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
-- Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
+- Reformat hour rendering for weatherman TTS.
+- VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
+- LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
+- LATER: Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
 
-## SST
+## LATER: SST
 - Build entire speech-to-text architecture based on whisper-cpp
 
-### Assistant personalization
+### LATER: Assistant personalization
 personas:
   hal9000:
     language: "pl"
@@ -42,20 +43,22 @@ personas:
 
 ## BitchX UI
 
-- BUG: Sometimes, when the software is running for prolonged time and in screen, the log
+- ANNOYING BUG: Sometimes, when the software is running for prolonged time and in screen, the log
   window won't refresh itself automatically. You need to swap windows back and
   forth.
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
-- Consistent color palette across all windows (status bar, device window)
-- `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
-- Proper nick highlighting (own messages emphasized in chat)
 - Improve how things are redrawn by statusbar; it seems to be constantly reading files
-- Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
+- LATER: Consistent color palette across all windows (status bar, device window)
+- LATER: Proper nick highlighting (own messages emphasized in chat)
+- VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
 
 ### Slash commands
 - Add slash command to debug config
 +/- Add slash commands to debug automation container, interaction container, device container
 - Add slash commands to debug state and eventbus(?); probably rewrite /status command
+- Consider using autocompletion for the commands
+- Add "force" option to run automations via cmd
+- LATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - Debug timers (LATER)
