@@ -22,39 +22,57 @@ This is the global default destination for all TTS requests. If this variable is
 
 ### Per-Request Override
 
-The global endpoint can be overridden per-request via EventBus event payloads. This allows different automations or interactions to route speech to different audio endpoints:
+Any component emitting the internal `tts:speak` EventBus event may attach extra parameters to its payload, and they merge into **that request only** -- every other speaker keeps the plain shape. For each optional field the resolution order is runtime event value > locale template default (see Request Parameters below).
+
+The shipped consumer is the [weatherman automation](../examples/weatherman.md), which forwards its optional `tts_options` config block verbatim on every utterance it produces:
 
 ```yaml
-# In an automation rule
-actions:
-  - type: tts
-    text: "Temperature rising"
-    endpoint: "192.168.1.50:9876" # overrides global setting
+# etc/automation/tts-weatherman.yaml
+tts_options:
+  intro: 'news-transition.wav'      # wave played before speech
+  outro: 'news-outro.wav'           # wave played after speech
+  intro_spacing: -2.5               # negative = overlap intro with speech start
 ```
 
-### Per-Locale Override
+### Per-Locale Template
 
-TTS templates are stored in i18n bundles under `etc/i18n/{locale}/tts.yaml`. Each locale can define its own voice parameters, speed settings, and even endpoint overrides:
+TTS templates are stored in i18n bundles under `etc/i18n/{locale}/tts.yaml`. `model` is required; all other fields are optional and included in requests only when set:
 
 ```yaml
 # etc/i18n/pl_PL/tts.yaml
-voice: "pl-PL-RafaNeural"
-speed: 1.0
-endpoint: null  # uses global TTS_TCP_ENDPOINT if null
-templates:
-  greeting: "Dzień dobry! Temperatura w domu wynosi {temp} stopni."
+model: "pl_PL-bass-high"             # REQUIRED - voice model identifier for tts-server
+triple_leading_consonant: true       # phoneme handling for Polish triple consonants
+piper_effects: "--length_scale 1.15" # Piper TTS engine effects
+sox_effects: "pad 1.2 0.5"           # SoX audio post-processing effects
+# output_endpoint: "192.168.1.x:12345"  # per-locale endpoint override (optional)
 ```
 
 See [Configuration Guide](../configuration.md) for full i18n bundle structure.
 
+### Request Parameters
+
+Every request is an HTTP POST of a JSON body to the URL from `TTS_API_URL`:
+
+| Field | Type | Source | Meaning |
+|-------|------|--------|---------|
+| `model` | string | locale template (required) | Voice model identifier on the TTS server |
+| `text` | string | event payload | Text to synthesize |
+| `output_endpoint` | string | runtime > locale template > `TTS_TCP_ENDPOINT` | Destination (`ip:port`) where the synthesized WAV stream should be sent |
+| `triple_leading_consonant` | boolean | locale template | Phoneme handling switch |
+| `piper_effects` | string | locale template | Extra Piper CLI flags |
+| `sox_effects` | string | locale template | SoX filter chain applied after synthesis |
+| `intro` | string | runtime (e.g., weatherman `tts_options`) | Wave filename played before speech; file must exist on the TTS server side |
+| `outro` | string | runtime | Wave filename played after speech |
+| `intro_spacing` | number | runtime | Seconds between intro end and speech start; negative overlaps them |
+
 ## How It Works
 
-When Automaton triggers a TTS action (from AI response, automation rule, or interaction), it sends the text payload as a TCP message to the configured endpoint. The tts-server receives the text, generates audio, and plays it through the local sound system.
+When Automaton produces spoken output (AI reply, automation utterance such as the weatherman, or a UI speak command), the TTS service POSTs that JSON body -- text plus voice parameters and the destination endpoint -- to the tts-server's HTTP API. The tts-server synthesizes the speech and streams the resulting WAV over TCP to the requested `output_endpoint`, where your audio hardware picks it up.
 
 The flow is:
 
 ```
-Automaton → EventBus → TTS Service → TCP → tts-server → Audio Output
+Speaker component -> EventBus 'tts:speak' -> TTS Service -> HTTP POST -> tts-server -> TCP WAV stream -> Audio Output
 ```
 
 ## tts-server Setup

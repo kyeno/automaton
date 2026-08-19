@@ -78,6 +78,14 @@ sensors:
   humidity: 'Outdoor Temperature'         # Same combined sensor as temp
   pressure: 'Kitchen Temperature'         # Separate barometer device
 
+# OPTIONAL -- Extra parameters forwarded verbatim into the TTS server request for every
+# utterance produced by this automation (radio-style jingle framing). Each entry applies
+# only when set; leave empty to keep the plain { model, text, output_endpoint } shape.
+tts_options:
+  intro:          # Wave filename played before the synthesized speech
+  outro:          # Wave filename played after the synthesized speech
+  intro_spacing:  # Seconds between intro end and speech start; negative = overlap (e.g., -2.5)
+
 rules:
   - name: 'Warm day'
     priority: 1                           # Low — comfort advice only
@@ -154,6 +162,23 @@ Full month-by-month ranges (whole-hour buckets):
 | December  | 08–10 | 11–12 | 13–14 | 15–17 | 18–07 |
 
 These are long-term averages for ~52°N; real sunrise/sunset varies around them, but whole-hour buckets mean small shifts rarely change the classification except right on a boundary. When designing rules, check this table first — "Warm day" above is a classic example of a rule that silently stops matching once evening begins.
+
+## TTS Server Passthrough Options
+
+The optional `tts_options` block forwards extra parameters **verbatim** into the JSON body of every TTS server request that this automation produces -- a per-automation way to shape how its own voice sounds without touching the global locale template (`etc/i18n/{locale}/tts.yaml`). It exists primarily for radio-style jingle framing:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `intro` | string | Wave filename (on the TTS server side) played before the synthesized speech |
+| `outro` | string | Wave filename (on the TTS server side) played after the synthesized speech |
+| `intro_spacing` | number | Seconds between intro end and speech start; negative values overlap them (e.g., `-2.5`) |
+
+Behaviour details:
+
+- **Optional everywhere.** Absent or empty entries are simply not sent; when nothing is configured the request keeps the plain `{ model, text, output_endpoint }` shape. Malformed entries (wrong type, empty filename) are dropped with a warning instead of failing the run.
+- **Both output paths covered.** The options travel through the EventBus `tts:speak` payload: on the AI path they are threaded via `AiAssistant.processMessage(..., { tts })` so the rewritten reply carries them too, and on direct TTS / AI-failure fallback they are spread straight into the emission.
+- **Merge precedence** in the TTS service is runtime event params > locale `tts.yaml` defaults -- though these keys are intentionally *not* shipped in any locale template, since jingle framing is an automation-level presentation choice rather than a voice-model setting.
+- Wave files must exist on the machine running tts-server; only their filenames cross the wire.
 
 ## Interpolation Syntax
 

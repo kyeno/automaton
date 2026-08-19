@@ -55,8 +55,9 @@ const SPEAK_CHANNEL = 'tts:speak'
  *
  * On init, checks for TTS_API_URL in environment. If present, loads the
  * locale-specific tts.yaml template and subscribes to "tts:speak" events.
- * Each event carries { text, output_endpoint? } which is merged with the
- * template before posting to the remote API.
+ * Each event carries { text, output_endpoint?, intro?, outro?, intro_spacing? }
+ * which is merged with the template (runtime values win) before posting to
+ * the remote API.
  * ES module caching guarantees single instantiation.
  */
 class STtsService {
@@ -118,6 +119,9 @@ class STtsService {
      * @param {string} text - The text to synthesize.
      * @param {Object} [opts] - Optional overrides.
      * @param {string} [opts.outputEndpoint] - Override global output_endpoint.
+     * @param {string} [opts.intro] - Wave filename played before the synthesized speech.
+     * @param {string} [opts.outro] - Wave filename played after the synthesized speech.
+     * @param {number} [opts.introSpacing] - Seconds between intro end and speech start; negative overlaps them.
      * @returns {Promise<boolean>} True if request was sent successfully.
      */
     async speak(text, opts = {}) {
@@ -222,7 +226,10 @@ class STtsService {
 
             try {
                 const success = await this.speak(payload.text, {
-                    outputEndpoint: payload.output_endpoint
+                    outputEndpoint: payload.output_endpoint,
+                    intro:        payload.intro,
+                    outro:        payload.outro,
+                    introSpacing: payload.intro_spacing
                 })
                 if (!success) {
                     LoggerService.debug('TTS: request failed or was skipped', 'TtsService')
@@ -235,10 +242,12 @@ class STtsService {
 
     /**
      * Build the JSON payload for a TTS API request by merging template defaults
-     * with runtime overrides. Only includes optional fields when they are defined.
+     * with runtime overrides. Only includes optional fields when they are defined;
+     * for every optional field the runtime override wins over the tts.yaml default.
      *
      * Required fields in final payload: model, text, output_endpoint
-     * Optional fields: triple_leading_consonant, piper_effects, sox_effects
+     * Optional fields: triple_leading_consonant, piper_effects, sox_effects,
+     * intro, outro, intro_spacing
      *
      * @param {string} text - The text to synthesize.
      * @param {Object} opts - Runtime options from caller.
@@ -270,6 +279,21 @@ class STtsService {
         }
         if (t.sox_effects != null) {
             payload.sox_effects = t.sox_effects
+        }
+
+        // Jingle framing + spacing: runtime event params override tts.yaml defaults,
+        // which themselves stay unset unless a locale opts in globally.
+        const intro  = opts.intro ?? t.intro
+        if (typeof intro === 'string' && intro.trim()) {
+            payload.intro = intro.trim()
+        }
+        const outro  = opts.outro ?? t.outro
+        if (typeof outro === 'string' && outro.trim()) {
+            payload.outro = outro.trim()
+        }
+        const spacing = opts.introSpacing ?? t.intro_spacing
+        if (typeof spacing === 'number' && Number.isFinite(spacing)) {
+            payload.intro_spacing = spacing
         }
 
         return payload

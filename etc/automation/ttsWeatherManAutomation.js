@@ -3,7 +3,10 @@
  * Rule-based weather announcer that builds a speech message from a base sentence
  * and condition-matched additions, then routes through AI -> TTS pipeline (or
  * direct TTS if AI unavailable). Supports {{ DeviceName.property }} string
- * interpolation for live sensor data in i18n strings.
+ * interpolation for live sensor data in i18n strings. Optional tts_options config entries
+ * (intro/outro wave files, intro_spacing) are forwarded verbatim into the TTS server request
+ * via the 'tts:speak' EventBus payload -- on both output paths -- so only this automation's
+ * utterances carry them; see resolveTtsOptions().
  *
  * When routing through AI, day-position markers derived purely from clock + config
  * (no stored state) frame the core content: an opening line marks the first / last /
@@ -332,6 +335,45 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     }
 
     /**
+     * Build the validated extra-TTS-server-parameters object for this automation's
+     * utterances from the optional tts_options section of the YAML config. Recognized
+     * keys map 1:1 onto TTS server request fields:
+     *   intro         - string, wave filename played before the synthesized speech
+     *   outro         - string, wave filename played after the synthesized speech
+     *   intro_spacing - number (negative allowed), seconds between intro end and speech start
+     * Malformed entries are dropped with a warning instead of failing the run; an absent
+     * or fully empty section yields {} so emissions keep their plain { text } shape.
+     * Exposed without the # prefix so unit tests can pin validation behaviour per instance
+     * by injecting synthetic configs without touching the on-disk YAML file.
+     * @param {Record<string, unknown>} [rawConfig=this.config] - Config source to read from
+     * @returns {{intro?: string, outro?: string, intro_spacing?: number}} Validated options (possibly empty)
+     */
+    resolveTtsOptions(rawConfig = this.config) {
+        const raw = rawConfig?.tts_options
+        if (!raw || typeof raw !== 'object') return {}
+
+        const result = {}
+        for (const key of ['intro', 'outro']) {
+            const value = raw[key]
+            if (value == null) continue
+            if (typeof value === 'string' && value.trim()) {
+                result[key] = value.trim()
+            } else {
+                this.log(`tts_options.${key} must be a non-empty wave filename -- ignoring`, 'warn')
+            }
+        }
+        const spacing = raw.intro_spacing
+        if (spacing != null) {
+            if (typeof spacing === 'number' && Number.isFinite(spacing)) {
+                result.intro_spacing = spacing
+            } else {
+                this.log('tts_options.intro_spacing must be a finite number of seconds (negative allowed) -- ignoring', 'warn')
+            }
+        }
+        return result
+    }
+
+    /**
      * Render the opening time-of-day line for a weather update, or '' when no applicable
      * template exists. The line is prepended to the base sentence on both output paths
      * (AI rewrite and direct TTS), which keeps tiny models away from converting clock
@@ -502,6 +544,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     /**
      * Send the built message to TTS, optionally routing through AI first. When the AI
      * handles it, day-position markers frame the core content via buildAiPrompt().
+     * Configured tts_options extras travel along in every 'tts:speak' payload -- both paths.
      * @param {string} message - Final interpolated speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
      *   Day position computed by {@link computeDayPosition}
@@ -514,6 +557,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
 
         this.log(`Sending weather update (${trimmedMessage.length} chars)`, 'info')
+
+        // Optional per-utterance TTS server params from tts_options; {} keeps every
+        // emission byte-identical to the plain-text shape when nothing is configured.
+        const ttsOptions = this.resolveTtsOptions()
 
         // Build the full prompt BEFORE any emissions, so Window 3 sees exactly
         // what will be sent to the AI (creative prefix and day-position markers included).
@@ -538,7 +585,8 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
             try {
                 const response = await AiAssistant.processMessage(aiPrompt, {
-                    origin: ChatMessageOrigin.SYSTEM
+                    origin: ChatMessageOrigin.SYSTEM,
+                    tts: ttsOptions
                 })
 
                 // Emit the AI's response back to UI for rendering with <AI> prefix.
@@ -550,12 +598,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
                 this.log('Weather update sent via AI -> TTS pipeline', 'debug')
             } catch (error) {
                 this.log(`AI processing failed: ${error.message}`, 'error')
-                // Fallback to direct TTS on AI failure
-                EventBus.emit('tts:speak', { text: trimmedMessage })
+                // Fallback to direct TTS on AI failure -- jingle params still apply
+                EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
             }
         } else {
             // Direct TTS when AI unavailable
-            EventBus.emit('tts:speak', { text: trimmedMessage })
+            EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
             this.log('Weather update sent via direct TTS', 'debug')
         }
     }

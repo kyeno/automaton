@@ -64,6 +64,7 @@ TTS is configured entirely through environment variables and locale-specific i18
 
 - **`TTS_API_URL`** (`.env`) — TTS server API endpoint; service auto-enables when set
 - **`TTS_TCP_ENDPOINT`** (`.env`) — Global audio playback destination (`ip:port`). Can also be overridden per-request via EventBus event payloads or per-locale in `etc/i18n/{locale}/tts.yaml`
+- **Per-request extras** — Components emitting `tts:speak` events may attach extra TTS server parameters to individual utterances (e.g., intro/outro jingle waves); they merge into that request only, with runtime values winning over locale template defaults. Shipped example: the weatherman automation's optional `tts_options` block. See [Weather Man](examples/weatherman.md) and [TTS Integration](installation/tts-integration.md).
 
 ### AI Section
 

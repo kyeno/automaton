@@ -144,6 +144,7 @@ class SAiAssistant {
       * @param {string} userInput - The user's input message.
       * @param {Object} [options] - Optional processing options.
       * @param {'user'|'system'} [options.origin='user'] - Message authorship origin (for UI rendering).
+      * @param {Record<string, unknown>} [options.tts] - Extra TTS server parameters forwarded verbatim into the 'tts:speak' event payload for this reply (e.g., intro/outro jingle framing); omitted when absent or not an object.
       * @returns {Promise<string>} The assistant's textual reply.
       */
     async processMessage(userInput, options = {}) {
@@ -153,6 +154,11 @@ class SAiAssistant {
 
         const origin = options.origin || 'user'
         const isSystemOrigin = origin === ChatMessageOrigin.SYSTEM
+
+        // Optional per-reply TTS passthrough params -- spread into every 'tts:speak' emission
+        // below so callers can shape how their utterance sounds without touching the decoupled
+        // TtsService directly. Non-object values degrade to no extras at all.
+        const ttsOptions = (options.tts && typeof options.tts === 'object') ? options.tts : {}
         this.#messages.push({ role: 'user', content: userInput, _ts: Date.now(), _origin: origin })
         let iteration = 0
 
@@ -209,9 +215,10 @@ class SAiAssistant {
                 // Conditionally strip markdown formatting and emoji from AI response
                 response = this.#maybeStripFormatting(response)
 
-                // Emit TTS event so the decoupled TtsService can speak the response
+                // Emit TTS event so the decoupled TtsService can speak the response;
+                // caller-supplied TTS params travel along in the same payload.
                 if (response) {
-                    EventBus.emit('tts:speak', { text: response })
+                    EventBus.emit('tts:speak', { text: response, ...ttsOptions })
                 }
 
                 return response
@@ -237,7 +244,7 @@ class SAiAssistant {
             await this.#persistConversation()
         }
         fallback = this.#maybeStripFormatting(fallback)
-        EventBus.emit('tts:speak', { text: fallback })
+        EventBus.emit('tts:speak', { text: fallback, ...ttsOptions })
         return fallback
     }
 

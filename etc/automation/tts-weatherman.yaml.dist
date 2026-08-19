@@ -28,6 +28,15 @@ sensors:
   humidity: 'Outdoor Temperature'          # Same device as temp (combined sensor)
   pressure: 'Kitchen Temperature'           # Separate barometer (may vary)
 
+# OPTIONAL -- Extra parameters forwarded verbatim into the TTS server request for every
+# utterance produced by this automation (radio-style jingle framing). Each entry applies
+# only when set; leave empty to keep the plain { model, text, output_endpoint } shape.
+# Wave files must exist on the TTS server side. intro_spacing may be negative (= overlap).
+tts_options:
+  intro:          # Wave filename played before the synthesized speech
+  outro:          # Wave filename played after the synthesized speech
+  intro_spacing:  # Seconds between intro end and speech start; negative = overlap (e.g., -2.5)
+
 rules:
   - name: 'Warm day'
     priority: 1
