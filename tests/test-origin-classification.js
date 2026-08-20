@@ -16,7 +16,11 @@ config()
  *   - motion contradicting an active command (wall-switch reversal) flips to human
  *   - slow but progressing travel stays automation end-to-end
  *   - automated STOP settles as automation; later movement is human
- *   - stalled automated motion (no progress) trips the watchdog -> human
+ *   - travel that progresses then halts trips the watchdog -> human + cooldown
+ *   - commands producing zero observable response preserve attribution, write NO
+ *     cooldown, and back off identical retries instead of blaming a person
+ *   - post-completion motor-status tails (label churn / small wobble at the settled
+ *     point) stay automation; real motion right after settling still flips to human
  *   - non-actuator devices never participate in origin tracking
  *
  * Uses a Mock MqttService so no real broker is needed. Devices skip init() so
@@ -181,6 +185,43 @@ function createFastRoller(name, mockMqtt) {
     const dev = new FastWatchdogRoller(name, id, {})
     dev.setMqttService(mockMqtt)
     return dev
+}
+
+/**
+ * Roller variant with fast stall watchdog AND short settle-absorb / failed-command-backoff
+ * windows so the post-completion-tail and no-response tests stay deterministic.
+ */
+class FastEverythingRoller extends Mechanism {
+    getMotionStallTimeoutMs() { return 300 }
+    getSettleAbsorbWindowMs() { return 250 }
+    getFailedCommandBackoffMs() { return 400 }
+}
+
+function createFastEverythingRoller(name, mockMqtt) {
+    const id = name.toLowerCase().replace(/\s+/g, '_')
+    const dev = new FastEverythingRoller(name, id, {})
+    dev.setMqttService(mockMqtt)
+    return dev
+}
+
+/**
+ * Run fn with CacheService.setHumanCooldown spied (the singleton is frozen -- patch its
+ * class prototype instead); returns how many cooldown writes happened inside fn.
+ */
+async function countCooldownWrites(fn) {
+    let writes = 0
+    const proto = Object.getPrototypeOf(CacheService)
+    const originalSet = proto.setHumanCooldown
+    proto.setHumanCooldown = async function (...args) {
+        writes++
+        return originalSet.apply(this, args)
+    }
+    try {
+        await fn()
+    } finally {
+        proto.setHumanCooldown = originalSet
+    }
+    return writes
 }
 
 // ---------------------------------------------------------------------------
@@ -412,22 +453,137 @@ async function testUnmatchedLabelDuringTravelPreservesOrigin() {
         `unmatched label inside active window keeps automation, got "${roller.getStateOrigin()}"`)
 }
 
-async function testStalledMotionWatchdogFlipsToHuman() {
-    console.log('\n── Stalled automated motion trips watchdog -> human ──')
+async function testPostCompletionTailDoesNotFlipOrigin() {
+    console.log('\n── Regression: post-completion motor-status tail stays automation ──')
     const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
-    const roller = createFastRoller('Test Roller SW', mqtt)   // stall timeout 300ms
+    const roller = createFastEverythingRoller('Test Roller PC', mqtt)   // settle window 250ms
+    await roller.setCachedState({ position: 0 }, { origin: 'unknown' })
+
+    const writes = await countCooldownWrites(async () => {
+        // Rule engine commands POS:12; travel reports confirm forward motion...
+        roller.receiveCommand({ position: 12 }, DeviceCommandSource.AUTOMATION)
+        await sleep(30)
+        assert(roller.getStateOrigin() === 'automation', `origin automation while in flight`)
+
+        mqtt.simulateExternalMessage('Test Roller PC', { state: 'OPEN', position: 6 })
+        await sleep(30)
+        assert(roller.getStateOrigin() === 'automation', `forward progress keeps automation (pos=6)`)
+
+        // ...and the terminal report at target consumes the token as an automation echo.
+        mqtt.simulateExternalMessage('Test Roller PC', { state: 'OPEN', position: 12 })
+        await sleep(40)
+        assert(roller.getStateOrigin() === 'automation', `terminal echo keeps automation (pos=12)`)
+
+        // The bug under test: z2m sends follow-up motor-status reports for the SAME
+        // completed event -- label churn at a fixed point, then a small overshoot wobble.
+        mqtt.simulateExternalMessage('Test Roller PC', { state: 'STOP', position: 12 })
+        await sleep(40)
+        assert(roller.getStateOrigin() === 'automation',
+            `label-churn tail stays automation, got "${roller.getStateOrigin()}"`)
+
+        mqtt.simulateExternalMessage('Test Roller PC', { state: 'STOP', position: 15 })
+        await sleep(40)
+        assert(roller.getStateOrigin() === 'automation',
+            `overshoot wobble within settle tolerance stays automation, got "${roller.getStateOrigin()}"`)
+    })
+    assert(writes === 0, `no human cooldown written by settling tail (got ${writes})`)
+}
+
+async function testRealMotionAfterSettlementStillFlipsToHuman() {
+    console.log('\n── Real motion right after completion is still detected ──')
+    const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
+    const roller = createFastEverythingRoller('Test Roller PR', mqtt)   // settle window 250ms
+    await roller.setCachedState({ position: 0 }, { origin: 'unknown' })
+
+    const writes = await countCooldownWrites(async () => {
+        roller.receiveCommand({ position: 12 }, DeviceCommandSource.AUTOMATION)
+        await sleep(30)
+        mqtt.simulateExternalMessage('Test Roller PR', { state: 'OPEN', position: 6 })
+        await sleep(30)
+        mqtt.simulateExternalMessage('Test Roller PR', { state: 'OPEN', position: 12 })
+        await sleep(40)
+        assert(roller.getStateOrigin() === 'automation', `echo keeps automation before human action`)
+
+        // Person opens the shutter again almost immediately -- far beyond wobble tolerance.
+        mqtt.simulateExternalMessage('Test Roller PR', { state: 'OPEN', position: 40 })
+        await sleep(50)
+        assert(roller.getStateOrigin() === 'human',
+            `immediate real motion after completion flips to human, got "${roller.getStateOrigin()}"`)
+    })
+    assert(writes >= 1, `real post-completion motion wrote a cooldown (got ${writes})`)
+}
+
+async function testNoResponseCommandDoesNotBlameHuman() {
+    console.log('\n── No-response command preserves attribution + backs off retries ──')
+    const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
+    const roller = createFastEverythingRoller('Test Roller NR', mqtt)   // stall 300ms / backoff 400ms
     await roller.setCachedState({ position: 10 }, { origin: 'unknown' })
 
-    roller.receiveCommand('OPEN', DeviceCommandSource.AUTOMATION)
-    await sleep(60)
-    assert(roller.getStateOrigin() === 'automation',
-        `origin automation while command in flight, got "${roller.getStateOrigin()}"`)
+    const writes = await countCooldownWrites(async () => {
+        roller.receiveCommand('OPEN', DeviceCommandSource.AUTOMATION)
+        await sleep(60)
+        assert(roller.getStateOrigin() === 'automation', `origin automation while in flight`)
 
-    // No progress reports at all (e.g., wall-switch STOP on an unmodeled device):
-    // the watchdog must flip to human after the stall window elapses.
-    await sleep(450)
-    assert(roller.getStateOrigin() === 'human',
-        `stalled motion flips to human via watchdog, got "${roller.getStateOrigin()}"`)
+        // The device never reports anything -- offline/faulty. Watchdog fires with zero
+        // progress observed: nothing a person could have stopped, so no human blame.
+        await sleep(450)
+        assert(roller.getStateOrigin() === 'automation',
+            `no-response keeps attribution (not blamed on human), got "${roller.getStateOrigin()}"`)
+
+        // Immediate re-dispatch of the identical command is suppressed by retry backoff...
+        mqtt.reset()
+        roller.receiveCommand('OPEN', DeviceCommandSource.AUTOMATION)
+        await sleep(30)
+        assert(mqtt.published.length === 0,
+            `identical retry suppressed during backoff (${mqtt.published.length} published)`)
+
+        // ...and allowed again once the backoff elapses without any state change.
+        await sleep(450)
+        mqtt.reset()
+        roller.receiveCommand('OPEN', DeviceCommandSource.AUTOMATION)
+        await sleep(30)
+        assert(mqtt.published.length >= 1, `retry allowed after backoff expiry`)
+    })
+    assert(writes === 0, `no human cooldown written for unresponsive device (got ${writes})`)
+}
+
+async function testProgressThenHaltStillFlipsToHuman() {
+    console.log('\n── Progress observed then halted still flips to human ──')
+    const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
+    const roller = createFastEverythingRoller('Test Roller PH', mqtt)   // stall timeout 300ms
+    await roller.setCachedState({ position: 10 }, { origin: 'unknown' })
+
+    const writes = await countCooldownWrites(async () => {
+        roller.receiveCommand('OPEN', DeviceCommandSource.AUTOMATION)
+        await sleep(20)
+
+        // Forward progress proves our command is working...
+        mqtt.simulateExternalMessage('Test Roller PH', { position: 35 })
+        await sleep(30)
+        assert(roller.getStateOrigin() === 'automation', `forward progress keeps automation (pos=35)`)
+
+        // ...then motion halts short of the target: something external stopped it.
+        await sleep(450)
+        assert(roller.getStateOrigin() === 'human',
+            `progress-then-halt flips to human via watchdog, got "${roller.getStateOrigin()}"`)
+    })
+    assert(writes >= 1, `stalled-after-progress wrote a cooldown (got ${writes})`)
+}
+
+async function testNonPositionalLabelChangeStillCountsAsHuman() {
+    console.log('\n── Non-positional label changes still count as meaningful ──')
+    const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
+    const roller = createRoller('Test Roller NP', mqtt)   // light-like payloads without position fields
+    await roller.setCachedState({ state: 'OFF' }, { origin: 'unknown' })
+
+    const writes = await countCooldownWrites(async () => {
+        // No position telemetry on either side -> strict label comparison must be preserved.
+        mqtt.simulateExternalMessage('Test Roller NP', { state: 'ON' })
+        await sleep(50)
+        assert(roller.getStateOrigin() === 'human',
+            `label-only change on non-positional payload flips to human, got "${roller.getStateOrigin()}"`)
+    })
+    assert(writes >= 1, `non-positional label change wrote a cooldown (got ${writes})`)
 }
 
 async function testMovingDeviceDoesNotTripWatchdog() {
@@ -482,7 +638,11 @@ async function main() {
         await testToggleWildcardConsumesExactlyOneFlip()
         await testPeriodicReportDoesNotFlipOrigin()
         await testUnmatchedLabelDuringTravelPreservesOrigin()
-        await testStalledMotionWatchdogFlipsToHuman()
+        await testPostCompletionTailDoesNotFlipOrigin()
+        await testRealMotionAfterSettlementStillFlipsToHuman()
+        await testNoResponseCommandDoesNotBlameHuman()
+        await testProgressThenHaltStillFlipsToHuman()
+        await testNonPositionalLabelChangeStillCountsAsHuman()
         await testMovingDeviceDoesNotTripWatchdog()
         await testNonMechanismDevicesDoNotTrackOrigin()
     } catch (err) {

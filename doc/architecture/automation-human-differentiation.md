@@ -50,8 +50,9 @@ unknown    -- human-directed command  --> human        (immediately, at dispatch
 unknown    -- unmatched MQTT change   --> human        (cooldown starts)
 automation -- echo / continuation     --> automation   (confirmed own motion)
 automation -- conflicting motion      --> human        (external override detected mid-travel)
-automation -- stalled motion          --> human        (watchdog: presumed external stop)
-automation -- unmatched MQTT change   --> human        (no live token explains it)
+automation -- stall after progress    --> human        (watchdog: external stop presumed)
+automation -- zero-progress stall     --> automation   (device unresponsive: no blame, retry backoff only)
+automation -- unmatched MQTT change   --> human        (no live token explains it; settling tails absorbed first)
 human      -- rule-engine command     --> automation   (new expectation replaces nothing pending)
 human      -- any other input         --> human        (no change)
 ```
@@ -83,7 +84,21 @@ Key properties:
 
 ### Motion-Stall Watchdog
 
-Travel commands (`OPEN`/`CLOSE`/`POS:N`) imply continued motion until their target is reached. DeviceBase arms a watchdog timer at registration and re-arms it on every `continuation`. If the timer fires while the same expectation is still unresolved — i.e., motion stopped without reaching its target — the device flips to `human` with a cooldown (presumed external stop, e.g., wall switch STOP on an unmodeled device). `STOP`, instant, and wildcard expectations do not arm the watchdog: for our own STOP command, halting *is* the expected outcome.
+Travel commands (`OPEN`/`CLOSE`/`POS:N`) imply continued motion until their target is reached. DeviceBase arms a watchdog timer at registration and re-arms it on every `continuation`. When the timer fires while the same expectation is still unresolved, the outcome depends on whether **any** forward progress was observed since dispatch:
+
+| Observed before stall | Interpretation | Action |
+|---|---|---|
+| Progress then halt | Something external stopped our motion (e.g., wall-switch STOP on an unmodeled device) | Flip origin to `human` + write cooldown |
+| Zero progress | The device never responded at all (offline/faulty) | Preserve attribution, write **no** cooldown, log a distinct warning, back off identical retries |
+
+The zero-progress branch implements the policy **"no observable effect ⇒ no attribution change"**: if nothing moved, there is nothing a person could have done — blaming a human would fabricate a lockout that blocks automation from ever retrying a dead actuator. Instead `receiveCommand()` suppresses re-dispatch of the *identical* description while the cached position stays unchanged and the backoff window (`ai_failed_command_backoff_ms`, default 10 min) has not elapsed; any real state change clears the backoff early so recovery is immediate once the device comes back. `STOP`, instant, and wildcard expectations do not arm the watchdog: for our own STOP command, halting *is* the expected outcome.
+
+### Settle Absorption (Post-Completion Tail)
+
+Roller shutters report motor status in the same `state` field as their travel direction — moving states such as `OPEN`/`CLOSE`, then idle `STOP`. After a token-consuming echo confirms the commanded outcome, z2m frequently sends follow-up reports describing the *same physical event* settling down (e.g., `{position: 12, state: "STOP"}` right after reaching 12%). Without special handling those tails fall into the "unmatched state change" branch and flip origin to `human` — the exact failure mode behind the Salon shutter misclassification. Two complementary rules absorb them:
+
+1. **Positional stability gate** in `#didStateChange()`: when both old and new payloads carry finite positions within ±2% of each other, differences confined to the `state` label are treated as motor-status churn at a fixed point, not input events. Non-positional devices (lights etc.) never satisfy this gate and keep strict label comparison.
+2. **Settling snapshot**: a positional echo starts a short-lived window (`ai_settle_absorb_window_ms`, default 10 s). While active, follow-ups consistent with the settled position — pure label/status churn or wobble within ±5% (`SETTLE_WOBBLE_TOLERANCE`) — are absorbed without changing origin or cooldowns. Any motion beyond that tolerance drops the snapshot immediately and is classified normally, so a genuine human action right after completion is still caught in one report. Label-only echoes do not start the window (no positional reference exists), keeping legacy behavior for such outcomes.
 
 ---
 
@@ -109,9 +124,10 @@ When an MQTT message arrives for a device, `handleMqttMessage()` first checks `s
                           └── null            │
                                               ▼
                                    #didStateChange(new)?
-                                    ├─ NO → periodic report: payload-only update
-                                    └─ YES ─┬─ live token exists → preserve current origin
-                                            └─ no live token     → HUMAN + cooldown
+                                    ├─ NO  → periodic report: payload-only update
+                                    └─ YES ─┬─ live token exists   → preserve current origin
+                                             ├─ settling-tail match → absorb, origin preserved
+                                             └─ otherwise           → HUMAN + cooldown
 ```
 
 The key insight: a state change with **no** live rule-engine expectation can only have been caused by someone else. And a change that **contradicts** an active expectation is, by construction, external intervention — there is no timestamp heuristic involved anywhere.
@@ -173,6 +189,8 @@ Before publishing any command, `#isCommandRedundant()` compares it against cache
 
 When suppressed, no MQTT message is published and no token is registered; origin still reflects the provenance of the attempt — and a suppressed HUMAN command still starts the cooldown.
 
+A related gate suppresses *retries* of ineffective automation commands: when an automated travel command produces zero observable response (see Motion-Stall Watchdog), re-dispatching the identical description is skipped until the device state changes or `ai_failed_command_backoff_ms` elapses. Human-directed commands are never subject to either suppression.
+
 ---
 
 ## Key Constants & Config Knobs
@@ -183,12 +201,15 @@ All durations accept human-readable strings ("30s", "25m") or plain milliseconds
 |----------|---------|---------|
 | `ai_echo_window_instant_ms` (`INSTANT_ECHO_WINDOW_DEFAULT_MS`) | 15,000 ms | Token TTL for ON/OFF/TOGGLE commands. Covers delayed z2m confirmations while keeping the attribution window short. |
 | `ai_echo_window_travel_ms` (`TRAVEL_ECHO_WINDOW_DEFAULT_MS`) | 90,000 ms | Token TTL for OPEN/CLOSE/POS:N/STOP. Must outlive full travel (~40-60 s); forward progress refreshes it. |
-| `ai_motion_stall_timeout_ms` (`MOTION_STALL_TIMEOUT_DEFAULT_MS`) | 20,000 ms | Watchdog: no forward progress this long during commanded travel → presumed external stop. |
+| `ai_motion_stall_timeout_ms` (`MOTION_STALL_TIMEOUT_DEFAULT_MS`) | 20,000 ms | Watchdog: no forward progress this long during commanded travel → external stop if progress was seen, no-response handling otherwise. |
+| `ai_settle_absorb_window_ms` (`SETTLE_ABSORB_WINDOW_DEFAULT_MS`) | 10,000 ms | Post-completion tail absorption window; motor-status churn within it is not human input. |
+| `ai_failed_command_backoff_ms` (`FAILED_COMMAND_BACKOFF_DEFAULT_MS`) | 600,000 ms (10 min) | Retry backoff for identical automated commands that produced no observable response while state stays unchanged. |
 | `MAX_TOKEN_LIFETIME_MS` | 600,000 ms | Hard cap on token lifetime even with continuous continuation refreshes. |
 | `HUMAN_INTERACTION_COOLDOWN_SECONDS` / `human_interaction_cooldown_ms` | 900 s (15 min) | Redis cooldown duration after human interaction; 0 disables entirely. |
 | `POSITION_MATCH_TOLERANCE` | ±2% | Jitter tolerance for position comparisons and reversal detection. |
 | `OPEN_ECHO_POSITION_MIN` / `CLOSED_ECHO_POSITION_MAX` | 90% / 10% | Terminal thresholds for echo matching. |
 | `STOP_DRIFT_TOLERANCE` | 5% | Max drift from a STOP anchor still attributable to motor inertia. |
+| `SETTLE_WOBBLE_TOLERANCE` | ±5% | Max deviation from a just-confirmed outcome absorbed as settle wobble instead of human motion. |
 | `POSITION_NEARLY_OPEN_THRESHOLD` / `POSITION_NEARLY_CLOSED_THRESHOLD` | 98% / 2% | Redundancy-check thresholds. |
 | `ILLUMINANCE_CHANGE_THRESHOLD` | 500 lux | Minimum meaningful illuminance change. |
 | `TEMPERATURE_CHANGE_THRESHOLD` | 0.5°C | Minimum meaningful temperature change. |

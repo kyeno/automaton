@@ -65,6 +65,28 @@ const TRAVEL_ECHO_WINDOW_DEFAULT_MS = 90_000
 const MOTION_STALL_TIMEOUT_DEFAULT_MS = 20_000
 
 /**
+ * Settle-absorption window (ms): after an echo confirms a travel outcome, follow-up
+ * reports belonging to the SAME physical event (motor-status label churn such as
+ * OPEN -> STOP as the motor idles, small overshoot wobble around the achieved point)
+ * are absorbed instead of being misread as external input. Any motion beyond the
+ * settle-wobble tolerance exits absorption immediately and is classified normally,
+ * so a genuine human action right after completion is still caught in one report.
+ * Override with `ai_settle_absorb_window_ms` in main config.
+ * @type {number}
+ */
+const SETTLE_ABSORB_WINDOW_DEFAULT_MS = 10_000
+
+/**
+ * Backoff (ms) before re-dispatching the identical automated command after it
+ * produced no observable response at all (offline/faulty device). Prevents hammering
+ * a dead actuator every tick while never giving up permanently -- any real state
+ * change on the device clears the backoff early. Override with
+ * `ai_failed_command_backoff_ms` in main config.
+ * @type {number}
+ */
+const FAILED_COMMAND_BACKOFF_DEFAULT_MS = 10 * 60_000
+
+/**
  * Hard cap (ms) on total lifetime of any causality token, even while
  * continuation reports keep refreshing it. Prevents indefinite automation
  * attribution when a faulty motor keeps reporting micro-movements forever.
@@ -91,6 +113,14 @@ const CLOSED_ECHO_POSITION_MAX = 10
  * @type {number}
  */
 const STOP_DRIFT_TOLERANCE = 5
+
+/**
+ * Maximum positional deviation (%) from a just-confirmed travel outcome still
+ * attributable to motor settling/inertia rather than an external actor. Larger
+ * deviations exit settle-absorption immediately and are classified normally.
+ * @type {number}
+ */
+const SETTLE_WOBBLE_TOLERANCE = 5
 
 /**
  * Suffix appended to the device cache key for the persisted in-flight
@@ -185,6 +215,14 @@ class CommandCorrelator {
     /** Monotonic counter for unique token ids. @type {number} */
     #counter = 0
 
+    /**
+     * Short-lived settling snapshot started when a positional echo confirms a travel
+     * outcome; absorbs tail reports of the same physical event so motor-status churn
+     * at a fixed point is not misread as external input.
+     * @type {{position: number, expiresAt: number}|null}
+     */
+    #settling = null
+
     // -- Public API -------------------------------------------------------
 
     /**
@@ -275,11 +313,15 @@ class CommandCorrelator {
 
     /**
      * Snapshot of the live token for logging and watchdog decisions.
-     * @returns {{expectedState: string, kind: ('instant'|'travel'|'wildcard')}|null}
+     * `progressObserved` tells whether any forward-motion report was ever seen since
+     * dispatch -- the stall watchdog uses it to distinguish "someone stopped our
+     * motion" (flip to human) from "the device never responded at all" (do NOT blame
+     * a person).
+     * @returns {{expectedState: string, kind: ('instant'|'travel'|'wildcard'), progressObserved: boolean}|null}
      */
     getActiveToken() {
         return this.hasActive()
-            ? { expectedState: this.#active.expectedState, kind: this.#active.kind }
+            ? { expectedState: this.#active.expectedState, kind: this.#active.kind, progressObserved: this.#active.lastSeenPosition != null }
             : null
     }
 
@@ -289,6 +331,55 @@ class CommandCorrelator {
      */
     cancelAll() {
         this.#active = null
+    }
+
+    // -----------------------------------------------------------------------
+    // Settle absorption (post-completion tail handling)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Start a short-lived settling snapshot after an echo confirmed a travel outcome.
+     * Only positional echoes should start it -- label-only outcomes keep legacy rules.
+     * @param {number} position - achieved/settled position (%) from the confirming report
+     * @param {number} windowMs - how long tail reports are absorbed (lazy expiry, no timer)
+     */
+    beginSettling(position, windowMs) {
+        const ms = Number(windowMs) > 0 ? Math.min(Number(windowMs), MAX_TOKEN_LIFETIME_MS) : SETTLE_ABSORB_WINDOW_DEFAULT_MS
+        this.#settling = { position, expiresAt: Date.now() + ms }
+    }
+
+    /**
+     * Whether the settle-absorption window is still active (lazily expired).
+     * @returns {boolean} true while post-completion tail reports may be absorbed
+     */
+    isSettling() {
+        if (!this.#settling) return false
+        if (Date.now() > this.#settling.expiresAt) {
+            this.#settling = null
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Attempt to absorb a follow-up report as part of the just-confirmed outcome's tail.
+     * Returns true when the report belongs to our own event and must NOT change
+     * attribution: label-only churn at a known settled point, or positional wobble
+     * within SETTLE_WOBBLE_TOLERANCE around it. Any larger motion returns false so the
+     * caller classifies normally (and clears settling via markHumanInteraction).
+     * @param {*} payload - parsed state report
+     * @returns {boolean} true when the report was classified as settling-tail noise
+     */
+    absorbPostCompletionReport(payload) {
+        if (!this.isSettling()) return false
+        const pos = payload && typeof payload === 'object' && Number.isFinite(payload.position) ? payload.position : null
+        if (pos == null) return true // settled position is known; pure label/status churn -> absorb
+        return Math.abs(pos - this.#settling.position) <= SETTLE_WOBBLE_TOLERANCE
+    }
+
+    /** Drop any active settling snapshot (e.g., after an external actor moved the device). */
+    clearSettling() {
+        this.#settling = null
     }
 
     // -- Private helpers --------------------------------------------------
@@ -510,6 +601,14 @@ export default class DeviceBase {
     #correlator = new CommandCorrelator()
     /** Watchdog timer handle detecting externally-stalled automated motion */
     #stallTimer = null
+
+    /**
+     * Retry-backoff metadata for the last automated command that produced no observable
+     * response; receiveCommand suppresses identical descriptions until `until` or until a
+     * real state change clears it.
+     * @type {{description: string, positionAtFailure: (number|null), until: number}|null}
+     */
+    #failedCommand = null
     /** Redis cache key: `"zigbeedevice:<slug>:<id>"` */
     #cacheKey = ''
     /** Reference to shared {@link ../../service/mqttService.js} singleton */
@@ -731,6 +830,24 @@ export default class DeviceBase {
     }
 
     /**
+     * Settle-absorption window (ms): how long follow-up reports of a just-confirmed travel
+     * outcome are absorbed as the same physical event instead of being classified anew.
+     * @returns {number} Window in milliseconds
+     */
+    getSettleAbsorbWindowMs() {
+        return this.#durationFromConfig('ai_settle_absorb_window_ms', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
+    }
+
+    /**
+     * Backoff (ms) before re-dispatching an automated command that produced no observable
+     * response, while the device state stays unchanged.
+     * @returns {number} Backoff in milliseconds
+     */
+    getFailedCommandBackoffMs() {
+        return this.#durationFromConfig('ai_failed_command_backoff_ms', FAILED_COMMAND_BACKOFF_DEFAULT_MS)
+    }
+
+    /**
      * Shared duration-config reader: accepts plain milliseconds or a human-readable
      * string ("30s", "25m", "1h") via temporal.parseDurationMs(). Missing values use
      * the default silently; invalid ones warn and fall back to it (fail-open).
@@ -823,6 +940,9 @@ export default class DeviceBase {
         })
         this.#clearMotionWatchdog()
         this.#correlator.cancelAll()
+        this.#correlator.clearSettling()
+        // A genuine external change means the device moved -- allow ineffective-command retries again.
+        this.#failedCommand = null
         this.#clearPendingCommandMarker()
         this.#writeHumanCooldown(reason)
     }
@@ -905,9 +1025,13 @@ export default class DeviceBase {
     /**
      * Arm (or re-arm) the stall watchdog for an active travel expectation. Only
      * OPEN/CLOSE/POS:N commands expect continued motion; STOP/instant/wildcard do
-     * not arm it. If the timer fires while the same expectation is still
-     * unresolved, the motion stalled without reaching its target -- presumed
-     * external stop (e.g., wall switch), so origin flips to human + cooldown.
+     * not arm it. If the timer fires while the same expectation is still unresolved,
+     * the outcome depends on whether ANY forward progress was observed since dispatch:
+     *   - progress then halt -> something external stopped our motion (e.g., wall
+     *     switch), so origin flips to human + cooldown.
+     *   - zero progress      -> the device never responded at all (offline/faulty).
+     *     Nothing a person could have stopped, so attribution is preserved and NO
+     *     human cooldown is written; identical retries are backed off instead.
      * Forward-progress reports call this again to reset the clock.
      * @private
      */
@@ -920,16 +1044,43 @@ export default class DeviceBase {
         this.#stallTimer = setTimeout(() => {
             this.#stallTimer = null
             const live = this.#correlator.getActiveToken()
-            if (live && live.kind === 'travel' && live.expectedState !== 'STOP') {
+            if (!live || live.kind !== 'travel' || live.expectedState === 'STOP') return
+            if (live.progressObserved) {
                 this.#markHumanInteraction(
                     this.#stateLast,
                     `automated motion stalled before reaching target (${live.expectedState})`,
                     'warn'
                 )
+            } else {
+                this.#handleNoResponseStall(live.expectedState)
             }
         }, timeoutMs)
         // Do not keep the process alive just for a watchdog.
         this.#stallTimer.unref?.()
+    }
+
+    /**
+     * Handle an automated travel command that produced no observable response at all:
+     * the device never moved, so there is nothing to attribute to a person. Discard the
+     * token and pending marker WITHOUT touching origin or cooldowns, log a distinct
+     * warning, and record retry-backoff metadata so receiveCommand can suppress identical
+     * re-dispatches while the state stays unchanged.
+     * @private
+     * @param {string} expectedState - the commanded description (OPEN/CLOSE/POS:N)
+     */
+    #handleNoResponseStall(expectedState) {
+        LoggerService.warn(
+            `Automated command ${expectedState} produced no observable response -- possible offline/faulty device; backing off identical retries`,
+            `${this.getLogPrefix()}:${this.#name}`
+        )
+        this.#correlator.cancelAll()
+        this.#clearPendingCommandMarker()
+        const pos = Number.isFinite(this.#stateLast?.position) ? this.#stateLast.position : null
+        this.#failedCommand = {
+            description: expectedState,
+            positionAtFailure: pos,
+            until: Date.now() + this.getFailedCommandBackoffMs()
+        }
     }
 
     /**
@@ -1011,6 +1162,13 @@ export default class DeviceBase {
                     LoggerService.debug('Automation echo matched -- origin=automation', `${this.getLogPrefix()}:${this.#name}`)
                     this.#clearMotionWatchdog()
                     this.#clearPendingCommandMarker()
+                    // Begin short settle-absorption so tail reports of this same physical event
+                    // (motor-status label churn, small overshoot wobble) are not misread as
+                    // external input once the token is consumed above. Only positional echoes
+                    // start it -- label-only outcomes keep legacy classification rules.
+                    if (parsed && typeof parsed === 'object' && Number.isFinite(parsed.position)) {
+                        this.#correlator.beginSettling(parsed.position, this.getSettleAbsorbWindowMs())
+                    }
                     this.#stateLast = parsed
                     this.setCachedState(parsed, {
                         stateLastAt: this.#stateLastAt,
@@ -1057,6 +1215,19 @@ export default class DeviceBase {
                         // reports mid-motion): preserve current attribution; the watchdog decides
                         // later if the motion truly stalled without progress.
                         LoggerService.debug('Unmatched change inside active command window -- preserving origin', `${this.getLogPrefix()}:${this.#name}`)
+                        this.#stateLast = parsed
+                        this.setCachedState(parsed, {
+                            stateLastAt: this.#stateLastAt,
+                            origin: this.#stateOrigin
+                        }).catch(err => {
+                            this.log(`Failed to cache state: ${err.message}`, 'error')
+                        })
+                    } else if (this.#correlator.absorbPostCompletionReport(parsed)) {
+                        // Small positional wobble around a just-confirmed outcome (motor
+                        // overshoot/settle bounce): same physical event we already attributed
+                        // to automation -- absorb without changing origin or cooldowns. A real
+                        // human action moves beyond the wobble tolerance and falls through.
+                        LoggerService.debug('Post-completion settling report absorbed -- origin preserved', `${this.getLogPrefix()}:${this.#name}`)
                         this.#stateLast = parsed
                         this.setCachedState(parsed, {
                             stateLastAt: this.#stateLastAt,
@@ -1161,6 +1332,27 @@ export default class DeviceBase {
                 this.#writeHumanCooldown('redundant human command suppressed -- intent still counts')
             }
             return
+        }
+
+        // --- Suppress retries of ineffective automation commands ---
+        // If our last attempt at this exact description produced zero observable response,
+        // do not hammer the device again while its state is unchanged: the failure was
+        // already logged once and will be retried when something else moves the device or
+        // the backoff elapses. Human-directed commands are never suppressed here.
+        if (isAutomation && this.#failedCommand != null) {
+            const fc = this.#failedCommand
+            if (Date.now() < fc.until && fc.description === description) {
+                const posNow = Number.isFinite(this.#stateLast?.position) ? this.#stateLast.position : null
+                const unchanged = fc.positionAtFailure == null || posNow == null
+                    || Math.abs(posNow - fc.positionAtFailure) <= POSITION_MATCH_TOLERANCE
+                if (unchanged) {
+                    LoggerService.debug(
+                        `Suppressed ${description} -- no observable response since previous attempt; retrying after state change or backoff`,
+                        `${this.getLogPrefix()}:${this.#name}`
+                    )
+                    return
+                }
+            }
         }
 
         if (!this.#mqttService) {
@@ -1339,11 +1531,25 @@ export default class DeviceBase {
             return false
         }
 
-        // Compare state field (ON/OFF/OPEN/CLOSE/STOP)
-        if ('state' in newPayload && 'state' in old) {
-            if (String(newPayload.state) !== String(old.state)) return true
-        } else if ('state' in newPayload || 'state' in old) {
-            return true
+        // Positional telemetry is ground truth for mechanisms like roller shutters: when
+        // both payloads carry positions within jitter tolerance of each other, a difference
+        // confined to the `state` label is motor-status churn at a fixed point (e.g., z2m
+        // flipping OPEN -> STOP as the motor idles right after our own completed travel),
+        // not an input event -- it must not change attribution. Non-positional devices
+        // (lights etc.) never satisfy this gate and keep strict label comparison.
+        const stableNewPos = Number(newPayload.position)
+        const stableOldPos = Number(old.position)
+        const positionUnchanged = Number.isFinite(stableNewPos) && Number.isFinite(stableOldPos)
+            && Math.abs(stableNewPos - stableOldPos) <= POSITION_MATCH_TOLERANCE
+
+        // Compare state field (ON/OFF/OPEN/CLOSE/STOP) -- unless positional data shows the
+        // device has not moved (see above).
+        if (!positionUnchanged) {
+            if ('state' in newPayload && 'state' in old) {
+                if (String(newPayload.state) !== String(old.state)) return true
+            } else if ('state' in newPayload || 'state' in old) {
+                return true
+            }
         }
 
         // Compare position field with tolerance for roller shutters

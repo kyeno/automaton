@@ -44,9 +44,17 @@ This is the central configuration file. All behavioral settings live here.
 # Accepts a human-readable duration ("90s", "25m", "1h") or legacy plain milliseconds;
 # defaults to 15 minutes when omitted. Set to 0 to disable the cooldown entirely.
 human_interaction_cooldown_ms: "25m"
+
+# Optional origin-classification tuning (all accept "30s"/"25m"-style durations).
+# Uncomment to override the built-in safe defaults:
+# ai_echo_window_instant_ms: "15s"   # token TTL for ON/OFF/TOGGLE commands
+# ai_echo_window_travel_ms: "90s"    # token TTL for OPEN/CLOSE/POS:N/STOP travel
+# ai_motion_stall_timeout_ms: "20s"  # no-progress window before assuming external stop
+# ai_settle_absorb_window_ms: "10s"  # how long post-completion motor-status churn is absorbed
+# ai_failed_command_backoff_ms: "10m" # retry backoff after a command produced no observable response
 ```
 
-This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are interpreted as milliseconds, strings use the same `<integer><unit>` grammar (`d`, `h`, `m`, `s`).
+This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are interpreted as milliseconds, strings use the same `<integer><unit>` grammar (`d`, `h`, `m`, `s`). The optional `ai_*` keys fine-tune origin classification — echo windows, stall watchdog, settle absorption of post-completion tails, and retry backoff for unresponsive devices; see [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) for what each one controls.
 
 ### i18n Section
 
