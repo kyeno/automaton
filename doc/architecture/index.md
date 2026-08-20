@@ -1,6 +1,6 @@
 # Architecture
 
-> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [AI vs Human Differentiation](./ai-human-differentiation.md)
+> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md)
 
 ## Project Structure
 
@@ -11,10 +11,11 @@
 │   ├── automaton-lint-check    # Lint check bundle (JSDoc coverage, etc.)
 │   └── automaton-generate-docs # JSDoc API documentation generator
 ├── doc/                        # Documentation
+│   ├── index.md                # Documentation hub linking every document
 │   ├── architecture/           # Architecture deep-dive
 │   │   ├── index.md            # This file — project structure and design
 │   │   ├── ai-conversation-caching.md  # AI conversation persistence & caching behavior
-│   │   └── ai-human-differentiation.md # AI echo vs human interaction classification
+│   │   └── automation-human-differentiation.md # Automation vs human origin classification
 │   ├── installation/           # Setup guides
 │   │   ├── index.md            # Requirements, install steps, running modes
 │   │   ├── ai-integration.md   # LLM setup (llama.cpp, Ollama, vLLM)

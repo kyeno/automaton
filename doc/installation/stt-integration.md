@@ -52,3 +52,7 @@ Until native STT is implemented, you can achieve similar functionality by:
 ## Follow Progress
 
 Track STT implementation progress in [TODO & Roadmap](../TODO.md).
+
+---
+
+→ Back to [Installation & Requirements](./index.md) · Related: [AI Integration](./ai-integration.md) · [TTS Integration](./tts-integration.md)

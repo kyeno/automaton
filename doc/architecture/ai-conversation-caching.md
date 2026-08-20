@@ -145,3 +145,13 @@ To make conversations expire faster, reduce `conversation_ttl_sec`. Automated an
 | ChatMessageOrigin enum | `src/enum/aiChatMessageOrigin.js` |
 | CacheService (Redis client) | `src/service/cacheService.js` |
 | AiWindow (UI display) | `src/ui/windows/aiWindow.js` |
+
+---
+
+## Related Documentation
+
+| Document | Relation |
+|----------|----------|
+| [Automation vs Human Differentiation](./automation-human-differentiation.md) | Sibling deep-dive: how command provenance and origin classification work |
+| [TTS Weather Man example](../examples/weatherman.md) | Consumer of system-originated announcements discussed here |
+| [Architecture Overview](./index.md) | Project structure and core concepts |

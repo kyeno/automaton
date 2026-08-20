@@ -474,3 +474,7 @@ Verify that:
 ### AI doesn't recognize devices
 
 Check that your `etc/i18n/{locale}/ai.yaml` includes device annotations for any non-obvious device names. The AI uses these mappings to understand which device does what.
+
+---
+
+→ [Documentation Home](./index.md) · See also: [Architecture Overview](architecture/index.md) · [Example Automations](examples/index.md)

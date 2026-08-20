@@ -1,4 +1,4 @@
-# AI vs Human Interaction Differentiation
+# Automation vs Human Interaction Differentiation
 
 ## Overview
 
@@ -210,3 +210,13 @@ All durations accept human-readable strings ("30s", "25m") or plain milliseconds
 | Interaction container (targets → HUMAN) | `src/interaction/container/interactionContainer.js` |
 | AutomationBase (cooldown check + live-origin fallback) | `src/automation/base/automationBase.js` |
 | RuleBasedAutomationBase (execute flow → AUTOMATION) | `src/automation/base/ruleBasedAutomationBase.js` |
+
+---
+
+## Related Documentation
+
+| Document | Relation |
+|----------|----------|
+| [AI Conversation Caching](./ai-conversation-caching.md) | Sibling deep-dive: how chat history persistence interacts with message origin |
+| [Configuration Guide](../configuration.md) | All config keys referenced here (`human_interaction_cooldown_ms`, echo windows, stall timeout, settle absorption, failed-command backoff) |
+| [Architecture Overview](./index.md) | Project structure and core concepts |

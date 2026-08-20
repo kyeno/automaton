@@ -287,3 +287,7 @@ To add support for another language, create a new `weatherman.yaml` in your loca
 | Configuration template | `etc/automation/tts-weatherman.yaml.dist` |
 | English i18n bundle | `etc/i18n/en_US/weatherman.yaml` |
 | Polish i18n bundle | `etc/i18n/pl_PL/weatherman.yaml` |
+
+---
+
+→ Back to [Example Automations](./index.md) · Sibling example: [Ambient Lights](./ambient-lights.md)

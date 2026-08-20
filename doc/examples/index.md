@@ -18,4 +18,4 @@ A rule-based weather announcer that builds a speech message from locale-specific
 
 ---
 
-More example automations will be added here as they become available. If you'd like to contribute an example, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+More example automations will be added here as they become available. If you'd like to contribute an example, see [CONTRIBUTING.md](../../CONTRIBUTING.md).

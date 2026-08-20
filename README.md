@@ -44,6 +44,7 @@ For detailed setup instructions, see [Installation & Requirements](doc/installat
 
 | Document | Description |
 |----------|-------------|
+| [Documentation Home](doc/index.md) | Single map linking every document in doc/ |
 | [Installation & Requirements](doc/installation/index.md) | Runtime deps, system packages, first-time setup |
 | [Configuration Guide](doc/configuration.md) | Every config file, environment variable, and i18n bundle explained |
 | [Example Automations](doc/examples/index.md) | Included example automations and how they work |

@@ -56,3 +56,7 @@ Daily `once` markers, season conditions, and all other condition operators are d
 | Automation class | `etc/automation/ambientLightsAutomation.js` |
 | Configuration template | `etc/automation/ambient-lights.yaml.dist` |
 | Execution tests | `tests/test-ambient-lights-rules.js` |
+
+---
+
+→ Back to [Example Automations](./index.md) · Sibling example: [TTS Weather Man](./weatherman.md)

@@ -87,6 +87,10 @@ Then set `AI_API_URL=http://localhost:8000/v1/chat/completions`.
 
 Automaton caches AI conversations in Redis for persistence across restarts. Cached entries are tagged by origin so that AI-generated echoes can be distinguished from human interactions during replay. See [AI Conversation Caching](../architecture/ai-conversation-caching.md) for details on TTL, filtering, and cache behavior.
 
-## Human vs AI Differentiation
+## Automation vs Human Differentiation
 
-When the AI generates responses that trigger device state changes, those events carry an origin marker preventing them from being re-processed as new automations or interactions. This prevents feedback loops where the AI responds to its own actions. See [AI vs Human Differentiation](../architecture/ai-human-differentiation.md) for echo detection logic, grace periods, and command suppression rules.
+Device commands dispatched by the AI chat assistant are classified as **human-directed input**, because a person gave the AI the order — only autonomous rule-engine actions count as automation. Every outgoing command carries an explicit provenance (`AUTOMATION` or `HUMAN`) and incoming MQTT reports are matched against causal tokens registered at dispatch time, so the system never confuses its own echoes with genuine user intervention. See [Automation vs Human Differentiation](../architecture/automation-human-differentiation.md) for the full policy, token verdicts, and cooldown behavior.
+
+---
+
+→ Back to [Installation & Requirements](./index.md) · Related: [TTS Integration](./tts-integration.md) · [STT Integration](./stt-integration.md) *(planned)*

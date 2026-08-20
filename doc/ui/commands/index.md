@@ -1,5 +1,7 @@
 # Terminal UI Commands
 
+> **[← Back to Terminal UI](../index.md)**
+
 The Automaton terminal UI supports slash commands typed into the input bar at the bottom of each window. Commands are **only available in interactive terminal mode** — they are entirely disabled when running as a system service with `--no-ui`.
 
 ## Quick Reference

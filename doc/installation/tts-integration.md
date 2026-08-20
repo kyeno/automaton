@@ -95,3 +95,7 @@ Configure your preferred voice provider in tts-server's configuration. See the [
 | No audio output | Verify tts-server is running and `TTS_TCP_ENDPOINT` points to correct IP/port |
 | Wrong language | Ensure matching locale bundle exists in `etc/i18n/{locale}/tts.yaml` |
 | TTS disabled at startup | Confirm `TTS_TCP_ENDPOINT` is set in `.env` |
+
+---
+
+→ Back to [Installation & Requirements](./index.md) · Related: [AI Integration](./ai-integration.md) · [STT Integration](./stt-integration.md) *(planned)*

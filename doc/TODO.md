@@ -61,3 +61,7 @@ personas:
 - Add "force" option to run automations via cmd
 - LATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - Debug timers (LATER)
+
+---
+
+→ [Documentation Home](./index.md)
