@@ -21,14 +21,25 @@ import DeviceBase from '../base/deviceBase.js'
  *
  *  Automation/human distinction is handled by DeviceBase using an explicit Origin
  *  state machine and causality tokens:
- *    - Automation calls receiveCommand('ON', fromAutomation=true) -> origin set to 'automation',
+ *    - Rule engine calls receiveCommand(cmd, AUTOMATION) -> origin set to 'automation',
  *      causality token registered with CommandCorrelator at publish time
- *    - MQTT echo matches token -> consumed, origin preserved as 'automation'
- *    - MQTT message does NOT match any token -> origin set to 'human'
+ *    - MQTT report matching the active token (echo / continuation) -> origin preserved
+ *    - Human-directed commands (remotes, interactions, AI chat) cancel any pending
+ *      token, flip origin to 'human' immediately, and start the cooldown
+ *    - Unmatched changes or motion contradicting/stalling an active command -> human
  */
 export default class Mechanism extends DeviceBase {
     constructor(name, id, data) {
         super(name, id, data)
+    }
+
+    /**
+     * Override: mechanisms are actuators whose state can be driven by both
+     * automations and humans, so they participate in origin classification.
+     * @returns {boolean} true
+     */
+    shouldTrackOrigin() {
+        return true
     }
 
     /**

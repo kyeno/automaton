@@ -18,6 +18,7 @@ import ConfigService from '../../service/configService.js'
 import EventBus from '../../service/eventBus.js'
 import LoggerService from '../../service/loggerService.js'
 import { slugify } from '../../lib/string.js'
+import DeviceStateOrigin from '../../enum/deviceStateOrigin.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -332,12 +333,14 @@ export default class AutomationBase {
     /**
      * Check whether a device is under a human-interaction cooldown using Redis TTL.
      * The cooldown key (`cooldown:<slug>`) is set by DeviceBase when it detects
-     * a genuine human-initiated state change outside the grace period. It auto-
-     * expires after the configured cooldown duration (stored as epoch in JSON payload),
-     * so automations simply check remaining time and skip if still active.
+     * a genuine human-initiated state change or dispatches a human-directed command.
+     * It auto-expires after the configured cooldown duration (stored as epoch in JSON
+     * payload), so automations simply check remaining time and skip if still active.
      *
-     * Requires Redis to be available. If Redis is offline or an error occurs,
-     * returns false (device will NOT be skipped).
+     * Defense in depth: even when Redis is unavailable, a fresh HUMAN origin on the
+     * live device itself means someone just touched it -- bounded by the same
+     * cooldown window so a stale origin from long ago never blocks automation forever.
+     * This prevents silently failing open when Redis is down.
      *
      * @param {object} device - Device instance with getName() method
      * @returns {Promise<boolean>} true if the device should be skipped due to recent human interaction
@@ -355,8 +358,26 @@ export default class AutomationBase {
                 )
                 return true
             }
-        } catch (_) {
-            // Redis unavailable - cannot verify cooldown, allow automation to proceed.
+        } catch (error) {
+            // Redis unavailable -- fall through to the local origin check below instead
+            // of silently allowing automation to fight the user.
+            LoggerService.warn(
+                `Redis cooldown lookup failed for "${device.getName()}": ${error.message} -- falling back to live device origin`,
+                `Auto:${this.name}`
+            )
+        }
+
+        // Local fallback: a fresh HUMAN origin on the device means someone just
+        // interacted, even without a Redis key. Recency-bounded by the same window.
+        if (typeof device.getStateOrigin === 'function' && typeof device.getStateLastAt === 'function') {
+            if (device.getStateOrigin() === DeviceStateOrigin.HUMAN) {
+                const lastAtMs = Date.parse(device.getStateLastAt() ?? '')
+                const windowMs = this.getHumanInteractionCooldownMs()
+                if (Number.isFinite(lastAtMs) && windowMs > 0 && Date.now() - lastAtMs < windowMs) {
+                    this.log('Skipping -- recent human interaction detected via live device origin', 'debug')
+                    return true
+                }
+            }
         }
 
         return false

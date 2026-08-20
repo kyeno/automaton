@@ -28,6 +28,7 @@ import { createClient } from 'redis'
 
 import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
+import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
 import AmbientLightsAutomation from '../etc/automation/ambientLightsAutomation.js'
 import temporal from '../src/lib/date.js'
@@ -188,7 +189,7 @@ function expectPayload(devices, id, expectedState) {
         dev.calls.length === 1 && JSON.stringify(dev.calls[0].payload) === JSON.stringify({ state: expectedState }),
         `${id}: received ${JSON.stringify({ state: expectedState })} exactly once`
     )
-    assert(dev.calls.every(c => c.fromAutomation === true), `${id}: marked as automation-originated`)
+    assert(dev.calls.every(c => c.fromAutomation === DeviceCommandSource.AUTOMATION), `${id}: marked as automation-originated`)
 }
 
 console.log('\n── Ambient lights execution ──\n')

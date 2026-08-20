@@ -21,6 +21,7 @@ import DeviceContainer from '../container/deviceContainer.js'
 import InteractionContainer from '../../interaction/container/interactionContainer.js'
 
 import DeviceBase from '../base/deviceBase.js'
+import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -253,12 +254,20 @@ export default class Remote extends DeviceBase {
             `${this.getLogPrefix()}:${this.getName()}`
         )
 
+        // Build the outgoing payload once. Legacy configs may carry extra fields in
+        // `extra`; merge them alongside state so nothing ever lands in the command
+        // provenance slot (the second receiveCommand argument is now an explicit
+        // DeviceCommandSource enum, not a boolean that could be clobbered).
+        const cmdPayload = mapping.extra && typeof mapping.extra === 'object'
+            ? Object.assign({}, mapping.extra, { state: mapping.state })
+            : mapping.state
+
         if (mapping.targets) {
             // Multiple targets -- find each and call receiveCommand.
             for (const targetName of mapping.targets) {
                 const mechanism = DeviceContainer.findByName(targetName)
                 if (mechanism) {
-                    mechanism.receiveCommand(mapping.state, mapping.extra)
+                    mechanism.receiveCommand(cmdPayload, DeviceCommandSource.HUMAN)
                 } else {
                     this.log(`Target mechanism not found: ${targetName}`)
                 }
@@ -267,7 +276,7 @@ export default class Remote extends DeviceBase {
             // Single target.
             const mechanism = DeviceContainer.findByName(mapping.target)
             if (mechanism) {
-                mechanism.receiveCommand(mapping.state, mapping.extra)
+                mechanism.receiveCommand(cmdPayload, DeviceCommandSource.HUMAN)
             } else {
                 this.log(`Target mechanism not found: ${mapping.target}`)
             }

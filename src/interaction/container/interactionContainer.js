@@ -26,6 +26,7 @@ import LoggerService from '../../service/loggerService.js'
 import ConfigService from '../../service/configService.js'
 import { PROJECT_ROOT } from '../../lib/projectRoot.js'
 import DeviceContainer from '../../device/container/deviceContainer.js'
+import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 
 // ---------------------------------------------------------------------------
 // SInteractionContainer (singleton)
@@ -373,7 +374,8 @@ class SInteractionContainer {
                 }
 
                 try {
-                    device.receiveCommand(cmd, false)
+                    // Interaction targets are human-configured actions -> HUMAN provenance.
+                    device.receiveCommand(cmd, DeviceCommandSource.HUMAN)
                 } catch (err) {
                     LoggerService.error(
                         `Failed to dispatch "${cmd}" to "${target.device}": ${err.message}`,

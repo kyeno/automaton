@@ -26,6 +26,7 @@ import EventBus from '../service/eventBus.js'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { round } from '../lib/math.js'
+import DeviceCommandSource from '../enum/deviceCommandSource.js'
 
 // ---------------------------------------------------------------------------
 // Type Definitions
@@ -470,7 +471,8 @@ class SToolBuilder {
 
         // --- Position-based command (roller shutter) ---
         if (hasPosition) {
-            device.receiveCommand({ position: clampedPos }, true)
+            // AI chat actions are human-directed: a person gave the AI this order.
+            device.receiveCommand({ position: clampedPos }, DeviceCommandSource.HUMAN)
             return JSON.stringify({
                 device: deviceName,
                 action: 'set_position',
@@ -481,7 +483,8 @@ class SToolBuilder {
 
         // --- Standard command (ON/OFF/OPEN/CLOSE/STOP) ---
         if (action) {
-            device.receiveCommand(action, true)
+            // AI chat actions are human-directed: a person gave the AI this order.
+            device.receiveCommand(action, DeviceCommandSource.HUMAN)
             return JSON.stringify({
                 device: deviceName,
                 action: action,

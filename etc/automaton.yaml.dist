@@ -20,6 +20,12 @@
 # defaults to 15 minutes when omitted. Set to 0 to disable the cooldown entirely.
 human_interaction_cooldown_ms: "15m"
 
+# Optional origin-classification tuning (all accept "30s"/"25m"-style durations).
+# Uncomment to override the built-in safe defaults:
+# ai_echo_window_instant_ms: "15s"   # token TTL for ON/OFF/TOGGLE commands
+# ai_echo_window_travel_ms: "90s"    # token TTL for OPEN/CLOSE/POS:N/STOP travel
+# ai_motion_stall_timeout_ms: "20s"  # no-progress window before assuming external stop
+
 # -- Where to find custom configurations --------------------------
 # These paths can be overridden below under the `paths` section. Defaults are:
 #   configs.network     -> etc/device/network.yaml

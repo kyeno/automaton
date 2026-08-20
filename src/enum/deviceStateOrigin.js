@@ -4,16 +4,20 @@
  * Determines the source of truth for who caused the current device state:
  *
  *   'unknown'      -- initial state, or after restart (conservative: don't block)
- *   'automation'   -- the current state was set by our AI/automation system
- *   'human'        -- the current state was set by a human (physical button, wall switch, etc.)
+ *   'automation'   -- the current state was set by an autonomous rule-engine action
+ *   'human'        -- the current state was set by any human-directed actor: physical
+ *                     remote, wall switch, YAML interaction, Home Assistant / z2m UI,
+ *                     OR an AI chat command (a person gave the AI the order)
  *
  * Transitions:
- *   unknown    -- AI command --> automation
- *   unknown    -- human MQTT --> human
- *   automation -- AI echo     --> automation (no change, echo consumed)
- *   automation -- human MQTT  --> human
- *   human      -- AI command  --> automation
- *   human      -- human MQTT  --> human (no change)
+ *   unknown    -- rule-engine command     --> automation (token registered at publish time)
+ *   unknown    -- human-directed command  --> human (immediately; cooldown starts)
+ *   unknown    -- unmatched MQTT change   --> human (cooldown starts)
+ *   automation -- echo/continuation match --> automation (confirmed own motion)
+ *   automation -- conflicting/stalled motion --> human (external override detected)
+ *   automation -- unmatched MQTT change   --> human (no live token explains it)
+ *   human      -- rule-engine command     --> automation
+ *   human      -- any other input         --> human (no change)
  *
  * @module enum/deviceStateOrigin
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>

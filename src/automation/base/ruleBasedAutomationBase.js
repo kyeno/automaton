@@ -28,6 +28,7 @@ import DeviceContainer from '../../device/container/deviceContainer.js'
 import networkPresence from '../../monitor/networkPresence.js'
 
 import AutomationBase from './automationBase.js'
+import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 
 /**
  * Maximum consecutive context-build failures before escalating from warn to error.
@@ -324,7 +325,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
                 const payload = result.payload
                 this.log(`${dev.getName()} -> ${JSON.stringify(payload)}`)
-                dev.receiveCommand(payload, true)
+                dev.receiveCommand(payload, DeviceCommandSource.AUTOMATION)
                 dispatchedCount++
             })
         }
