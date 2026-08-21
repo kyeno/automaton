@@ -2,8 +2,8 @@
  * Console Transport Profile for LoggerService.
  *
  * Used when UI is disabled (--no-ui). Includes a colorized Console transport
- * plus file transports for debug and warn levels. This is the "headless" mode
- * where logs go directly to stdout.
+ * plus file transports for debug, warn, and trace levels. This is the "headless"
+ * mode where logs go directly to stdout. TRACE stays file-only in both modes.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -19,9 +19,17 @@ import process from 'node:process'
 import * as winston from 'winston'
 
 import ConfigService from '../configService.js'
+import StateService from '../stateService.js'
 import { PROJECT_ROOT } from '../../lib/projectRoot.js'
 
 const TIMESTAMP_FORMAT = 'YYYY-MM-DD HH:mm:ss.SSS A'
+
+/**
+ * Exact-match TRACE filter. Winston transport `level` options are LOWER BOUNDS, so
+ * without this an entry at any level would pass through -- dropping everything but
+ * trace keeps the dedicated stream strictly diagnostic-detail only.
+ */
+const TRACE_ONLY_FORMAT = new (winston.format(info => info.level === 'trace' ? info : null))()
 
 /**
  * Map snake_case config keys to Winston transport option names (file transport).
@@ -74,7 +82,7 @@ export function buildConsoleTransports() {
         winston.format.errors({ stack: true })
     )
 
-    return [
+    const transports = [
         // Console -- DEBUG level and above
         new winston.transports.Console({
             name: 'debug-console',
@@ -105,4 +113,22 @@ export function buildConsoleTransports() {
             ...fileCfg
         })
     ]
+
+    // The TRACE stream is opt-outable at startup (--no-trace / cli.noTrace): when
+    // disabled there is simply no transport for it, so nothing is ever written.
+    if (!StateService.get('cli.noTrace')) {
+        transports.push(
+            // File -- TRACE level ONLY (high-volume diagnostics; never reaches console/UI).
+            // Transport `level` is a lower bound, so pin exact-match via format filtering.
+            new winston.transports.File({
+                name: 'trace-file',
+                level: 'trace',
+                filename: path.join(PROJECT_ROOT, loggerConfig.path?.trace ?? 'var/log/trace.log'),
+                format: TRACE_ONLY_FORMAT,
+                ...fileCfg
+            })
+        )
+    }
+
+    return transports
 }

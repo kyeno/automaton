@@ -1,8 +1,9 @@
 /**
  * Logging service built on Winston.
  *
- * Provides four log levels (`debug`, `info`, `warn`, `error`) routed to both
- * a colorized console transport and separate file transports per level.
+ * Provides five log levels (`trace`, `debug`, `info`, `warn`, `error`) routed to
+ * a colorized console transport and separate file transports per level. TRACE is
+ * file-only by design: it never reaches the console or the UI log window.
  * File paths are configured in {@link ../config/logger.js}.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -27,7 +28,7 @@ import { buildConsoleTransports } from './logger/consoleTransports.js'
 /**
  * Extensible Winston logger wrapper.
  *
- * Provides four log levels (debug, info, warn, error) routed to both
+ * Provides five log levels (trace, debug, info, warn, error) routed to both
  * a colorized console transport and separate file transports per level.
  * ES module caching guarantees single instantiation.
  *
@@ -53,7 +54,11 @@ class SLoggerService {
         this.#winston = winston.createLogger({
             exitOnError: false,
             defaultMeta: { PID: process.pid },
-            level: 'debug',  // Capture ALL levels (debug, info, warn, error)
+            // Explicit npm-style ladder with TRACE below DEBUG. The root gate is the
+            // lowest level so every entry reaches the transports; each transport then
+            // applies its own level filter -- TRACE flows only to the trace-file stream.
+            levels: { error: 0, warn: 1, info: 2, http: 3, verbose: 4, debug: 5, trace: 6 },
+            level: 'trace',  // Capture ALL levels (trace through error); routing is per-transport
             format: winston.format.combine(
                 winston.format.timestamp(),
                 winston.format.json(),
@@ -101,6 +106,21 @@ class SLoggerService {
      */
     debug(content, context) {
         this.#winston.debug(content, { context })
+        return this
+    }
+
+    /**
+     * Log at TRACE level. High-volume diagnostic detail routed ONLY to the dedicated
+     * trace log file (`logger.path.trace`) -- never shown on the console or in the UI
+     * log window, because those transports are gated at `debug`. Use for raw payloads,
+     * per-report verdict context, and token lifecycle events that would spam the TUI.
+     *
+     * @param {string|object} message - Message or structured data to log
+     * @param {string} context - Source component identifier
+     * @returns {SLoggerService} Chainable reference to self
+     */
+    trace(content, context) {
+        this.#winston.trace(content, { context })
         return this
     }
 

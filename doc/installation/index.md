@@ -124,6 +124,8 @@ For unattended operation, start Automaton without the terminal UI:
 sh bin/automaton --no-ui
 ```
 
+If AI or TTS are not needed in this deployment, combine flags on the same command line (`sh bin/automaton --no-ui --no-ai --no-tts`) -- they behave exactly as if the corresponding environment variables were unset.
+
 This is recommended for production use where you want Automaton running persistently in the background. You can keep it alive via any init system or terminal multiplexer:
 
 **systemd user service:**

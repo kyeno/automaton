@@ -112,6 +112,16 @@ class STtsService {
     }
 
     /**
+     * Check whether TTS has been configured via environment variables, regardless of init state.
+     * Safe to call before init(); used by bootstrap and the UI to skip work entirely
+     * when no backend URL was provided.
+     * @returns {boolean} True if TTS_API_URL is set and non-empty.
+     */
+    isConfigured() {
+        return Boolean(process.env.TTS_API_URL && String(process.env.TTS_API_URL).trim())
+    }
+
+    /**
      * Synchronously speak text without going through EventBus.
      * Useful for one-off calls that need the result before continuing.
      * Internally checks #enabled -- silently returns false if disabled.

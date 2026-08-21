@@ -20,6 +20,8 @@ import process from 'node:process'
 import ConfigService from '../service/configService.js'
 import StateService from '../service/stateService.js'
 import LoggerService from '../service/loggerService.js'
+import TtsService from '../service/ttsService.js'
+import AiAssistant from '../ai/aiAssistant.js'
 
 // Layout
 import UiLayoutManager from './layout/uiLayoutManager.js'
@@ -104,12 +106,25 @@ class Ui {
             tts: TtsWindow,
         }
 
+        // Windows backed by optional services are only created when that service is
+        // actually configured; otherwise they would accept input but never do anything.
+        const optionalWindowGates = {
+            ai:  () => AiAssistant.isConfigured(),
+            tts: () => TtsService.isConfigured(),
+        }
+
         let firstChannelId = null
         for (const ch of allChannels) {
-            firstChannelId = firstChannelId || ch.id
-
             const Ctor = windowConstructors[ch.id]
             if (!Ctor) continue
+
+            const gate = optionalWindowGates[ch.id]
+            if (gate && !gate()) {
+                LoggerService.info(`UI window '${ch.id}' not created -- backing service not configured`, 'UI')
+                continue
+            }
+
+            firstChannelId = firstChannelId || ch.id
 
             // AiWindow and TtsWindow need the channel name too
             const instance = (ch.id === 'ai' || ch.id === 'tts')

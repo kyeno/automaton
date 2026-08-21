@@ -97,6 +97,7 @@ const testScripts = [
   'test-ambient-lights-rules.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',
+  'test-mqtt-publish-hook.js',
   'test-dist-sync.js',
   'test-ai-intent-parsing.js',
   'test-string-utils.js',

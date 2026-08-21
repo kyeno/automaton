@@ -29,7 +29,7 @@ Copy `.env.example` to `.env` and adjust values. This file is gitignored and sho
 | `TTS_API_URL` | No | TTS server API endpoint | `http://localhost:7423/tts` |
 | `TTS_TCP_ENDPOINT` | No | Audio playback destination (`ip:port`) | `192.168.1.x:12345` |
 
-> The AI and TTS services are optional. If their URLs are not set, those features will be disabled at startup with a warning.
+> The AI and TTS services are optional. If their URLs are not set, those features will be disabled at startup with a warning. You can also disable them per-run without touching `.env`: starting Automaton with `--no-ai` or `--no-tts` behaves exactly as if the corresponding variables were unset.
 
 ---
 
@@ -164,7 +164,7 @@ windows:
     readonly: false        # Accepts user input
 ```
 
-Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input.
+Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows are created only when their backing services are configured -- if AI or TTS is disabled/unconfigured, that window simply does not exist in the UI.
 
 ### Logger Section
 
@@ -180,9 +180,10 @@ logger:
   path:
     debug: var/log/debug.log
     warn: var/log/warn.log
+    trace: var/log/trace.log
 ```
 
-Uses Winston for structured logging with file rotation. Non-absolute paths are resolved relative to the project root.
+Uses Winston for structured logging with file rotation. Non-absolute paths are resolved relative to the project root. In addition to `debug` through `error`, a fifth **TRACE** level exists for high-volume diagnostic detail (raw MQTT payloads, per-report verdict context, token lifecycle events). TRACE entries are routed exclusively to the dedicated `trace` log file -- they never appear on the console or in the UI log window, so you can leave them on permanently without spamming the TUI. Passing `--no-trace` at startup suppresses the stream entirely (the transport is not built at all).
 
 ---
 

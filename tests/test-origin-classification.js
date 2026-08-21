@@ -16,6 +16,7 @@ config()
  *   - motion contradicting an active command (wall-switch reversal) flips to human
  *   - slow but progressing travel stays automation end-to-end
  *   - automated STOP settles as automation; later movement is human
+ *   - stale near-target re-advertisements do not consume travel tokens before motion starts
  *   - travel that progresses then halts trips the watchdog -> human + cooldown
  *   - commands producing zero observable response preserve attribution, write NO
  *     cooldown, and back off identical retries instead of blaming a person
@@ -78,7 +79,9 @@ class MockMqttService {
         this.published.push({ topic, payload: parsed })
 
         // Fire meta.onPublish callback so correlator registration + origin assignment
-        // happen just like in production (deferred to actual publish time).
+        // happen just like SMQTTService.#drainQueue() does in production -- deferred to
+        // actual publish time, read from options.meta. The real pipeline path is covered
+        // by tests/test-mqtt-publish-hook.js (injected fake client, no live broker).
         const onPublishCb = options?.meta?.onPublish
         setTimeout(() => {
             if (typeof onPublishCb === 'function') onPublishCb()
@@ -251,6 +254,10 @@ async function testCloseEchoConsumedAsAutomation() {
 
     roller.receiveCommand('CLOSE', DeviceCommandSource.AUTOMATION)
     await sleep(20)
+
+    // Real travel takes time -- let the pre-motion stale-readvert grace (default 2 s)
+    // elapse so this arrival is a genuine completion, not an instant re-advertisement.
+    await sleep(2_100)
 
     // z2m reports the shutter reaching the closed end (terminal threshold match)
     mqtt.simulateExternalMessage('Test Roller C', { state: 'OFF', position: 8 })
@@ -547,6 +554,40 @@ async function testNoResponseCommandDoesNotBlameHuman() {
     assert(writes === 0, `no human cooldown written for unresponsive device (got ${writes})`)
 }
 
+async function testStaleReadvertNearAnchorKeepsTravelTokenAlive() {
+    console.log('\n── Stale near-target re-advertisement does not consume the travel token ──')
+    const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
+    const roller = createFastEverythingRoller('Test Roller SR', mqtt)   // stall timeout 300ms
+    await roller.setCachedState({ position: 50 }, { origin: 'unknown' })
+
+    const writes = await countCooldownWrites(async () => {
+        // Rule engine commands POS:80 -- far enough from cached 50 that dispatch is NOT suppressed.
+        roller.receiveCommand({ position: 80 }, DeviceCommandSource.AUTOMATION)
+        await sleep(30)
+
+        // z2m immediately re-advertises its own estimate -- already at/near target while our
+        // cache says otherwise (stale/optimistic telemetry). Must NOT be consumed as an echo:
+        // real motion may still follow.
+        mqtt.simulateExternalMessage('Test Roller SR', { state: 'STOP', position: 79 })
+        await sleep(30)
+        assert(roller.getStateOrigin() === 'automation',
+            `near-target report before any progress keeps automation, got "${roller.getStateOrigin()}"`)
+
+        // The motor actually moves (label-only churn): with the token alive this is preserved
+        // instead of flipping to human + cooldown.
+        mqtt.simulateExternalMessage('Test Roller SR', { state: 'OPEN' })
+        await sleep(30)
+        assert(roller.getStateOrigin() === 'automation',
+            `real motion after stale re-advert stays automation, got "${roller.getStateOrigin()}"`)
+
+        mqtt.simulateExternalMessage('Test Roller SR', { state: 'CLOSE' })
+        await sleep(450)   // past the stall window; no positional progress observed -> zero-progress path
+        assert(roller.getStateOrigin() === 'automation',
+            `stall after label-only travel preserves attribution, got "${roller.getStateOrigin()}"`)
+    })
+    assert(writes === 0, `no human cooldown written for automated travel (got ${writes})`)
+}
+
 async function testProgressThenHaltStillFlipsToHuman() {
     console.log('\n── Progress observed then halted still flips to human ──')
     const mqtt = new MockMqttService({ echoDelayMs: 5, autoEcho: false })
@@ -641,6 +682,7 @@ async function main() {
         await testPostCompletionTailDoesNotFlipOrigin()
         await testRealMotionAfterSettlementStillFlipsToHuman()
         await testNoResponseCommandDoesNotBlameHuman()
+        await testStaleReadvertNearAnchorKeepsTravelTokenAlive()
         await testProgressThenHaltStillFlipsToHuman()
         await testNonPositionalLabelChangeStillCountsAsHuman()
         await testMovingDeviceDoesNotTripWatchdog()

@@ -155,6 +155,8 @@ class SMQTTService {
     #commandQueue = []
     /** Whether a drain cycle is currently in progress */
     #draining = false
+    /** Injectable client factory (defaults to mqtt.connect); used by tests */
+    #connectFn = null
 
     // -- Lifecycle --------------------------------------------------------
 
@@ -165,13 +167,18 @@ class SMQTTService {
      * establishes the client connection, sets up event handlers, and starts
      * the single-message dispatcher.
      *
+     * @param {Object} [options] - Optional initialization overrides
+     * @param {Function} [options.connectFn] - Client factory with the same signature as
+     *   mqtt.connect(url, opts) -> MqttClient. Injectable for tests so the real
+     *   queue/drain pipeline can be exercised without a live broker.
      * @async
      */
-    async init() {
+    async init(options = {}) {
         LoggerService.info('Initializing...', 'MqttService')
 
         this.#url = process.env['MQTT_URL']
         this.#prefix = process.env['MQTT_PREFIX'] ?? 'zigbee2mqtt'
+        this.#connectFn = typeof options?.connectFn === 'function' ? options.connectFn : null
 
         await this.#connect()
         this.#setupEventHandlers()
@@ -188,7 +195,7 @@ class SMQTTService {
      */
     async #connect() {
         return new Promise((resolve, reject) => {
-            this.#client = mqtt.connect(this.#url, {
+            this.#client = (this.#connectFn || mqtt.connect)(this.#url, {
                 clientId: `${CLIENT_ID_PREFIX}${randomBytes(4).toString('hex')}`,
                 reconnectPeriod: 0
             })
@@ -321,7 +328,7 @@ class SMQTTService {
         }
 
         try {
-            this.#client = mqtt.connect(this.#url, {
+            this.#client = (this.#connectFn || mqtt.connect)(this.#url, {
                 clientId: `${CLIENT_ID_PREFIX}${randomBytes(4).toString('hex')}`,
                 reconnectPeriod: 0
             })
@@ -593,9 +600,19 @@ class SMQTTService {
      * If the broker is disconnected when the drain runs, it will retry every
      * {@link DISCONNECT_RETRY_DELAY_MS} until reconnection restores the pipeline.
      *
+     * Callers may attach non-MQTT metadata under `options.meta`. The one
+     * recognized key is `onPublish` -- a zero-argument callback invoked exactly
+     * once at the moment the queued message is actually handed to the underlying
+     * client (i.e., after any reconnect wait), so deferred side-effects such as
+     * correlator registration or origin stamping run precisely when the command
+     * leaves the process. `meta` itself is never forwarded to mqtt.js; unknown
+     * meta keys are ignored.
+     *
      * @param {string} topic - MQTT topic
      * @param {string|Object} message - Message to publish
      * @param {Object} [options] - Optional MQTT publish options
+     * @param {Object} [options.meta] - Non-MQTT caller metadata (see above)
+     * @param {Function} [options.meta.onPublish] - Invoked once on actual publish
      */
     publish(topic, message, options = {}) {
         if (this.#shuttingDown) return
@@ -641,12 +658,18 @@ class SMQTTService {
                 const batch = this.#commandQueue.splice(0, COMMAND_BATCH_SIZE)
                 for (const entry of batch) {
                     try {
-                        this.#client.publish(entry.topic, entry.payload, entry.options)
+                        // Caller metadata (options.meta) is not an MQTT option -- strip it
+                        // before handing options to the underlying client.
+                        const { meta, ...mqttOptions } = entry.options ?? {}
+                        this.#client.publish(entry.topic, entry.payload, mqttOptions)
                         // Fire onPublish hook so callers can defer side-effects
                         // (correlator registration, origin updates) to actual publish time.
-                        if (typeof entry.meta?.onPublish === 'function') {
+                        // DeviceBase stores the hook under options.meta; entry.meta is kept
+                        // as a defensive fallback for direct queue consumers.
+                        const onPublish = meta?.onPublish ?? entry.meta?.onPublish
+                        if (typeof onPublish === 'function') {
                             try {
-                                entry.meta.onPublish()
+                                onPublish()
                             } catch (e) {
                                 LoggerService.error(
                                     `onPublish callback threw: ${e.message}`,

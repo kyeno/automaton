@@ -37,7 +37,7 @@ import Ui              from './ui/ui.js'
 let uiInstance = null
 
 // ---------------------------------------------------------------------------
-// CLI argument parsing -- --no-ui disables the UI, --help shows usage
+// CLI argument parsing -- --no-* flags disable optional services, --help shows usage
 // ---------------------------------------------------------------------------
 
 const HELP_TEXT = `
@@ -45,6 +45,9 @@ Usage: node src/main.js [options]
 
 Options:
   -n, --no-ui        Disable the terminal UI
+      --no-trace     Disable TRACE-level file logging
+      --no-ai        Disable AI features (overrides AI_* environment settings)
+      --no-tts       Disable TTS features (overrides TTS_* environment settings)
   -h, --help         Show this help message
 
 Environment variables (.env):
@@ -53,6 +56,8 @@ Environment variables (.env):
   REDIS_URL                         Redis connection URL (required)
   AI_API_URL                        AI provider API base URL (e.g., http://host:port/v1)
   AI_API_KEY                        AI provider API key (optional)
+  TTS_API_URL                       TTS server API endpoint (e.g., http://host:port/tts)
+  TTS_TCP_ENDPOINT                  Audio playback destination (ip:port)
 
 Behavior settings are in etc/automaton.yaml (ai_language, time_format).
 AI model settings are in etc/ai.yaml (model, max_tokens, temperature, etc.).
@@ -72,8 +77,11 @@ let parsed
 try {
     parsed = parseArgs({
         options: {
-            'no-ui':  { type: 'boolean', default: false, short: 'n' },
-            help:     { type: 'boolean', default: false, short: 'h' },
+            'no-ui':    { type: 'boolean', default: false, short: 'n' },
+            'no-trace': { type: 'boolean', default: false },
+            'no-ai':    { type: 'boolean', default: false },
+            'no-tts':   { type: 'boolean', default: false },
+            help:       { type: 'boolean', default: false, short: 'h' },
         },
         allowPositionals: true,
         strict: true,
@@ -85,6 +93,20 @@ try {
 
 if (parsed.values.help) {
     printHelp(null)
+}
+
+// --no-ai / --no-tts make each feature behave exactly as if its .env vars were
+// never set. Strip them before any service initializes so every consumer that
+// reads the environment directly (AI provider, TTS service, UI windows) sees
+// an unconfigured state.
+if (parsed.values['no-ai']) {
+    delete process.env.AI_API_URL
+    delete process.env.AI_API_KEY
+}
+
+if (parsed.values['no-tts']) {
+    delete process.env.TTS_API_URL
+    delete process.env.TTS_TCP_ENDPOINT
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +124,9 @@ StateService.set('lifecycle.shuttingDown', false)
 StateService.set('lifecycle.lastError', null)
 
 StateService.set('cli.noUi', parsed.values['no-ui'])
+StateService.set('cli.noTrace', parsed.values['no-trace'])
+StateService.set('cli.noAi', parsed.values['no-ai'])
+StateService.set('cli.noTts', parsed.values['no-tts'])
 
 // Phase 1 -- Configuration & Logging (must succeed before anything else)
 await ConfigService.init()
@@ -110,6 +135,18 @@ LoggerService.info(`Automaton starting, node.js ${process.version}`, 'Main')
 
 if (parsed.values['no-ui']) {
     LoggerService.info('UI disabled via --no-ui flag', 'Main')
+}
+
+if (parsed.values['no-trace']) {
+    LoggerService.info('TRACE logging disabled via --no-trace flag', 'Main')
+}
+
+if (parsed.values['no-ai']) {
+    LoggerService.info('AI disabled via --no-ai flag', 'Main')
+}
+
+if (parsed.values['no-tts']) {
+    LoggerService.info('TTS disabled via --no-tts flag', 'Main')
 }
 
 // ---------------------------------------------------------------------------
@@ -299,11 +336,20 @@ async function bootstrap() {
     // the AI language bundle -- all in a single init call.
     await initService('I18nLoader', () => I18nLoader.init(), true)
 
-    // AI Assistant is optional
-    await initService('AiAssistant', () => AiAssistant.init(), true)
+    // AI Assistant -- optional; skipped entirely when unconfigured so startup logs
+    // reflect reality instead of claiming a disabled service initialized.
+    if (AiAssistant.isConfigured()) {
+        await initService('AiAssistant', () => AiAssistant.init(), true)
+    } else {
+        LoggerService.info('AI assistant disabled at startup -- provider not configured', 'Main')
+    }
 
-    // TTS Service
-    await initService('TtsService', () => TtsService.init(), true)
+    // TTS Service -- same treatment as the AI assistant above
+    if (TtsService.isConfigured()) {
+        await initService('TtsService', () => TtsService.init(), true)
+    } else {
+        LoggerService.info('TTS service disabled at startup -- not configured', 'Main')
+    }
 
     const services = []
     if (AiAssistant.isAvailable()) services.push('AI')
