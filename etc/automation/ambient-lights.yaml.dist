@@ -39,7 +39,7 @@ rules:
     once: true
     conditions:
       time-of-day: [evening]
-      illuminance: { lt: 2000 }   # Placeholder -- tune by observing the sensor at dusk
+      illuminance: { lt: 900 }
     targets:
       kitchen_outlet: ON
       hallway_outlet: ON

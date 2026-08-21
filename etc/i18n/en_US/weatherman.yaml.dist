@@ -31,7 +31,7 @@ period_words:
   night: 'at night'
 
 base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
-ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words. Do not use tools -- base your answer only on the provided information: '
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour and minutes in words. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Here is the information: '
 
 # AI prompt markers -- injected around the message when routing through AI.
 # first/last mark the opening/closing update of each daily session (the stretch between

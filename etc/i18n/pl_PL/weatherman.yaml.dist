@@ -30,7 +30,7 @@ period_words:
   evening: 'wieczorem'
   night: 'w nocy'
 
-ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach: '
+ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę i minuty napisz słownie. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Nie mów, że to ostatnia wiadomość, jeżeli dostajesz informację o następnej aktualizacji. Nie używaj słowa "prognoza" tylko "raport". Oto informacje: '
 base: 'Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
 
 # AI prompt markers -- injected around the message when routing through AI.
