@@ -106,6 +106,9 @@ Usage: node src/main.js [options]
 
 Options:
   -n, --no-ui        Disable the terminal UI
+      --no-trace     Disable TRACE-level file logging
+      --no-ai        Disable AI features (overrides AI_* env vars)
+      --no-tts       Disable TTS features (overrides TTS_* env vars)
   -h, --help         Show help message
 ```
 
@@ -114,6 +117,8 @@ The `bin/automaton` script wraps `npm start` and automatically loads variables f
 ```bash
 sh bin/automaton --no-ui
 ```
+
+`--no-ai` and `--no-tts` behave exactly as if the corresponding environment variables were never set.
 
 ## Terminal UI Overview
 

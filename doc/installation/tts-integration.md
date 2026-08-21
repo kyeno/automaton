@@ -18,7 +18,7 @@ Add to `.env`:
 TTS_TCP_ENDPOINT=127.0.0.1:9876
 ```
 
-This is the global default destination for all TTS requests. If this variable is not set, TTS functionality is disabled at startup with a warning message.
+This is the global default destination for all TTS requests. If this variable is not set, TTS functionality is disabled at startup with a warning message. You can get the same effect for a single run by starting Automaton with `--no-tts`, which overrides any configured TTS settings.
 
 ### Per-Request Override
 
@@ -94,7 +94,7 @@ Configure your preferred voice provider in tts-server's configuration. See the [
 |---------|-------|
 | No audio output | Verify tts-server is running and `TTS_TCP_ENDPOINT` points to correct IP/port |
 | Wrong language | Ensure matching locale bundle exists in `etc/i18n/{locale}/tts.yaml` |
-| TTS disabled at startup | Confirm `TTS_TCP_ENDPOINT` is set in `.env` |
+| TTS disabled at startup | Confirm `TTS_TCP_ENDPOINT` is set in `.env` and that `--no-tts` was not passed |
 
 ---
 

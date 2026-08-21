@@ -58,6 +58,9 @@ Windows are the primary content area displayed in the main slot. Each window ext
 | `LogWindow` | `logs` | command | Live Winston log stream via custom transport |
 | `DeviceWindow` | `device` | command | Zigbee device status monitor |
 | `AiWindow` | `ai` | chat | LLM conversation interface |
+| `TtsWindow` | `tts` | chat | Live TTS monitor and direct speak input |
+
+> The `ai` and `tts` windows are created only when their backing services are configured (`AI_API_URL` + model for AI, `TTS_API_URL` for TTS). When a service is disabled or unconfigured its window simply does not exist in the UI.
 
 The input mode determines how the bottom line is interpreted:
 

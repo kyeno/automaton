@@ -77,6 +77,17 @@ const MOTION_STALL_TIMEOUT_DEFAULT_MS = 20_000
 const SETTLE_ABSORB_WINDOW_DEFAULT_MS = 10_000
 
 /**
+ * Pre-motion grace (ms): a positional terminal match arriving within this window of
+ * command dispatch cannot be proof of completion -- covers frequently re-advertise their
+ * last-known (possibly stale) state, and zigbee2mqtt may advertise an estimate already at
+ * target, all before any physical motion has started. Such early matches do not consume
+ * the token; after the grace elapses normal immediate confirmation resumes. Override with
+ * `ai_travel_echo_grace_ms` in main config.
+ * @type {number}
+ */
+const TRAVEL_ECHO_GRACE_DEFAULT_MS = 2_000
+
+/**
  * Backoff (ms) before re-dispatching the identical automated command after it
  * produced no observable response at all (offline/faulty device). Prevents hammering
  * a dead actuator every tick while never giving up permanently -- any real state
@@ -208,12 +219,15 @@ class CommandCorrelator {
 
     /**
      * Active expectation, if any.
-     * @type {{token: string, expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null), anchorState: (string|null), lastSeenPosition: (number|null), settleCount: number, ttlMs: number, issuedAt: number, expiresAt: number}|null}
+     * @type {{token: string, expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null), anchorState: (string|null), lastSeenPosition: (number|null), settleCount: number, ttlMs: number, issuedAt: number, expiresAt: number, echoGraceMs: (number|null)}|null}
      */
     #active = null
 
     /** Monotonic counter for unique token ids. @type {number} */
     #counter = 0
+
+    /** Log-context label supplied by the owning device (e.g., `"ZigbeeDevice:<name>"`). @type {string} */
+    #logContext = 'CommandCorrelator'
 
     /**
      * Short-lived settling snapshot started when a positional echo confirms a travel
@@ -234,6 +248,7 @@ class CommandCorrelator {
      * @param {'instant'|'travel'|'wildcard'} [options.kind='instant'] - Command family
      * @param {number|null} [options.anchorPosition=null] - Device position (%) at registration time
      * @param {string|null} [options.anchorState=null] - State label at registration time (used by wildcard)
+     * @param {number|null} [options.echoGraceMs=null] - Pre-motion grace (ms); near-target reports inside it cannot confirm completion
      * @param {number} ttlMs - Lifetime of the expectation in milliseconds
      * @returns {string} A unique correlation token id
      */
@@ -249,11 +264,17 @@ class CommandCorrelator {
             anchorState: options?.anchorState != null ? String(options.anchorState).toUpperCase() : null,
             lastSeenPosition: null,
             settleCount: 0,
+            echoGraceMs: Number.isFinite(options?.echoGraceMs) ? Math.max(0, Math.round(Number(options.echoGraceMs))) : null,
             ttlMs: lifetime,
             issuedAt: now,
             expiresAt: now + lifetime
         }
         this.#active.direction = this.#directionFor(this.#active.expectedState, this.#active.anchorPosition)
+        this.#trace(
+            `token registered ${this.#active.token} expectedState=${this.#active.expectedState} kind=${this.#active.kind}` +
+                ` direction=${this.#active.direction ?? 'null'} anchorPosition=${this.#active.anchorPosition ?? 'null'}` +
+                ` echoGraceMs=${this.#active.echoGraceMs ?? 'null'} ttlMs=${lifetime}`
+        )
         return this.#active.token
     }
 
@@ -273,9 +294,11 @@ class CommandCorrelator {
         const verdict = this.#evaluate(this.#active, payload)
         switch (verdict) {
             case 'echo':
+                this.#trace(`token ${this.#active.token} consumed as echo`)
                 this.#active = null
                 break
             case 'conflict':
+                this.#trace(`token ${this.#active.token} discarded on conflict`)
                 this.#active = null
                 break
             case 'continuation': {
@@ -297,6 +320,7 @@ class CommandCorrelator {
     hasActive() {
         if (!this.#active) return false
         if (Date.now() > this.#active.expiresAt) {
+            this.#trace(`token ${this.#active.token} expired without confirmation`)
             this.#active = null
             return false
         }
@@ -330,7 +354,30 @@ class CommandCorrelator {
      * dispatched so stale automation echoes can no longer be misattributed.
      */
     cancelAll() {
+        if (this.#active) {
+            this.#trace(`token ${this.#active.token} cancelled by human-directed command`)
+        }
         this.#active = null
+    }
+
+    // -- Diagnostics ------------------------------------------------------
+
+    /**
+     * Set the log-context label used by file-only TRACE diagnostics so token
+     * lifecycle events can be attributed to their owning device.
+     * @param {string} context - Context string from the owning DeviceBase instance
+     */
+    setLogContext(context) {
+        this.#logContext = String(context || 'CommandCorrelator')
+    }
+
+    /**
+     * Emit a file-only TRACE diagnostic line (never reaches console/UI transports).
+     * @param {string} message - Diagnostic detail to record
+     * @private
+     */
+    #trace(message) {
+        LoggerService.trace(message, this.#logContext)
     }
 
     // -----------------------------------------------------------------------
@@ -421,16 +468,26 @@ class CommandCorrelator {
         const reportedState = payload.state != null ? String(payload.state).toUpperCase() : null
         const position = Number.isFinite(payload.position) ? payload.position : null
 
+        let verdict
         switch (token.kind) {
             case 'wildcard':
-                return this.#matchWildcard(token, reportedState, position)
+                verdict = this.#matchWildcard(token, reportedState, position)
+                break
             case 'travel':
-                return token.expectedState === 'STOP'
+                verdict = token.expectedState === 'STOP'
                     ? this.#matchStop(token, reportedState, position)
                     : this.#matchTravel(token, reportedState, position)
+                break
             default: // instant (ON/OFF)
-                return reportedState === token.expectedState ? 'echo' : null
+                verdict = reportedState === token.expectedState ? 'echo' : null
         }
+
+        // File-only TRACE decision record -- makes every verdict explainable post-hoc.
+        this.#trace(
+            `eval ${token.token} kind=${token.kind} expectedState=${token.expectedState}` +
+                ` input={state:${reportedState ?? 'null'}, position:${position ?? 'null'}} -> ${verdict ?? 'null'}`
+        )
+        return verdict
     }
 
     /**
@@ -459,6 +516,18 @@ class CommandCorrelator {
      * Positional evidence takes precedence over label aliases so a contradictory
      * position can never be papered over by a stale state label.
      *
+     * A positional terminal match arriving before ANY forward progress has been
+     * observed -- and still inside the short pre-motion grace after dispatch --
+     * is not proof of completion: covers frequently re-advertise their last-known
+     * (possibly stale) state within milliseconds of accepting a command, and
+     * zigbee2mqtt may even advertise an estimate already at target while our
+     * cached anchor says otherwise. Consuming the token there would orphan the
+     * motion our command actually triggers ("unmatched -> human"). Such early
+     * reports yield no verdict instead; real motion still classifies against the
+     * live token, genuine completions confirm normally once the grace elapses or
+     * progress exists, and truly stationary devices resolve via the
+     * zero-progress watchdog path.
+     *
      * @param {{expectedState: string, direction: (number|null), anchorPosition: (number|null), lastSeenPosition: (number|null)}} token
      * @param {string|null} reportedState
      * @param {number|null} position
@@ -471,15 +540,29 @@ class CommandCorrelator {
 
         if (position != null) {
             // Terminal / exact-target matches first.
-            if (targetPos != null && !isNaN(targetPos) && Math.abs(position - targetPos) <= POSITION_MATCH_TOLERANCE) {
+            const terminalMatch =
+                (targetPos != null && !isNaN(targetPos) && Math.abs(position - targetPos) <= POSITION_MATCH_TOLERANCE) ||
+                (expected === 'CLOSE' && position <= CLOSED_ECHO_POSITION_MAX) ||
+                (expected === 'OPEN' && position >= OPEN_ECHO_POSITION_MIN)
+            if (terminalMatch) {
+                // Stale/optimistic re-advertisement guard: a terminal match with NO observed
+                // forward progress, arriving inside the pre-motion grace after dispatch, cannot
+                // distinguish "already at target" from "about to start moving" -- keep the token
+                // alive so our command's real motion is never orphaned as human. After the grace
+                // elapses (or once progress exists) normal immediate confirmation resumes.
+                const graceMs = Number.isFinite(token.echoGraceMs) ? token.echoGraceMs : TRAVEL_ECHO_GRACE_DEFAULT_MS
+                if (token.lastSeenPosition == null && Date.now() - token.issuedAt < graceMs) {
+                    const ageMs = Date.now() - token.issuedAt
+                    this.#trace(`travel guard held ${token.token}: terminal match position=${position}, no progress yet, ageMs=${ageMs} < graceMs=${graceMs} -- yielding no verdict`)
+                    return null
+                }
                 return 'echo'
             }
-            if (expected === 'CLOSE' && position <= CLOSED_ECHO_POSITION_MAX) return 'echo'
-            if (expected === 'OPEN' && position >= OPEN_ECHO_POSITION_MIN) return 'echo'
 
             const reference = token.lastSeenPosition ?? token.anchorPosition
             if (reference != null && token.direction != null) {
                 const signedDelta = token.direction * (position - reference)
+                this.#trace(`${token.token} directional check reference=${reference} signedDelta=${signedDelta} tolerance=+/-${POSITION_MATCH_TOLERANCE}`)
                 if (signedDelta > POSITION_MATCH_TOLERANCE) {
                     this.#noteProgress(token, position)
                     return 'continuation'
@@ -549,6 +632,7 @@ class CommandCorrelator {
     #noteProgress(token, position) {
         token.lastSeenPosition = position
         token.settleCount = 0
+        this.#trace(`progress noted ${token.token} position=${position}`)
     }
 
     /**
@@ -638,6 +722,8 @@ export default class DeviceBase {
         this.#id = id
         this.#data = data
         this.#cacheKey = this.#generateCacheKey(name, id)
+        // Attribute correlator TRACE diagnostics to this device in the trace log.
+        this.#correlator.setLogContext(`${this.getLogPrefix()}:${name}`)
     }
 
     // -- Lifecycle --------------------------------------------------------
@@ -670,7 +756,8 @@ export default class DeviceBase {
                 this.#correlator.register(marker.expectedState, {
                     kind: marker.kind ?? 'instant',
                     anchorPosition: marker.anchorPosition ?? null,
-                    anchorState: marker.anchorState ?? null
+                    anchorState: marker.anchorState ?? null,
+                    echoGraceMs: this.getTravelEchoGraceMs()
                 }, ttlMs)
                 LoggerService.debug(`Restored in-flight automation token (${marker.expectedState})`, `${this.getLogPrefix()}:${this.#name}`)
                 this.#armMotionWatchdog()
@@ -836,6 +923,16 @@ export default class DeviceBase {
      */
     getSettleAbsorbWindowMs() {
         return this.#durationFromConfig('ai_settle_absorb_window_ms', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
+    }
+
+    /**
+     * Pre-motion grace during which near-target travel reports cannot confirm completion;
+     * see {@link getInstantEchoWindowMs} for resolution rules. Config key:
+     * `ai_travel_echo_grace_ms`.
+     * @returns {number} Grace window in milliseconds (> 0)
+     */
+    getTravelEchoGraceMs() {
+        return this.#durationFromConfig('ai_travel_echo_grace_ms', TRAVEL_ECHO_GRACE_DEFAULT_MS)
     }
 
     /**
@@ -1029,9 +1126,11 @@ export default class DeviceBase {
      * the outcome depends on whether ANY forward progress was observed since dispatch:
      *   - progress then halt -> something external stopped our motion (e.g., wall
      *     switch), so origin flips to human + cooldown.
-     *   - zero progress      -> the device never responded at all (offline/faulty).
-     *     Nothing a person could have stopped, so attribution is preserved and NO
-     *     human cooldown is written; identical retries are backed off instead.
+     *   - zero progress      -> the device never responded at all (offline/faulty), or
+     *     slow label-only travel not yet confirmed by telemetry. Nothing a person could
+     *     have stopped, so attribution is preserved and NO human cooldown is written;
+     *     identical retries are backed off instead, while the token stays alive until its
+     *     natural TTL expiry so late completions still match as automation echoes.
      * Forward-progress reports call this again to reset the clock.
      * @private
      */
@@ -1045,6 +1144,12 @@ export default class DeviceBase {
             this.#stallTimer = null
             const live = this.#correlator.getActiveToken()
             if (!live || live.kind !== 'travel' || live.expectedState === 'STOP') return
+            LoggerService.trace(
+                `watchdog fired expectedState=${live.expectedState} progressObserved=${live.progressObserved}` +
+                    ` lastKnownPosition=${Number.isFinite(this.#stateLast?.position) ? this.#stateLast.position : 'null'}` +
+                    ` -> ${live.progressObserved ? 'stalled-after-progress (human)' : 'no-response (backoff)'}`,
+                `${this.getLogPrefix()}:${this.#name}`
+            )
             if (live.progressObserved) {
                 this.#markHumanInteraction(
                     this.#stateLast,
@@ -1060,11 +1165,17 @@ export default class DeviceBase {
     }
 
     /**
-     * Handle an automated travel command that produced no observable response at all:
-     * the device never moved, so there is nothing to attribute to a person. Discard the
-     * token and pending marker WITHOUT touching origin or cooldowns, log a distinct
-     * warning, and record retry-backoff metadata so receiveCommand can suppress identical
-     * re-dispatches while the state stays unchanged.
+     * Handle an automated travel command that showed no progress within its motion
+     * window: either the device never moved at all (offline/faulty), or it is a slow
+     * label-only traveler whose telemetry has not confirmed motion yet. Record
+     * retry-backoff metadata WITHOUT touching origin or cooldowns, and keep the token
+     * alive until its natural TTL expiry: on devices that report only state labels
+     * during travel (e.g., roller shutters emitting STOP->OPEN->CLOSE with no position
+     * data), a "no progress" verdict can arrive mid-travel, and any late completion must
+     * still match as an automation echo instead of falling into the unmatched-change ->
+     * human fallback. Attribution stays safe because human-directed commands cancel
+     * tokens immediately and positional contradictions flip via conflict; identical
+     * re-dispatches are suppressed by the backoff recorded below.
      * @private
      * @param {string} expectedState - the commanded description (OPEN/CLOSE/POS:N)
      */
@@ -1073,14 +1184,16 @@ export default class DeviceBase {
             `Automated command ${expectedState} produced no observable response -- possible offline/faulty device; backing off identical retries`,
             `${this.getLogPrefix()}:${this.#name}`
         )
-        this.#correlator.cancelAll()
-        this.#clearPendingCommandMarker()
         const pos = Number.isFinite(this.#stateLast?.position) ? this.#stateLast.position : null
         this.#failedCommand = {
             description: expectedState,
             positionAtFailure: pos,
             until: Date.now() + this.getFailedCommandBackoffMs()
         }
+        LoggerService.trace(
+            `no-response stall recorded description=${expectedState} positionAtFailure=${pos ?? 'null'} backoffMs=${this.getFailedCommandBackoffMs()}`,
+            `${this.getLogPrefix()}:${this.#name}`
+        )
     }
 
     /**
@@ -1139,6 +1252,17 @@ export default class DeviceBase {
             LoggerService.debug(`Malformed JSON payload: ${data.message}`, `${this.getLogPrefix()}:${this.#name}`)
             parsed = data.message
         }
+
+        // File-only TRACE intake record: raw payload plus live-token context so any
+        // later misclassification can be explained from the trace log alone.
+        const activeSnapshot = this.#correlator.getActiveToken()
+        LoggerService.trace(
+            `MQTT intake topic="${data.topic}" payload=${JSON.stringify(parsed)}` +
+                (activeSnapshot
+                    ? ` token={expectedState:${activeSnapshot.expectedState}, kind:${activeSnapshot.kind}, progressObserved:${activeSnapshot.progressObserved}}`
+                    : ' token=null'),
+            `${this.getLogPrefix()}:${this.#name}`
+        )
 
         if (!this.shouldTrackOrigin()) {
             // Payload-only refresh for non-actuator devices (sensors, remotes,
@@ -1318,6 +1442,10 @@ export default class DeviceBase {
                 `Command "${description}" suppressed: device already at target state`,
                 `${this.getLogPrefix()}:${this.#name}`
             )
+            LoggerService.trace(
+                `redundancy check hit description=${description} cachedPosition=${Number.isFinite(this.#stateLast?.position) ? this.#stateLast.position : 'null'} tolerance=+/-${POSITION_MATCH_TOLERANCE}`,
+                `${this.getLogPrefix()}:${this.#name}`
+            )
             const origin = isAutomation ? DeviceStateOrigin.AUTOMATION : DeviceStateOrigin.HUMAN
             this.#stateOrigin = origin
             this.#stateLastAt = new Date().toISOString()
@@ -1350,6 +1478,10 @@ export default class DeviceBase {
                         `Suppressed ${description} -- no observable response since previous attempt; retrying after state change or backoff`,
                         `${this.getLogPrefix()}:${this.#name}`
                     )
+                    LoggerService.trace(
+                        `backoff suppressed ${description} failure={pos:${fc.positionAtFailure ?? 'null'}, untilInMs:${Math.max(0, fc.until - Date.now())}} posNow=${posNow ?? 'null'}`,
+                        `${this.getLogPrefix()}:${this.#name}`
+                    )
                     return
                 }
             }
@@ -1379,7 +1511,8 @@ export default class DeviceBase {
                 self.#correlator.register(description, {
                     kind,
                     anchorPosition: Number.isFinite(self.#stateLast?.position) ? self.#stateLast.position : null,
-                    anchorState: typeof self.#stateLast?.state === 'string' ? String(self.#stateLast.state).toUpperCase() : null
+                    anchorState: typeof self.#stateLast?.state === 'string' ? String(self.#stateLast.state).toUpperCase() : null,
+                    echoGraceMs: self.getTravelEchoGraceMs()
                 }, ttlMs)
                 self.#stateOrigin = DeviceStateOrigin.AUTOMATION
                 self.#persistPendingCommandMarker(description, kind, ttlMs)
@@ -1402,6 +1535,7 @@ export default class DeviceBase {
             })
         }
 
+        LoggerService.trace(`publish source=${source} topic="${topic}" payload=${JSON.stringify(finalPayload)}`, `${this.getLogPrefix()}:${this.#name}`)
         this.#mqttService.publish(topic, JSON.stringify(finalPayload), { meta: { onPublish: _onPublish } })
         LoggerService.info(
             `Command "${description}" sent to topic ${topic}`,

@@ -134,6 +134,18 @@ class SAiAssistant {
         return this.#initialized && this.#provider !== null
     }
 
+    /**
+     * Check whether an AI provider can be constructed, regardless of init state.
+     * Mirrors OpenAiProvider requirements (API URL + model name); safe to call before
+     * init(). Used by bootstrap and the UI to skip work entirely when unconfigured.
+     * @returns {boolean}
+     */
+    isConfigured() {
+        const apiUrl = process.env.AI_API_URL
+        if (!apiUrl || !String(apiUrl).trim()) return false
+        return Boolean(ConfigService.get('model'))
+    }
+
      /**
       * Process a user message through the LLM, handling tool-call loops.
       *

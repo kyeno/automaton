@@ -188,4 +188,5 @@ logger:
   path:
     debug: var/log/debug.log
     warn: var/log/warn.log
+    trace: var/log/trace.log   # TRACE-level diagnostics only; never shown in UI/console
 # ================================================================

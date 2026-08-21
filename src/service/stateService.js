@@ -8,6 +8,9 @@
  * Current keys:
  *   - ui.active                        (boolean) -- UI is running and accepting input
  *   - cli.noUi                         (boolean) -- CLI --no-ui flag was passed
+ *   - cli.noTrace                      (boolean) -- CLI --no-trace flag was passed
+ *   - cli.noAi                         (boolean) -- CLI --no-ai flag was passed
+ *   - cli.noTts                        (boolean) -- CLI --no-tts flag was passed
  *   - lifecycle.initializedServices    (Set<string>) -- names of successfully initialized services
  *   - lifecycle.shuttingDown           (boolean) -- true once graceful shutdown has started
  *   - lifecycle.lastError              (Error|null) -- last uncaught exception or rejection reason

@@ -18,7 +18,7 @@ Add to `.env`:
 AI_API_URL=http://your-llm-server:port/v1/chat/completions
 ```
 
-If this variable is not set, the AI feature is disabled at startup with a warning message.
+If this variable is not set, the AI feature is disabled at startup with a warning message. You can get the same effect for a single run by starting Automaton with `--no-ai`, which overrides any configured AI settings.
 
 ### Main Config
 
