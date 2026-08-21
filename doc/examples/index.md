@@ -1,6 +1,6 @@
 # Example Automations
 
-> **In this section:** [Ambient Lights](./ambient-lights.md) · [TTS Weather Man](./weatherman.md)
+> **In this section:** [Ambient Lights](./ambient-lights.md) · [TTS Weather Man](./weatherman.md) · [Home Office Rollers](./home-office-rollers.md) · [Bedroom Rollers](./bedroom-rollers.md)
 
 This collection documents the example automations shipped with Automaton. Each one demonstrates a different pattern you can adapt for your own home setup. More examples will be added over time.
 
@@ -15,6 +15,18 @@ Manages ambient lighting across two daily windows: turns off leftover lights in 
 A rule-based weather announcer that builds a speech message from locale-specific i18n sentence templates plus condition-matched additions, interpolates live sensor values into the text (`{{ DeviceName.property }}` syntax), and routes it through the AI → TTS pipeline. Demonstrates dynamic sensor contexts, priority rules, and per-locale language bundles.
 
 → [Full documentation](./weatherman.md)
+
+## Home Office Rollers
+
+A rule-based roller-shutter controller for a home office (or any room with blinds). It evaluates outdoor illuminance and temperature against time-of-day and network-presence rules, then merges every matching result per target using **"most-closed-wins"** logic — so overlapping rules always resolve to the most closed position. Demonstrates presence-driven partial positions and multi-sensor condition sets.
+
+→ [Full documentation](./home-office-rollers.md)
+
+## Bedroom Rollers
+
+A minimal night-close roller automation plus its companion **pilot remote interaction**: a 3-button remote that moves bedroom shutters via YAML targets while delegating outlet on/off decisions to a custom JS handler that reads outdoor light first. Demonstrates the `calls:` delegation pattern pairing a YAML entry with a custom JavaScript handler.
+
+→ [Full documentation](./bedroom-rollers.md)
 
 ---
 

@@ -1,0 +1,136 @@
+# Home Office Rollers Automation Configuration
+# Rule-based roller-shutter controller for a home office (or any room with blinds).
+# Evaluates outdoor illuminance + temperature against time-of-day and network-presence
+# rules, then merges matching results per target using "most-closed-wins" logic.
+#
+# Copy this file to "home-office-rollers.yaml" and customize device names, hostnames,
+# thresholds and rules for your home. Presence hostnames must match entries in
+# etc/device/network.yaml.
+#
+# Each automation also needs a companion JavaScript class that extends
+# RuleBasedAutomationBase (see homeOfficeRollersAutomation.js or exampleAutomation.js.dist).
+
+targets:
+  - name: 'Home Office Roller Left'
+    id: left
+  - name: 'Home Office Roller Right'
+    id: right
+
+sensors:
+  illuminance: 'Outdoor Luminance'
+  temperature: 'Outdoor Temperature'
+
+triggers_zigbee:
+  - 'Outdoor Luminance'
+  - 'Outdoor Temperature'
+
+triggers_network:
+  - my-laptop
+  - my-desktop
+
+timer_interval: "1m"
+
+rules:
+  - name: 'Morning: Hot - close'
+    conditions:
+      time-of-day: [morning, noon]
+      temperature: { gte: 25 }
+    targets:
+      left: CLOSE
+      right: CLOSE
+
+  - name: 'Anytime: Warm, not too bright - open'
+    conditions:
+      time-of-day: [morning, noon, afternoon, evening]
+      illuminance: { lt: 11000 }
+      temperature: { lt: 25 }
+    targets:
+      left: OPEN
+      right: OPEN
+
+  - name: 'Afternoon: Hot - open'
+    conditions:
+      time-of-day: [afternoon]
+      temperature: { gte: 25, lte: 29 }
+    targets:
+      left: OPEN
+      right: OPEN
+
+  - name: 'Afternoon: Extremely hot - close'
+    conditions:
+      time-of-day: [noon, afternoon]
+      temperature: { gte: 29 }
+    targets:
+      left: CLOSE
+      right: CLOSE
+
+  - name: 'Day: laptop present, not too bright'
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      illuminance: { lte: 11000 }
+      presence: my-laptop
+    targets:
+      left: 40
+      right: 12
+
+  - name: 'Day: laptop present, bright'
+    conditions:
+      time-of-day: [morning, noon, afternoon]
+      illuminance: { gt: 11000, lte: 12700 }
+      presence: my-laptop
+    targets:
+      left: 12
+      right: CLOSE
+
+  - name: 'Day: laptop present, direct sunlight'
+    conditions:
+      time-of-day: [morning, noon]
+      illuminance: { gt: 12700 }
+      presence: my-laptop
+    targets:
+      left: 10
+      right: CLOSE
+
+  - name: 'Evening: laptop present, mid-dark'
+    conditions:
+      time-of-day: [evening]
+      illuminance: { gt: 250, lte: 1800 }
+      presence: my-laptop
+    targets:
+      left: OPEN
+      right: 35
+
+  - name: 'Evening: laptop present, not too bright'
+    conditions:
+      time-of-day: [evening]
+      illuminance: { gt: 1800, lte: 11000 }
+      presence: my-laptop
+    targets:
+      left: 80
+      right: 30
+
+  - name: 'Anytime: desktop present, not too bright'
+    conditions:
+      time-of-day: [morning, noon, afternoon, evening]
+      illuminance: { lte: 11000 }
+      presence: my-desktop
+    targets:
+      left: 30
+      right: 70
+
+  - name: 'Anytime: desktop present, bright'
+    conditions:
+      time-of-day: [morning, noon, afternoon, evening]
+      illuminance: { gt: 11000, lte: 12700 }
+      presence: my-desktop
+    targets:
+      left: 15
+      right: 30
+
+  - name: 'Night: Close all'
+    conditions:
+      time-of-day: [evening, night]
+      illuminance: { lte: 15 }
+    targets:
+      left: CLOSE
+      right: CLOSE

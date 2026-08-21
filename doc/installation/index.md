@@ -85,11 +85,16 @@ The `etc/` directory contains `.yaml.dist` and `.js.dist` templates. You can eit
 
 ### 3. Custom scripts
 
-JavaScript files in `etc/automation/` and `etc/interaction/` are loaded automatically by the autoloader (only files ending in `.js`). Rename a `.js.dist` example to `.js` to activate it, then customize device names and logic:
+JavaScript files in `etc/automation/` and `etc/interaction/` are loaded automatically by the autoloader (only files ending in `.js`). Rename a `.js.dist` example to `.js` to activate it, then customize device names and logic. Generic starting points ship alongside each config template — e.g. `etc/automation/exampleAutomation.js.dist`, or the concrete `bedroomRollersInteraction.js.dist` pilot-remote handler paired with the `bedroom_pilot_remote` entry in `interaction.yaml.dist`:
 
 ```bash
+# A blank-slate custom interaction:
 cp etc/interaction/exampleInteraction.js.dist \
    etc/interaction/my-custom-interaction.js
+
+# Or start from the shipped pilot-remote outlet handler:
+cp etc/interaction/bedroomRollersInteraction.js.dist \
+   etc/interaction/bedroomRollersInteraction.js
 ```
 
 ### 4. Start the application

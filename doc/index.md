@@ -35,6 +35,8 @@ Included examples demonstrating automation patterns.
 - [Example Automations](examples/index.md) — overview and navigation
 - [Ambient Lights](examples/ambient-lights.md) — daily lighting windows with per-rule target sets
 - [TTS Weather Man](examples/weatherman.md) — i18n weather announcer through the AI → TTS pipeline
+- [Home Office Rollers](examples/home-office-rollers.md) — presence-aware roller control with most-closed-wins merging
+- [Bedroom Rollers](examples/bedroom-rollers.md) — night-close rollers + pilot remote outlet interaction example
 
 ### Guides & Roadmap
 

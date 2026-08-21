@@ -1,0 +1,187 @@
+/**
+ * Bedroom Rollers Interaction -- pilot remote outlet control with custom logic.
+ *
+ * Copy this file to a .js name (e.g., "bedroomRollersInteraction.js"), rename the
+ * class, update DEVICES with your real Zigbee device names, and tune the
+ * illuminance thresholds/delay for your room. Wire it up from an interaction YAML
+ * entry using `calls:` on the OPEN/CLOSE actions (see interaction.yaml.dist,
+ * "bedroom_pilot_remote").
+ *
+ * Shutter OPEN/CLOSE commands are sent directly by the YAML engine via `targets:`;
+ * this handler only adds sensor-aware outlet logic:
+ *   - OPEN  -> if outdoor light is bright, schedule the paired outlet OFF after a delay
+ *   - CLOSE -> if it is dark outside, turn the paired outlet ON immediately
+ *
+ * @author Ratan M. Kyeno
+ * @license AGPL-3.0-only
+ */
+'use strict'
+
+import DeviceContainer from '../../src/device/container/deviceContainer.js'
+import InteractionBase from '../../src/interaction/base/interactionBase.js'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Devices referenced by this interaction. Centralized so renaming a device in
+ * zigbee.yaml requires updating one place per module. Replace each value with
+ * your real device name before activating.
+ * @readonly
+ * @type {{outlets: string[], illuminance: string}}
+ */
+const DEVICES = Object.freeze({
+    outlets: ['Bedroom Outlet'],       // <-- replace with your outlet device name(s)
+    illuminance: 'Outdoor Luminance',  // <-- replace with your outdoor light sensor
+})
+
+/** Illuminance above which an OPEN action schedules the outlet OFF (bright daylight). */
+const OPEN_ILLUMINANCE_THRESHOLD = 100
+
+/** Illuminance below which a CLOSE action turns the outlet ON (dark evening). */
+const CLOSE_ILLUMINANCE_THRESHOLD = 5500
+
+/** Delay before sending OFF to the outlet after OPEN, letting shutters start moving. */
+const OPEN_OUTLET_OFF_DELAY_MS = 5000
+
+// ---------------------------------------------------------------------------
+// BedroomRollersInteraction class
+// ---------------------------------------------------------------------------
+
+export default class BedroomRollersInteraction extends InteractionBase {
+
+    /** Processing lock to prevent overlapping executions. @type {boolean} */
+    #processing = false
+
+    /** Timer reference for delayed OFF command after OPEN. @type {NodeJS.Timeout|null} */
+    #offTimer = null
+
+    constructor() {
+        super({ name: 'BedroomRollersInteraction' })
+    }
+
+    /**
+     * Main execution logic -- dispatches to OPEN or CLOSE handler based on trigger action.
+     * Shutter commands are sent by the YAML engine; this only handles outlet side-effects.
+     *
+     * @param {Object} [triggerData] - Data from the event trigger
+     */
+    async execute(triggerData = null) {
+        if (this.#processing) {
+            this.log('Already processing an action -- ignoring')
+            return
+        }
+
+        const action = triggerData?.action || null
+
+        if (action === '1_single') {
+            this.#processing = true
+            try {
+                await this.#handleOpen()
+            } finally {
+                this.#processing = false
+            }
+        } else if (action === '3_single') {
+            this.#processing = true
+            try {
+                await this.#handleClose()
+            } finally {
+                this.#processing = false
+            }
+        } else {
+            this.log(`Unknown action: ${action}`, 'warn')
+        }
+    }
+
+    /** Clean up timers on shutdown. */
+    cleanup() {
+        super.cleanup()
+        this.#clearTimer()
+    }
+
+    // -- Private helpers --------------------------------------------------
+
+    /** Handle OPEN action: conditionally turn off outlets based on illuminance. @private */
+    #handleOpen() {
+        this.log('OPEN triggered -- handling outlet logic')
+
+        const illuminance = this.#getOutdoorIlluminance()
+        if (illuminance === null) {
+            this.log(`${DEVICES.illuminance} unavailable -- skipping outlet logic`)
+            return
+        }
+
+        if (illuminance > OPEN_ILLUMINANCE_THRESHOLD) {
+            this.log(
+                `Illuminance ${illuminance} > ${OPEN_ILLUMINANCE_THRESHOLD} -- scheduling OFF for outlets in ${OPEN_OUTLET_OFF_DELAY_MS}ms`
+            )
+            this.#offTimer = setTimeout(() => {
+                this.#sendCommandToOutlets('OFF')
+                this.#clearTimer()
+                this.log('Delayed OFF sent to outlets')
+            }, OPEN_OUTLET_OFF_DELAY_MS)
+        } else {
+            this.log(`Illuminance ${illuminance} <= ${OPEN_ILLUMINANCE_THRESHOLD} -- no outlet action`)
+        }
+    }
+
+    /** Handle CLOSE action: conditionally turn on outlets based on illuminance. @private */
+    #handleClose() {
+        this.log('CLOSE triggered -- handling outlet logic')
+
+        const illuminance = this.#getOutdoorIlluminance()
+        if (illuminance === null) {
+            this.log(`${DEVICES.illuminance} unavailable -- skipping outlet logic`)
+            return
+        }
+
+        if (illuminance < CLOSE_ILLUMINANCE_THRESHOLD) {
+            this.log(`Illuminance ${illuminance} < ${CLOSE_ILLUMINANCE_THRESHOLD} -- turning ON outlets`)
+            this.#sendCommandToOutlets('ON')
+        } else {
+            this.log(`Illuminance ${illuminance} >= ${CLOSE_ILLUMINANCE_THRESHOLD} -- no outlet action`)
+        }
+    }
+
+    /** Send a command to all configured outlet devices. @param {string} command - The command to send (ON | OFF) @private */
+    #sendCommandToOutlets(command) {
+        for (const deviceName of DEVICES.outlets) {
+            this.#sendCommandToDevice(deviceName, command)
+        }
+    }
+
+    /** Find a device by name and send it a command. @param {string} deviceName - Name of the target device @param {string} command - Command to send @private */
+    #sendCommandToDevice(deviceName, command) {
+        const device = DeviceContainer.findByName(deviceName)
+        if (device) {
+            device.receiveCommand(command)
+        } else {
+            this.log(`Device "${deviceName}" not found`, 'warn')
+        }
+    }
+
+    /** Read the latest illuminance value from the outdoor sensor; null if unavailable. @returns {number|null} Illuminance value or null @private */
+    #getOutdoorIlluminance() {
+        const sensor = DeviceContainer.findByName(DEVICES.illuminance)
+        if (!sensor) {
+            return null
+        }
+
+        const state = sensor.getStateLast()
+        const illuminance = state && typeof state.illuminance === 'number' ? state.illuminance : null
+
+        if (illuminance !== null) {
+            this.log(`${DEVICES.illuminance} illuminance: ${illuminance}`)
+        }
+        return illuminance
+    }
+
+    /** Clear the delayed OFF timer reference. @private */
+    #clearTimer() {
+        if (this.#offTimer !== null) {
+            clearTimeout(this.#offTimer)
+            this.#offTimer = null
+        }
+    }
+}

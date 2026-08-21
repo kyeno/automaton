@@ -27,9 +27,11 @@
 │   │       └── index.md        # Quick ref, custom commands, context API
 │   ├── configuration.md        # Comprehensive configuration guide
 │   ├── examples/               # Included example automations
-│   │   ├── index.md            # Overview and navigation
-│   │   ├── ambient-lights.md   # Ambient lights automation walkthrough
-│   │   └── weatherman.md       # TTS weather announcer walkthrough
+│   │   ├── index.md                # Overview and navigation
+│   │   ├── ambient-lights.md       # Ambient lights automation walkthrough
+│   │   ├── weatherman.md           # TTS weather announcer walkthrough
+│   │   ├── home-office-rollers.md  # Home office roller-shutter controller
+│   │   └── bedroom-rollers.md      # Bedroom rollers + pilot remote interaction
 │   └── TODO.md                 # Roadmap and known issues
 ├── etc/                        # Configuration directory
 │   ├── automaton.yaml          # Main configuration file
