@@ -23,6 +23,8 @@
  */
 'use strict'
 
+import LoggerService from './loggerService.js'
+
 // ---------------------------------------------------------------------------
 // StateService (module-level singleton)
 // ---------------------------------------------------------------------------
@@ -101,7 +103,16 @@ class SStateService {
         for (const cb of callbacks) {
             try { cb(newValue, oldValue) }
             catch (e) {
-                console.error(`[StateService] Listener error on "${key}":`, e.message)
+                // Route through the logger so UI mode keeps raw stderr writes away
+                // from the TUI layout; fall back to plain stderr pre-init.
+                try {
+                    LoggerService.warn(
+                        `[StateService] Listener error on "${key}": ${e?.message ?? String(e)}`,
+                        'StateService'
+                    )
+                } catch {
+                    console.error(`[StateService] Listener error on "${key}":`, e.message)
+                }
             }
         }
     }
