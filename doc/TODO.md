@@ -45,9 +45,6 @@ personas:
 
 ## BitchX UI
 
-- ANNOYING BUG: Sometimes, when the software is running for prolonged time and in screen, the log
-  window won't refresh itself automatically. You need to swap windows back and
-  forth.
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
