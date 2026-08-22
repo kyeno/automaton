@@ -197,20 +197,36 @@ class SAiAssistant {
                         'AiAssistant'
                     )
 
-                    // Execute all parsed intents and collect results
-                    const results = []
-                    for (const intent of jsonIntents) {
-                        const result = await ToolBuilder.executeIntent(intent)
-                        results.push(String(result))
-                    }
+                    // Reconstruct a structurally valid OpenAI exchange from the pseudo-calls: attach
+                    // synthesized tool_calls to the assistant message we just stored, then record one
+                    // tool-result message per intent with matching ids. Providers that validate chat
+                    // shape see exactly what they would get from native function calling, and each
+                    // stored result stays individually parseable for UI rendering.
+                    const synthCalls = jsonIntents.map((intent, i) => ({
+                        id: `synth_tool_${iteration}_${i}`,
+                        type: 'function',
+                        function: {
+                            name: (intent.action != null || typeof intent.position === 'number') ? 'set_device_state' : 'get_device_state',
+                            arguments: JSON.stringify({
+                                device_name: intent.device,
+                                ...(intent.action != null ? { action: String(intent.action).toUpperCase() } : {}),
+                                ...(typeof intent.position === 'number' ? { position: intent.position } : {})
+                            })
+                        }
+                    }))
+                    this.#messages[this.#messages.length - 1].tool_calls = synthCalls
 
-                    // Record combined tool results in conversation so the AI sees them
-                    this.#messages.push({
-                        role: 'tool',
-                        content: results.join('\n'),
-                        _ts: Date.now(),
-                        _origin: origin
-                    })
+                    // Execute all parsed intents; results feed back into the conversation so the AI can respond naturally
+                    for (let i = 0; i < jsonIntents.length; i++) {
+                        const result = await ToolBuilder.executeIntent(jsonIntents[i])
+                        this.#messages.push({
+                            role: 'tool',
+                            tool_call_id: synthCalls[i].id,
+                            content: String(result),
+                            _ts: Date.now(),
+                            _origin: origin
+                        })
+                    }
 
                     // Continue loop so the AI can process the tool results and give natural response
                     continue

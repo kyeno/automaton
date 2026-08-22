@@ -95,6 +95,23 @@ expectIntents('unquoted numeric position', 'set_device_state { device_name: "Liv
 expectIntents('string-valued position', 'set_device_state{device_name: "X", position: "55"}', [{ device: 'X', position: 55 }])
 expectIntents('bare unquoted braces without tool name', '{action:"CLOSE", device_name:"Bedroom Roller Shutter"}', [{ device: 'Bedroom Roller Shutter', action: 'CLOSE' }])
 
+// --- Field regression: UNQUOTED multi-word values (exact strings from a production log) ----
+// The old bare-token regex truncated these to their first word ("Salon"), which then failed
+// device resolution and sent "not found" errors back to the model for devices that exist.
+expectIntents(
+    'log replay: two set_device_state calls with unquoted multi-word names',
+    'set_device_state{action:OPEN,device_name:Salon Roleta Okno Lewe}\n' +
+    'set_device_state{action:OPEN,device_name:Salon Roleta Okno Prawe}',
+    [
+        { device: 'Salon Roleta Okno Lewe', action: 'OPEN' },
+        { device: 'Salon Roleta Okno Prawe', action: 'OPEN' }
+    ]
+)
+expectIntents('unquoted multi-word name in get call', 'get_device_state{device_name:Balkon Temperatura}', [{ device: 'Balkon Temperatura' }])
+expectIntents('space-separated pairs without commas', 'set_device_state(action=ON device_name=Kitchen Outlet)', [{ device: 'Kitchen Outlet', action: 'ON' }])
+expectIntents('unquoted name followed by position pair', 'set_device_state{device_name:Living Room Roller,position:40}', [{ device: 'Living Room Roller', position: 40 }])
+expectIntents('quoted value containing a comma stays intact (lenient path)', 'set_device_state{device_name:"A, B", action:OFF}', [{ device: 'A, B', action: 'OFF' }])
+
 // --- Strict JSON path (well-formed output) --------------------------------------
 expectIntents('strict flat JSON object', '{"device_name":"X","action":"ON"}', [{ device: 'X', action: 'ON' }])
 expectIntents('strict wrapped parameters array', '[{"name":"set_device_state","parameters":{"device_name":"Y","position":50}}]', [{ device: 'Y', position: 50 }])

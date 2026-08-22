@@ -100,6 +100,7 @@ const testScripts = [
   'test-mqtt-publish-hook.js',
   'test-dist-sync.js',
   'test-ai-intent-parsing.js',
+  'test-ai-intent-execution.js',
   'test-string-utils.js',
   'test-input-component.js',
   'test-terminal-wrap.js',
