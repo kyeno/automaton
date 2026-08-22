@@ -83,6 +83,11 @@ max_tokens: -1
 # Lower = more deterministic; higher = more creative/random.
 temperature: 1.0
 
+# HTTP timeout for LLM requests -- human-readable duration ("45s", "5m", "1h") or plain ms.
+# Local models on modest hardware can take well over a minute per completion, so keep this
+# generous; lower it if you want slow backends surfaced as failures faster. Default: 300 s.
+fetch_timeout_ms: "5m"
+
 # Conversation history TTL -- how long idle conversations linger in Redis before purge.
 # Accepts a human-readable duration ("45s", "15m", "1h") or legacy plain seconds.
 conversation_ttl_sec: "15m"

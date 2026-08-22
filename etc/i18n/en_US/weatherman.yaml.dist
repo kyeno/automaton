@@ -41,6 +41,10 @@ ai_message_last: 'This is the last update of tonight.'
 ai_message_only: 'This is the only update of today.'
 ai_message_next: 'Next update in {% next_interval %}.'
 
+# Posted in the chat window when the AI leg fails or returns nothing -- explains why no
+# rewritten report appears before the raw message is spoken instead.
+ai_fallback_notice: 'The assistant did not answer in time -- reading the plain report instead.'
+
 # Localized unit words for {% next_interval %}.
 duration_units:
   day: 'days'

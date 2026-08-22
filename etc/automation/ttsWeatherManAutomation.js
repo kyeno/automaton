@@ -582,30 +582,74 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
 
         if (AiAssistant.isAvailable()) {
-
-            try {
-                const response = await AiAssistant.processMessage(aiPrompt, {
-                    origin: ChatMessageOrigin.SYSTEM,
-                    tts: ttsOptions
-                })
-
-                // Emit the AI's response back to UI for rendering with <AI> prefix.
-                // Guard against --no-ui runs where no subscribers exist.
-                if (response && EventBus.hasSubscribers('ai:periodicResponse')) {
-                    EventBus.emit('ai:periodicResponse', { text: response })
-                }
-
-                this.log('Weather update sent via AI -> TTS pipeline', 'debug')
-            } catch (error) {
-                this.log(`AI processing failed: ${error.message}`, 'error')
-                // Fallback to direct TTS on AI failure -- jingle params still apply
-                EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
-            }
+            await this.routeThroughAi(aiPrompt, trimmedMessage, ttsOptions)
         } else {
             // Direct TTS when AI unavailable
             EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
             this.log('Weather update sent via direct TTS', 'debug')
         }
+    }
+
+    /**
+     * Send one built weather report through the AI -> TTS pipeline with graceful
+     * degradation. A non-empty model reply is surfaced in the chat window as a periodic
+     * response (the audio itself was already fired by AiAssistant for that reply). An
+     * empty reply or any provider failure falls back to speaking the raw message directly
+     * and posts a visible <system> notice explaining why no rewritten report appears -- so
+     * a slow/dead LLM never leaves Window 3 looking dead while audio plays from nowhere.
+     *
+     * Exposed without the # prefix so unit tests can pin fallback behaviour against a
+     * stubbed AiAssistant without MQTT, devices, or a live LLM; #speak() is the sole
+     * production caller.
+     * @param {string} aiPrompt - Full prompt sent to the model (prefix/markers included)
+     * @param {string} trimmedMessage - Plain core text used for the direct-TTS fallback
+     * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
+     */
+    async routeThroughAi(aiPrompt, trimmedMessage, ttsOptions) {
+        let spoken = ''
+        try {
+            const response = await AiAssistant.processMessage(aiPrompt, {
+                origin: ChatMessageOrigin.SYSTEM,
+                tts: ttsOptions
+            })
+            spoken = typeof response === 'string' ? response.trim() : ''
+        } catch (error) {
+            this.log(`AI processing failed: ${error.message}`, 'error')
+            return this.#degradeToRawTts(trimmedMessage, ttsOptions, error.message)
+        }
+
+        if (!spoken) {
+            // Model answered with nothing usable -- nothing was spoken yet; degrade loudly.
+            this.log('AI reply was empty -- falling back to direct TTS', 'warn')
+            return this.#degradeToRawTts(trimmedMessage, ttsOptions, 'empty reply from model')
+        }
+
+        // Emit the AI's response back to UI for rendering with <AI> prefix.
+        // Guard against --no-ui runs where no subscribers exist.
+        if (EventBus.hasSubscribers('ai:periodicResponse')) {
+            EventBus.emit('ai:periodicResponse', { text: spoken })
+        }
+        this.log(`Weather update sent via AI -> TTS pipeline (${spoken.length} chars)`, 'debug')
+    }
+
+    /**
+     * Fallback leg of routeThroughAi(): post a visible <system> notice explaining that the
+     * assistant did not deliver (localized via the weatherman bundle key
+     * `weatherman.ai_fallback_notice`), then speak the raw message directly so the report
+     * is never lost. Jingle params still apply on the fallback path.
+     * @param {string} trimmedMessage - Plain core text to speak
+     * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
+     * @param {string} reason - Failure description kept in the log trail
+     */
+    #degradeToRawTts(trimmedMessage, ttsOptions, reason) {
+        const notice = this.#resolveI18n('weatherman.ai_fallback_notice', '') ||
+            'The assistant did not answer in time -- reading the plain report instead.'
+        if (EventBus.hasSubscribers('ai:systemMessage')) {
+            EventBus.emit('ai:systemMessage', { text: notice })
+        }
+        // Fallback to direct TTS on AI failure -- jingle params still apply
+        EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
+        this.log(`Weather update fell back to direct TTS (${reason})`, 'debug')
     }
 
     /**

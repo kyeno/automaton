@@ -15,6 +15,7 @@
 
 import ConfigService from '../../service/configService.js'
 import LoggerService from '../../service/loggerService.js'
+import temporal from '../../lib/date.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -41,10 +42,13 @@ const MAX_RETRY_DELAY_MS = 10_000
 /**
  * Default HTTP fetch timeout in milliseconds.
  * Local LLM inference can take significant time depending on context size,
- * model complexity, and hardware. 120s is a safe default that covers most cases.
+ * model complexity, and hardware -- successful completions against small local
+ * models have been observed above 100 s, so a tighter budget fails under load.
+ * Override per installation with the main-config key `fetch_timeout_ms`
+ * (human-readable duration like "5m" or plain ms).
  * @type {number}
  */
-const DEFAULT_FETCH_TIMEOUT_MS = 120_000
+const DEFAULT_FETCH_TIMEOUT_MS = 300_000
 
 // ---------------------------------------------------------------------------
 // OpenAiProvider
@@ -63,8 +67,7 @@ class OpenAiProvider {
     /** @type {number} */ #maxRetries
     /** @type {number} */ #retryDelayMs
     /** @type {boolean} */ #initialized = false
-    /** @type {AbortController|null} */ #abortController = null
-    /** @type {NodeJS.Timeout|null} */ #timeoutHandle = null
+    /** @type {number} */ #fetchTimeoutMs
 
     // -- Constructor --------------------------------------------------------
 
@@ -79,6 +82,7 @@ class OpenAiProvider {
      * @param {number} [config.temperature=0.1] - Sampling temperature
      * @param {number} [config.maxRetries=3] - Retry attempts on failure
      * @param {number} [config.retryDelayMs=1000] - Initial retry delay
+     * @param {number} [config.fetchTimeoutMs] - Per-request HTTP timeout in ms (default from main config)
      */
     constructor(config = {}) {
         // API connection secrets remain in .env
@@ -96,6 +100,7 @@ class OpenAiProvider {
 
         this.#maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
         this.#retryDelayMs = config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
+        this.#fetchTimeoutMs = config.fetchTimeoutMs ?? this.#resolveFetchTimeoutMs()
     }
 
     // -- Lifecycle ----------------------------------------------------------
@@ -125,6 +130,15 @@ class OpenAiProvider {
      */
     isInitialized() {
         return this.#initialized
+    }
+
+    /**
+     * Effective per-request HTTP timeout in milliseconds (config override or default).
+     * Exposed for diagnostics and unit tests of the resolution logic.
+     * @returns {number} Timeout in whole ms (> 0)
+     */
+    getFetchTimeoutMs() {
+        return this.#fetchTimeoutMs
     }
 
     // -- Public API ---------------------------------------------------------
@@ -225,8 +239,40 @@ class OpenAiProvider {
     }
 
     /**
+     * Resolve the per-request HTTP timeout from main config (`fetch_timeout_ms`).
+     * Accepts plain milliseconds or a human-readable duration ("5m", "1h") via
+     * temporal.parseDurationMs(); missing values fall back silently, present-but-invalid
+     * ones warn first (fail-open) so a typo never takes the assistant down.
+     * @returns {number} Timeout in whole ms (> 0)
+     * @private
+     */
+    #resolveFetchTimeoutMs() {
+        let raw
+        try {
+            raw = ConfigService.get('fetch_timeout_ms')
+        } catch {
+            return DEFAULT_FETCH_TIMEOUT_MS   // config not initialized yet -- default is safe
+        }
+        if (raw == null) return DEFAULT_FETCH_TIMEOUT_MS
+
+        const ms = temporal.parseDurationMs(raw)
+        if (ms != null && Number.isFinite(ms) && ms > 0) return Math.round(ms)
+
+        LoggerService.warn(
+            `Invalid fetch_timeout_ms ${JSON.stringify(raw)} (expected e.g. "5m" or plain ms); using default ${DEFAULT_FETCH_TIMEOUT_MS}ms`,
+            'OpenAiProvider'
+        )
+        return DEFAULT_FETCH_TIMEOUT_MS
+    }
+
+    /**
      * POST a JSON payload to an API endpoint and return the parsed response.
      * Handles authentication headers and extracts error details from non-OK responses.
+     *
+     * The AbortController and its deadline live for exactly one call: concurrent
+     * requests each own their timer, so overlapping turns can no longer clear or
+     * abort each other's in-flight request (the old shared-instance state let a late
+     * first request kill an already-running second one).
      *
      * @param {string} path - Endpoint path (e.g. '/chat/completions')
      * @param {Object} body - Request body to serialize as JSON
@@ -244,58 +290,29 @@ class OpenAiProvider {
             headers['Authorization'] = `Bearer ${this.#apiKey}`
         }
 
-        this.#startTimeout()
+        const controller = new AbortController()
+        const timeoutHandle = setTimeout(() => controller.abort(), this.#fetchTimeoutMs)
 
         try {
             const res = await fetch(url, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(body),
-                signal: this.#abortController.signal
+                signal: controller.signal
             })
 
-            this.#clearTimeout()
             return await this.#handleResponse(res)
         } catch (error) {
-            this.#clearTimeout()
+            // Mapped into the 4xx band on purpose: chat() treats it as final, so a slow
+            // but alive backend does not trigger a retry storm of identical requests.
             if (error.name === 'AbortError') {
-                const err = new Error(`Fetch timed out after ${DEFAULT_FETCH_TIMEOUT_MS}ms`)
+                const err = new Error(`Fetch timed out after ${this.#fetchTimeoutMs}ms`)
                 err.status = 408
                 throw err
             }
             throw error
-        }
-    }
-
-    /**
-     * Start the AbortController timeout for the current HTTP request.
-     * @private
-     */
-    #startTimeout() {
-        this.#abortController = new AbortController()
-        this.#timeoutHandle = setTimeout(this.#onTimeout.bind(this), DEFAULT_FETCH_TIMEOUT_MS)
-    }
-
-    /**
-     * Clear the AbortController timeout after a successful or failed request.
-     * @private
-     */
-    #clearTimeout() {
-        if (this.#timeoutHandle) {
-            clearTimeout(this.#timeoutHandle)
-            this.#timeoutHandle = null
-        }
-        this.#abortController = null
-    }
-
-    /**
-     * Callback invoked when the fetch timeout expires.
-     * Aborts the in-flight request to prevent indefinite hangs.
-     * @private
-     */
-    #onTimeout() {
-        if (this.#abortController) {
-            this.#abortController.abort()
+        } finally {
+            clearTimeout(timeoutHandle)
         }
     }
 

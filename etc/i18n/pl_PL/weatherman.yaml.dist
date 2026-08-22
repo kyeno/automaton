@@ -41,6 +41,10 @@ ai_message_last: 'To jest ostatnia wiadomość dzisiejszej nocy.'
 ai_message_only: 'To jest jedyna wiadomość tej doby.'
 ai_message_next: 'Następna wiadomość za {% next_interval %}.'
 
+# Posted in the chat window when the AI leg fails or returns nothing -- explains why no
+# rewritten report appears before the raw message is spoken instead.
+ai_fallback_notice: 'Asystent nie zdążył odpowiedzieć -- odczytuję surowy raport.'
+
 # Localized unit words for {% next_interval %}; the model inflects them to fit the number.
 duration_units:
   day: 'dni'

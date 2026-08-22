@@ -81,6 +81,13 @@ class SAiAssistant {
     /** @type {number} */ #maxTurns = DEFAULT_MAX_TURNS
     /** @type {boolean} */ #initialized = false
 
+    /**
+     * FIFO chain of in-flight turns -- processMessage() appends each turn here so
+     * concurrent callers are serialized against the single shared conversation.
+     * @type {Promise<unknown>}
+     */
+    #queue = Promise.resolve()
+
     // -- Singleton --------------------------------------------------------
 
     /**
@@ -153,17 +160,64 @@ class SAiAssistant {
       * up to {@link MAX_TOOL_ITERATIONS}, then persists state and returns
       * the final text response.
       *
+      * Turns are serialized through an internal FIFO chain: concurrent callers
+      * (interactive chat vs periodic automation ticks) each receive their own promise,
+      * but the shared conversation is only ever driven one turn at a time -- in request
+      * order. A failing turn still releases the queue for the next caller.
+      *
+      * System-origin turns ({@link ChatMessageOrigin.SYSTEM}) are isolated from the
+      * shared history: the message array length is snapshotted before the prompt is
+      * pushed and restored on every exit path (success, tool-loop completion or failure),
+      * so weather-style announcements never accumulate in context and failed ticks leave
+      * no orphan user messages behind.
+      *
       * @param {string} userInput - The user's input message.
       * @param {Object} [options] - Optional processing options.
       * @param {'user'|'system'} [options.origin='user'] - Message authorship origin (for UI rendering).
       * @param {Record<string, unknown>} [options.tts] - Extra TTS server parameters forwarded verbatim into the 'tts:speak' event payload for this reply (e.g., intro/outro jingle framing); omitted when absent or not an object.
       * @returns {Promise<string>} The assistant's textual reply.
       */
-    async processMessage(userInput, options = {}) {
+    processMessage(userInput, options = {}) {
         if (!this.isAvailable()) {
-            return '[AI is currently unavailable - check provider configuration.]'
+            return Promise.resolve('[AI is currently unavailable - check provider configuration.]')
         }
 
+        const run = () => this.#runTurnIsolated(userInput, options)
+        const next = this.#queue.then(run, run)
+        this.#queue = next.catch(() => {})   // keep the internal chain alive regardless of outcome
+        return next
+    }
+
+    /**
+     * Run one turn with system-origin isolation: snapshot where the shared conversation
+     * stood before the prompt was pushed and restore it on every exit path -- success,
+     * tool-loop completion, or failure. User-origin turns are left untouched.
+     * @param {string} userInput - The user's input message.
+     * @param {Object} [options] - Optional processing options (see processMessage()).
+     * @returns {Promise<string>} The assistant's textual reply.
+     */
+    async #runTurnIsolated(userInput, options = {}) {
+        const isSystemOrigin = (options.origin || 'user') === ChatMessageOrigin.SYSTEM
+        const restoreAt = isSystemOrigin ? this.#messages.length : null
+
+        try {
+            return await this.#executeTurn(userInput, options)
+        } finally {
+            if (isSystemOrigin && restoreAt !== null) {
+                this.#messages.length = restoreAt
+            }
+        }
+    }
+
+    /**
+     * Execute one full AI turn against the shared conversation -- the actual
+     * push/tool-loop/return machinery behind processMessage(). Assumes availability
+     * (checked by the entry point); thrown errors propagate to that caller's queue slot.
+     * @param {string} userInput - The user's input message.
+     * @param {Object} [options] - Optional processing options (see processMessage()).
+     * @returns {Promise<string>} The assistant's textual reply.
+     */
+    async #executeTurn(userInput, options = {}) {
         const origin = options.origin || 'user'
         const isSystemOrigin = origin === ChatMessageOrigin.SYSTEM
 

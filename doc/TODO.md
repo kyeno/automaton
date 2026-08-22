@@ -15,6 +15,8 @@
 - VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - LATER: Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
+- LATER: Drive the "* AI thinking..." indicator from shared state instead of inline print -- expose `ai.busy` plus a start timestamp via StateService while processMessage() holds its FIFO lock; AiWindow observes it and either rewrites the line to "* AI thought for X seconds" on completion or appends an IRC `/me`-style follow-up message
+- VERIFY/NOTE: local LLM endpoint (192.168.1.1:8976) serves Gemma-4-**E4B**-Uncensored-IQ4_XS (~8.2 B params) despite automaton.yaml declaring `gemma-4-E2B-it` -- align the configured model name with reality (and keep fetch_timeout_ms generous accordingly)
 
 ## LATER: SST
 - Build entire speech-to-text architecture based on whisper-cpp
