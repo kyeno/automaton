@@ -264,12 +264,23 @@ class BaseWindow {
 
     /**
      * Trim the buffer to stay within #maxBufferLines by removing oldest entries first.
+     * Also shifts #bufferEntryCountAtLastRender down by the number of dropped
+     * entries; without that adjustment the "rendered up-to" index stays pinned
+     * at the cap once the buffer fills, every later render sees zero new
+     * entries and silently skips drawing -- freezing the window until a forced
+     * full re-render (window switch / PgUp-PgDn) after each batch of logs.
      * @private
      */
     #trimBuffer() {
-        if (this.#buffer.length > this.#maxBufferLines) {
-            this.#buffer = this.#buffer.slice(-this.#maxBufferLines)
-        }
+        const excess = this.#buffer.length - this.#maxBufferLines
+        if (excess <= 0) return
+        this.#buffer = this.#buffer.slice(-this.#maxBufferLines)
+        // Keep the tracking index aligned with the trimmed array so incremental
+        // renders still recognize genuinely-new tail entries as pending work.
+        this.#bufferEntryCountAtLastRender = Math.max(
+            0,
+            Math.min(this.#bufferEntryCountAtLastRender - excess, this.#buffer.length)
+        )
     }
 
     /**

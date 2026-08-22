@@ -14,6 +14,8 @@
  */
 'use strict'
 
+import LoggerService from './loggerService.js'
+
 // ---------------------------------------------------------------------------
 // EventBus (module-level singleton)
 // ---------------------------------------------------------------------------
@@ -54,8 +56,26 @@ class SEventBus {
                 callback()
             } catch (error) {
                 // Prevent one bad subscriber from breaking others
-                console.error(`[EventBus] Error in subscriber for "${channel}":`, error.message)
+                this.#reportSubscriberError(channel, error)
             }
+        }
+    }
+
+    /**
+     * Report a failing subscriber without letting its exception escape
+     * publish()/emit(). Routed through LoggerService so UI mode keeps raw
+     * stderr writes away from the TUI layout; falls back to plain stderr when
+     * the logger is not initialized yet (early bootstrap / standalone scripts).
+     * @param {string} channel - Event channel whose subscriber threw
+     * @param {*} error - The caught error value
+     * @private
+     */
+    #reportSubscriberError(channel, error) {
+        const detail = error?.message ?? String(error)
+        try {
+            LoggerService.warn(`[EventBus] Error in subscriber for "${channel}": ${detail}`, 'EventBus')
+        } catch {
+            console.error(`[EventBus] Error in subscriber for "${channel}":`, error.message)
         }
     }
 
@@ -75,7 +95,7 @@ class SEventBus {
             try {
                 callback(...args);
             } catch (error) {
-                console.error(`[EventBus] Error in subscriber for "${channel}":`, error.message);
+                this.#reportSubscriberError(channel, error);
             }
         }
     }

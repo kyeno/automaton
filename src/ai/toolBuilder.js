@@ -250,6 +250,7 @@ class SToolBuilder {
 
         // Delegate to the shared dispatcher. readState mirrors the original
         // condition so get_device_state always returns state even with an action.
+        // Note: inside #dispatchToDevice an explicit position still wins over readState.
         const readState = funcName === 'get_device_state' || action === 'STATE'
         return this.#dispatchToDevice(device, deviceName, {
             action,
@@ -435,7 +436,7 @@ class SToolBuilder {
 
         // No explicit action means "read current state"; delegate to the shared
         // dispatcher for event emission and command handling.
-        const readState = !action || action === 'STATE'
+        const readState = !action || action === 'STATE'  // position (if any) still wins -- see #dispatchToDevice
         return this.#dispatchToDevice(device, deviceName, {
             action,
             position: intent.position,
@@ -476,19 +477,11 @@ class SToolBuilder {
             tool: toolLabel
         })
 
-        // --- Read state (filtered for AI relevance) ---
-        if (readState) {
-            const cached = await device.getCachedState()
-            const stateLast = cached?.stateLast ?? {}
-            return JSON.stringify({
-                device: deviceName,
-                state: this.#filterStateForAI(stateLast),
-                last_updated: cached?.stateLastAt ?? null,
-                origin: cached?.stateOrigin ?? 'unknown'
-            }, null, 2)
-        }
-
-        // --- Position-based command (roller shutter) ---
+        // Priority rule: an explicit numeric position is ALWAYS a write and must be checked
+        // before the STATE/read marker below. Models routinely combine `action:"STATE"` with
+        // `position` (e.g. {"action":"STATE","device_name":...,"position":50}); treating that as
+        // a read silently drops the command -- production incident 2026-08-22 where a "close"
+        // request no-op'd because the dispatcher answered it with a cached-state read.
         if (hasPosition) {
             // AI chat actions are human-directed: a person gave the AI this order.
             device.receiveCommand({ position: clampedPos }, DeviceCommandSource.HUMAN)
@@ -498,6 +491,20 @@ class SToolBuilder {
                 position: clampedPos,
                 status: 'sent'
             })
+        }
+
+        // --- Read state (filtered for AI relevance) ---
+        // Reached only when no explicit position was supplied: get_device_state calls, or
+        // set_device_state carrying the bare STATE marker without a target value.
+        if (readState) {
+            const cached = await device.getCachedState()
+            const stateLast = cached?.stateLast ?? {}
+            return JSON.stringify({
+                device: deviceName,
+                state: this.#filterStateForAI(stateLast),
+                last_updated: cached?.stateLastAt ?? null,
+                origin: cached?.stateOrigin ?? 'unknown'
+            }, null, 2)
         }
 
         // --- Standard command (ON/OFF/OPEN/CLOSE/STOP) ---

@@ -38,6 +38,7 @@ import Mechanism from '../src/device/type/mechanism.js'
 import Sensor from '../src/device/type/sensor.js'
 import OpenAiProvider from '../src/ai/providers/openaiProvider.js'
 import AiAssistant from '../src/ai/aiAssistant.js'
+import ToolBuilder    from '../src/ai/toolBuilder.js'
 
 const CONVERSATION_KEY = 'ai:conversation:default'
 
@@ -214,6 +215,89 @@ try {
         const evC = events.slice(-1)[0]
         assert(evC?.ok !== false && evC?.device === 'Balkon Temperatura' && evC?.action === 'STATE',
             'successful read surfaces as a STATE interaction event')
+    }
+
+    // ── Scenario D: STATE marker combined with explicit position must WRITE (production replay) ─
+    {
+        // Production incident 2026-08-22: model sent set_device_state({"action":"STATE",...,"position":50})
+        // to close the rollers; the dispatcher answered it with a cached-state read and never called
+        // receiveCommand -- nothing moved. Spies below prove the command reaches the device layer.
+        const spies = new Map()
+        function spyDevice(name) {
+            if (!spies.has(name)) {
+                const dev = DeviceContainer.getAll()[name]
+                const calls = []
+                const original = dev.receiveCommand.bind(dev)
+                dev.receiveCommand = function (payload, source) { calls.push({ payload, source }); return original(payload, source) }
+                spies.set(name, { dev, calls, original })
+            }
+            return spies.get(name)
+        }
+
+        try {
+            // Spies must be installed BEFORE driving the turn -- receiveCommand fires inside processMessage().
+            const left = spyDevice('Salon Roleta Okno Lewe')
+
+            // Entry point 1: text-based pseudo-call (executeIntent path), exact production shape.
+            const { messages } = await runTurn('Zamknij rolety w połowie.', [
+                { role: 'assistant', content: 'set_device_state{action:STATE,device_name:Salon Roleta Okno Lewe,position:50}' },
+                { role: 'assistant', content: 'Roleta ustawiona na 50%.' }
+            ])
+
+            assert(left.calls.length === 1, 'intent STATE+position dispatched exactly one device command')
+            assert(!!left.calls[0] && JSON.stringify(left.calls[0].payload) === '{"position":50}',
+                'command payload is the requested position (not a state read)')
+            assert(String(left.calls[0]?.source ?? '').toUpperCase().includes('HUMAN'),
+                'dispatched command carries HUMAN origin like every AI chat action')
+
+            const toolD = messages.filter(m => m.role === 'tool')[0]
+            let parsedD = null
+            try { parsedD = JSON.parse(toolD?.content) } catch {}
+            assert(parsedD?.status === 'sent' && parsedD?.action === 'set_position' && parsedD?.position === 50,
+                'model receives set_position/sent result instead of a silent state read')
+
+            const evD = events.slice(-1)[0]
+            assert(evD?.ok !== false && String(evD?.action).startsWith('SET_POSITION=50'),
+                'interaction event reports SET_POSITION=50 to the chat window')
+
+            // Entry point 2: native function call (execute path) -- same dispatcher contract.
+            spyDevice('Salon Roleta Okno Prawe')
+            const rightResult = await ToolBuilder.execute({
+                function: {
+                    name: 'set_device_state',
+                    arguments: JSON.stringify({ action: 'STATE', device_name: 'Salon Roleta Okno Prawe', position: 42 })
+                }
+            })
+            const parsedR = JSON.parse(rightResult)
+            const right = spies.get('Salon Roleta Okno Prawe')
+            assert(parsedR.status === 'sent' && parsedR.position === 42, 'native STATE+position call reports sent set_position')
+            assert(right.calls.length === 1 && JSON.stringify(right.calls[0].payload) === '{"position":42}',
+                'native entry point also reaches receiveCommand with the clamped position')
+        } finally {
+            for (const { dev, original } of spies.values()) dev.receiveCommand = original
+        }
+    }
+
+    // ── Scenario E: bare STATE marker without a position remains a pure state read ────────────
+    {
+        const dev = DeviceContainer.getAll()['Balkon Temperatura']
+        const calls = []
+        const original = dev.receiveCommand.bind(dev)
+        dev.receiveCommand = function (payload, source) { calls.push({ payload, source }) }
+        try {
+            await runTurn('Sprawdź stan czujnika na balkonie.', [
+                { role: 'assistant', content: 'set_device_state{action:STATE,device_name:Balkon Temperatura}' },
+                { role: 'assistant', content: 'Czujnik działa.' }
+            ])
+            assert(calls.length === 0, 'bare STATE intent dispatches no device command')
+            const toolE = AiAssistant.getMessages().filter(m => m.role === 'tool').pop()
+            let parsedE = null
+            try { parsedE = JSON.parse(toolE?.content) } catch {}
+            assert(!!parsedE && !parsedE.error && parsedE.state !== undefined,
+                'bare STATE intent still returns the cached state object to the model')
+        } finally {
+            dev.receiveCommand = original
+        }
     }
 } finally {
     unsubEvents()
