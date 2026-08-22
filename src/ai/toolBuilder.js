@@ -221,17 +221,27 @@ class SToolBuilder {
             })
         }
 
+        const action = args.action != null ? String(args.action).toUpperCase() : null
+
         // Resolve device via args.device_name
         const device = this.resolveDevice(args)
 
         if (!device) {
+            // Surface the failed attempt in chat as well -- otherwise a small model's slightly-off
+            // name vanishes from the UI and only shows up in logs.
+            EventBus.emit('ai:deviceInteraction', {
+                device: args.device_name || 'unknown',
+                action,
+                tool: funcName,
+                ok: false
+            })
             return JSON.stringify({
-                error: `Device "${args.device_name || 'unknown'}" not found in current registry.`
+                error: `Device "${args.device_name || 'unknown'}" not found in current registry.`,
+                device: args.device_name || undefined
             })
         }
 
         const deviceName = device.getName()
-        const action = args.action?.toUpperCase()
 
         LoggerService.info(
             `AI tool call: ${funcName}(${JSON.stringify(args)}) -> ${deviceName}`,
@@ -398,16 +408,25 @@ class SToolBuilder {
      * @returns {Promise<string>} JSON-stringified result for the model
      */
     async executeIntent(intent) {
+        const action = intent.action != null ? String(intent.action).toUpperCase() : null
         const device = this.resolveDevice({ device_name: intent.device })
 
         if (!device) {
+            // Surface the failed attempt in chat as well -- otherwise a small model's slightly-off
+            // name vanishes from the UI and only shows up in logs.
+            EventBus.emit('ai:deviceInteraction', {
+                device: intent.device || 'unknown',
+                action,
+                tool: 'json_intent',
+                ok: false
+            })
             return JSON.stringify({
-                error: `Device "${intent.device}" not found in current registry.`
+                error: `Device "${intent.device}" not found in current registry.`,
+                device: intent.device || undefined
             })
         }
 
         const deviceName = device.getName()
-        const action = intent.action?.toUpperCase()
 
         LoggerService.info(
             `AI parsed intent (${JSON.stringify(intent)}) -> ${deviceName}`,
@@ -534,27 +553,38 @@ class SToolBuilder {
     /**
      * Extract device/action/position from a raw argument string regardless of whether keys are
      * quoted and whether ":" or "=" is used as the separator. Values may be double-quoted,
-     * single-quoted, or bare tokens. Fields that are absent come back undefined.
+     * single-quoted, or bare; unquoted values keep their internal whitespace so multi-word
+     * friendly names survive intact (e.g., `device_name:Salon Roleta Okno Lewe`). A value ends
+     * at the next pair boundary (` ,identifier:= ` / ` identifier:= `), which keeps adjacent
+     * pairs from bleeding into each other. Fields that are absent come back undefined.
      * @param {string} inner - Inner content of an argument block (without outer delimiters)
      * @returns {{device?: string, action?: string, position?: number}|null} Parsed arguments, or null when nothing usable was found
      * @private
      */
     #parseArgPairs(inner) {
         const pick = (key) => {
-            const re = new RegExp(
-                '(?:^|[,{\\s])' + key + '\\s*[:=]\\s*(?:"([^"]*)"|\'([^\']*)\'|([A-Za-z0-9][A-Za-z0-9_.]*))',
-                'i'
-            )
-            const m = inner.match(re)
+            const re = new RegExp('(?:^|[,{\\s])' + key + '\\s*[:=]\\s*(.*)', 'is')
+            const m = String(inner).match(re)
             if (!m) return undefined
-            const value = m[1] ?? m[2] ?? m[3]
-            return value === undefined ? undefined : String(value).trim()
+
+            let rest = m[1].trim()
+            // Quoted values end at their closing quote -- commas/spaces inside stay untouched.
+            if (rest.startsWith('"') || rest.startsWith("'")) {
+                const q = rest[0]
+                const closeIdx = rest.indexOf(q, 1)
+                rest = (closeIdx === -1 ? rest.slice(1) : rest.slice(1, closeIdx)).trim()
+                return rest === '' ? undefined : rest
+            }
+
+            // Unquoted value: cut at the first following pair boundary so multi-word names are
+            // preserved while not swallowing subsequent pairs (`action:OPEN device_name:X`).
+            const cut = rest.search(/(?:,|\s+)[A-Za-z_][A-Za-z0-9_]*\s*[:=]/)
+            rest = (cut !== -1 ? rest.slice(0, cut) : rest).trim()
+            return rest === '' ? undefined : rest
         }
 
-        let device = pick('device_name') || pick('device')
-        if (device !== undefined && device.trim() === '') device = undefined
-        const actionRaw = pick('action')
-        const action = actionRaw !== undefined && actionRaw.trim() !== '' ? actionRaw.trim() : undefined
+        const device = pick('device_name') || pick('device')
+        const action = pick('action')
         const position = this.#toPosition(pick('position'))
 
         if (!device && !action && position === undefined) return null

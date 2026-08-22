@@ -134,12 +134,19 @@ class AiWindow extends BaseWindow {
      * @private
      */
     #subscribeToInteractions() {
-        this.#interactionUnsub = EventBus.subscribe('ai:deviceInteraction', ({ device, action, tool }) => {
+        this.#interactionUnsub = EventBus.subscribe('ai:deviceInteraction', ({ device, action, tool, ok = true }) => {
             // Distinguish native tool_calls from parsed JSON intents
             const verb = (tool === 'json_intent') ? 'intended' : 'performed'
             const suffix = (tool === 'json_intent') ? ' (corrected)' : ''
             let messageText
-            if (action === 'STATE') {
+            if (!ok) {
+                // Failed attempt (e.g., unknown device name) -- keep it visible in chat instead of
+                // letting the error vanish into logs only. Wording mirrors the history renderer.
+                const target = (action && String(action).toUpperCase() !== 'STATE')
+                    ? `${String(action).toLowerCase()} ${device}`
+                    : `interact with ${device}`
+                messageText = `* AI could not ${target}${suffix}`
+            } else if (action == null || String(action).toUpperCase() === 'STATE') {
                 // Align with history renderer wording: "checked state of <device>"
                 messageText = `* AI checked state of ${device}`
             } else {
@@ -255,30 +262,76 @@ class AiWindow extends BaseWindow {
                 }
 
             } else if (msg.role === 'tool') {
-                // Tool result -- parse JSON and render as /me action line.
-                // Cannot reliably distinguish json_intent from native tool calls in
-                // restored history (both produce pretty-printed JSON with newlines),
-                // so always show "performed" without "(corrected)" suffix.
-                try {
-                    const data = JSON.parse(msg.content)
-                    const device = data.device || 'unknown'
-                    let actionDesc = ''
+                // Tool result(s) -- render each as a /me action line. Legacy entries may hold
+                // several concatenated JSON documents in one message; parse them individually so
+                // every attempt stays visible instead of collapsing into one generic line.
+                const results = this.#extractToolResults(msg.content)
 
-                    if (data.action) {
-                        actionDesc = `performed ${data.action} on ${device}`
+                if (results.length === 0) {
+                    // Not valid JSON at all -- just show a generic tool message
+                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI performed an action${AnsiColors.reset}`)
+                    continue
+                }
+
+                for (const data of results) {
+                    let device = data.device || null
+                    // Legacy error payloads carry the attempted name only inside the message text
+                    if (!device && data.error) {
+                        const m = String(data.error).match(/Device "([^"]+)"/)
+                        if (m) device = m[1]
+                    }
+                    let actionDesc
+
+                    if (data.error) {
+                        // Failed attempt (e.g., unknown device name) -- keep it visible instead of
+                        // hiding behind "interacted with unknown". Wording mirrors the live handler.
+                        actionDesc = !device ? 'could not interact with a device'
+                            : (data.action && String(data.action).toUpperCase() !== 'STATE')
+                                ? `could not ${String(data.action).toLowerCase()} ${device}`
+                                : `could not interact with ${device}`
+                    } else if (data.action) {
+                        actionDesc = `performed ${data.action} on ${device || 'unknown'}`
                     } else if (data.state !== undefined) {
-                        actionDesc = 'checked state of ' + device
+                        actionDesc = `checked state of ${device || 'unknown'}`
                     } else {
-                        actionDesc = `interacted with ${device}`
+                        actionDesc = `interacted with ${device || 'unknown'}`
                     }
 
                     this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI ${actionDesc}${AnsiColors.reset}`)
-                } catch {
-                    // Not valid JSON -- just show a generic tool message
-                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI performed an action${AnsiColors.reset}`)
                 }
             }
         }
+    }
+
+    /**
+     * Parse stored tool-result content into individual result objects. Handles both single JSON
+     * documents and legacy entries where several documents were concatenated in one message;
+     * unparseable fragments are skipped so partial garbage never blanks an entire line.
+     * @param {*} content - Raw tool message content
+     * @returns {Array<Object>} Parsed result objects (may be empty when nothing was recoverable)
+     * @private
+     */
+    #extractToolResults(content) {
+        const found = []
+        const text = typeof content === 'string' ? content : ''
+
+        try {
+            const whole = JSON.parse(text)
+            if (whole && typeof whole === 'object') found.push(whole)
+            return found
+        } catch {
+            // Fall through to per-block extraction below
+        }
+
+        for (const match of text.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)) {
+            try {
+                const parsed = JSON.parse(match[0])
+                if (parsed && typeof parsed === 'object') found.push(parsed)
+            } catch {
+                continue
+            }
+        }
+        return found
     }
 }
 
