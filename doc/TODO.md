@@ -20,12 +20,15 @@
 - Build entire speech-to-text architecture based on whisper-cpp
 
 ### LATER: Assistant personalization
+- Dynamic temperature settings per persona!
+- Example:
 personas:
   hal9000:
     language: "pl"
     system_prompt: "Nazywasz się HAL-9000. Jesteś głównym komputerem pokładowym. Odpowiadasz niezwykle spokojnie, logicznie, wręcz chłodno i bezemocjonalnie."
     voice_model: "pl_PL-bass-medium.onnx"
     sox_effects: "speed 0.95 pitch -50 bandpass 1200 1500 norm -2"
+    temperature: 0.1
 
   cyborg:
     language: "pl"
