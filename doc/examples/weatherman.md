@@ -8,7 +8,7 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 2. An opening time-of-day line (see Time Phrase Rendering below) plus a weather base sentence (e.g., *"The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius..."*) are resolved — placeholders are replaced with real-time sensor values pulled from Zigbee devices via MQTT.
 3. Condition rules are evaluated against the current context built dynamically from all sensors defined in `config.sensors`. When multiple rules match simultaneously, only the one with the highest `priority` fires (higher number wins; default is 0).
 4. If an AI assistant is available, the built message is framed with day-position markers (see below), prefixed with a creative instruction key (`sentence_ai_prefix`) and sent through `AiAssistant.processMessage()` for natural-language rewriting before being spoken aloud. Otherwise, the raw interpolated text goes straight to TTS -- no markers are added on that path. A runtime AI failure (e.g., LLM request timing out) or an empty reply degrades the same way: a visible `<system>` notice (`ai_fallback_notice` bundle key) explains why no rewritten report appears, then the raw message is spoken directly so the announcement never silently vanishes.
-5. System-originated messages appear in the UI with a yellow `<system>` prefix and are fully isolated from the shared conversation history -- they neither accumulate between ticks nor survive a failed tick as orphan prompts (see [AI Conversation Caching](../architecture/ai-conversation-caching.md)). The LLM HTTP budget behind these calls is configurable via `fetch_timeout_ms` in the AI section of `etc/automaton.yaml` (default 300 s).
+5. System-originated messages appear in the UI with a yellow `<system>` prefix and are fully isolated from the shared conversation history -- they neither accumulate between ticks nor survive a failed tick as orphan prompts (see [AI Conversation Caching](../architecture/ai-conversation-caching.md)). The LLM HTTP budget behind these calls is configurable via `ai.fetch_timeout_ms` in the AI section of `etc/automaton.yaml` (default 300 s).
 
 ## Daily Cycle Markers
 
@@ -25,9 +25,9 @@ Because timer ticks are spaced at least one interval apart even across process r
 
 ## Time Phrase Rendering
 
-Very small models -- including the recommended gemma-4-E2B-it -- reliably fail at converting clock strings like `9:32 PM` into natural spoken words; that was the source of garbled announcements such as *"godzina sióknasta dziesiąta jedna trzydzieści po wieczór"*. Instead of asking the model to do that conversion, the automation renders an **opening time-of-day line** itself and prepends it to the base sentence on both output paths (AI rewrite *and* direct TTS fallback). The line comes from the bundle's `time_sentence` templates; the global `stupid_ai_engine` switch in the AI section of `etc/automaton.yaml` picks which subtree is used:
+Very small models -- including the recommended gemma-4-E2B-it -- reliably fail at converting clock strings like `9:32 PM` into natural spoken words; that was the source of garbled announcements such as *"godzina sióknasta dziesiąta jedna trzydzieści po wieczór"*. Instead of asking the model to do that conversion, the automation renders an **opening time-of-day line** itself and prepends it to the base sentence on both output paths (AI rewrite *and* direct TTS fallback). The line comes from the bundle's `time_sentence` templates; the global `ai.stupid_ai_engine` switch in the AI section of `etc/automaton.yaml` picks which subtree is used:
 
-| `stupid_ai_engine` | Subtree | Behaviour |
+| `ai.stupid_ai_engine` | Subtree | Behaviour |
 |--------------------|---------|-----------|
 | `true` / absent (default) | `explicit` | Clock parts are pre-rendered as plain digits inside a fixed frame (*"Jest 32 minut po godzinie 9 rano"*); the model only inflects unit/ordinal forms during its rewrite. Digits stay unambiguous even when read verbatim by Piper TTS because the "N minutes past H + period word" frame can never be misread as bare H:M. |
 | `false` | `smart` | Legacy behaviour: `{% time %}` is left for the model to spell out in words (needs a capable model). |
@@ -200,7 +200,7 @@ Weather speech templates live in per-locale files at `etc/i18n/{locale}/weatherm
 **English (`en_US/weatherman.yaml`):**
 ```yaml
 # Opening time-of-day line -- rendered BEFORE the base sentence on both output paths.
-# Style picked by stupid_ai_engine: explicit = pre-rendered digit frame [default], smart = model spells out the hour.
+# Style picked by ai.stupid_ai_engine: explicit = pre-rendered digit frame [default], smart = model spells out the hour.
 time_sentence:
   smart:
     default: 'It is currently {% time %}.'
@@ -240,7 +240,7 @@ soothing_warm_night: 'Beautiful night out there. You could step outside in short
 **Polish (`pl_PL/weatherman.yaml`):**
 ```yaml
 # Opening time-of-day line -- rendered BEFORE the base sentence on both output paths.
-# Style picked by stupid_ai_engine: explicit = pre-rendered digit frame [default], smart = model spells out the hour.
+# Style picked by ai.stupid_ai_engine: explicit = pre-rendered digit frame [default], smart = model spells out the hour.
 time_sentence:
   smart:
     default: 'Jest godzina {% time %}.'

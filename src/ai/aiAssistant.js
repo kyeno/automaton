@@ -150,7 +150,7 @@ class SAiAssistant {
     isConfigured() {
         const apiUrl = process.env.AI_API_URL
         if (!apiUrl || !String(apiUrl).trim()) return false
-        return Boolean(ConfigService.get('model'))
+        return Boolean(ConfigService.get('ai.model'))
     }
 
      /**
@@ -446,7 +446,7 @@ class SAiAssistant {
     #loadConfig() {
         try {
             this.#conversationTtlSec = this.#resolveConversationTtl()
-            this.#maxTurns = ConfigService.get('max_conversation_turns', DEFAULT_MAX_TURNS)
+            this.#maxTurns = ConfigService.get('ai.max_conversation_turns', DEFAULT_MAX_TURNS)
             LoggerService.debug('Loaded AI config from ConfigService', 'AiAssistant')
         } catch (error) {
             LoggerService.warn(`Failed to load AI config (${error.message}), using defaults`, 'AiAssistant')
@@ -468,7 +468,7 @@ class SAiAssistant {
      * @returns {number} TTL in whole seconds (> 0)
      */
     #resolveConversationTtl() {
-        const raw = ConfigService.get('conversation_ttl_sec')
+        const raw = ConfigService.get('ai.conversation_ttl_sec')
         if (raw == null) return DEFAULT_CONVERSATION_TTL_SEC
         let sec = null
         if (typeof raw === 'number' && Number.isFinite(raw)) {
@@ -514,7 +514,7 @@ class SAiAssistant {
      * @private
      */
     #maybeStripFormatting(text) {
-        const shouldStrip = ConfigService.get('strip_ai_formatting', false)
+        const shouldStrip = ConfigService.get('ai.strip_ai_formatting', false)
         return shouldStrip ? stripMarkdown(text) : text
     }
 

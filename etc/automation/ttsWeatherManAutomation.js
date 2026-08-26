@@ -331,7 +331,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * @returns {boolean} true when the configured model should be treated as weak [default]
      */
     isStupidAiEngine() {
-        return ConfigService.get('stupid_ai_engine', true) !== false
+        return ConfigService.get('ai.stupid_ai_engine', true) !== false
     }
 
     /**
@@ -451,9 +451,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * @returns {Record<string, unknown>|null}
      */
     #loadWeathermanBundle() {
-        const locale = I18nLoader.getLanguage()
-        const LOCALE_MAP = { pl: 'pl_PL', en: 'en_US' }
-        const localeDir = LOCALE_MAP[locale] || 'pl_PL'
+        const localeDir = I18nLoader.getLocale()
         const filePath = path.join(I18N_ROOT, localeDir, 'weatherman.yaml')
 
         try {

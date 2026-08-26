@@ -240,9 +240,7 @@ console.log('\n── computeDayPosition() ──\n')
     wm.config = origConfig   // restore shipped config for a realistic prompt
     await wm.init()          // loads #bundle + starts a harmless hourly timer (stopped below)
 
-    const locale = I18nLoader.getLanguage()
-    const LOCALE_MAP = { pl: 'pl_PL', en: 'en_US' }
-    const dir = LOCALE_MAP[locale] || 'pl_PL'
+    const dir = I18nLoader.getLocale()
     const bundlePath = path.join(ROOT, 'etc/i18n', dir, 'weatherman.yaml')
     const bundle = yamlParse(fs.readFileSync(bundlePath, 'utf8'))
     console.log(`  (using ${dir} weatherman bundle)\n`)

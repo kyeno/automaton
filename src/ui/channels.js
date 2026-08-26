@@ -37,15 +37,15 @@ class SChannelManager {
     // -- Initialization ---------------------------------------------------
 
     /**
-     * Load channel definitions from the 'windows' section of automaton.yaml.
+     * Load channel definitions from the ui.windows section of automaton.yaml.
      * Safe to call multiple times; subsequent calls return cached data.
      */
     load() {
         if (this.#loaded) return this.#channels
 
         try {
-            // Use get() not getSection() -- windows is an array and getSection rejects arrays
-            const raw = ConfigService.get('windows') || []
+            // Use get() not getSection() -- ui.windows is an array and getSection rejects arrays
+            const raw = ConfigService.get('ui.windows') || []
             this.#channels = raw.map((w, index) => ({
                 id: w.id || `window${index + 1}`,
                 channel: w.channel || `#window${index + 1}`,

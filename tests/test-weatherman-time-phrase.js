@@ -63,9 +63,7 @@ const D = (hour, minute) => new Date(2026, 7 /* August */, 15, hour, minute, 0, 
 const wm = new TtsWeatherManAutomation()
 await wm.init()   // loads #bundle from the active locale + starts a harmless hourly timer (stopped below)
 
-const locale = I18nLoader.getLanguage()
-const LOCALE_MAP = { pl: 'pl_PL', en: 'en_US' }
-const dir = LOCALE_MAP[locale] || 'pl_PL'
+const dir = I18nLoader.getLocale()
 const bundlePath = path.join(ROOT, 'etc/i18n', dir, 'weatherman.yaml')
 const bundle = yamlParse(fs.readFileSync(bundlePath, 'utf8'))
 console.log(`\n(using ${dir} weatherman bundle)\n`)

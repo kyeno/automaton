@@ -74,17 +74,18 @@ Windows are routed through *channels* defined in `etc/automaton.yaml`. The `Chan
 Channels use an IRC-style naming convention:
 
 ```yaml
-windows:
-  - id: logs
-    channel: '!log'        # ! = read-only (no user input)
-    title: 'Logs'
-    shortcut: 1
-    readonly: true
-  - id: ai
-    channel: '#automaton'  # # = interactive
-    title: 'AI Assistant'
-    shortcut: 3
-    readonly: false
+ui:
+  windows:
+    - id: logs
+      channel: '!log'        # ! = read-only (no user input)
+      title: 'Logs'
+      shortcut: 1
+      readonly: true
+    - id: ai
+      channel: '#automaton'  # # = interactive
+      title: 'AI Assistant'
+      shortcut: 3
+      readonly: false
 ```
 
 ### Channel Prefixes

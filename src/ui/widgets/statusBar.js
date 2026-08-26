@@ -484,7 +484,7 @@ class StatusBar {
 
         let lines = null
         try {
-            const cfg = ConfigService.getSection('status_bar')
+            const cfg = ConfigService.getSection('ui.status_bar')
             if (cfg) {
                 // New structure: lines[] with left/right sections
                 if (cfg.lines && Array.isArray(cfg.lines)) {

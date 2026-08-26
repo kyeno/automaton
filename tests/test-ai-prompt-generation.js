@@ -113,7 +113,7 @@ console.log(`  ✓ Devices loaded offline: ${deviceCount} (from zigbee.yaml)` +
 
 // Load AI i18n language bundle
 await I18nLoader.init()
-console.log(`  ✓ I18n loaded: ${I18nLoader.getLanguage()} `)
+console.log(`  ✓ I18n loaded: ${I18nLoader.getLocale()} `)
 
 // Initialize AI assistant (restores conversation from Redis, builds system prompt)
 await AiAssistant.init()

@@ -29,9 +29,8 @@ ai:
   model: "gemma-4-e2b-it"
   temperature: 0.7
   max_tokens: 2048
-  system_prompt_file: "etc/i18n/en_US/ai.yaml"
-  conversation_cache_ttl: 3600
-  origin_filter: true
+  fetch_timeout_ms: "5m"
+  conversation_ttl_sec: "15m"
 ```
 
 See [Configuration Guide](../configuration.md#ai-section) for every option explained.

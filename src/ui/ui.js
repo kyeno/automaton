@@ -418,12 +418,18 @@ class Ui {
      */
     #applyUiConfig() {
         try {
-            const maxBufferLines = ConfigService.get('window_settings.max_buffer_lines')
+            const maxBufferLines = ConfigService.get('ui.window_settings.max_buffer_lines')
             if (typeof maxBufferLines === 'number' && maxBufferLines > 0) {
                 for (const win of Object.values(this.#windows)) {
                     win.instance.setMaxBufferLines?.(maxBufferLines)
                 }
                 LoggerService.debug(`UI Buffer limit set to ${maxBufferLines} per window`, 'UI')
+            }
+
+            const minWidth = ConfigService.get('ui.layout.min_width')
+            if (typeof minWidth === 'number' && minWidth > 0) {
+                this.#layout.setMinWidth(minWidth)
+                LoggerService.debug(`UI minimum render width set to ${Math.floor(minWidth)} cols`, 'UI')
             }
         } catch (e) {
             LoggerService.warn(`Failed to apply UI config: ${e.message}`, 'UI')

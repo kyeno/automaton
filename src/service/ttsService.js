@@ -150,16 +150,13 @@ class STtsService {
      * @private
      */
     async #loadTemplate() {
-        const locale = I18nLoader.getLanguage()
-        // Resolve short code -> BCP 47 locale using I18nLoader's internal mapping
-        // Since we don't expose it publicly yet, reconstruct the path:
-        const localeDir = this.#resolveLocale(locale)
+        const localeDir = I18nLoader.getLocale()
         const filePath  = path.join(I18N_ROOT, localeDir, 'tts.yaml')
 
         try {
             if (!fs.existsSync(filePath)) {
                 LoggerService.warn(
-                    `TTS template not found for '${locale}' (${filePath}) -- falling back to '${DEFAULT_LOCALE}'`,
+                    `TTS template not found for '${localeDir}' (${filePath}) -- falling back to '${DEFAULT_LOCALE}'`,
                     'TtsService'
                 )
                 return this.#loadFallbackTemplate()
@@ -209,17 +206,6 @@ class STtsService {
         }
     }
 
-    /**
-     * Resolve a short language code to its BCP 47 locale directory name.
-     * Mirrors I18nLoader's LOCALE_MAP for forward compatibility.
-     * @param {string} lang - Short language code (e.g., "pl")
-     * @returns {string} Locale directory name (e.g., "pl_PL")
-     * @private
-     */
-    #resolveLocale(lang) {
-        const LOCALE_MAP = { pl: 'pl_PL', en: 'en_US' }
-        return LOCALE_MAP[lang] || DEFAULT_LOCALE
-    }
 
     /**
      * Subscribe to the EventBus speak channel.

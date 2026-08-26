@@ -20,9 +20,9 @@ Each cached entry has an expiration measured in seconds:
 
 | Parameter | Default | Config Key | Description |
 |-----------|---------|------------|-------------|
-| `conversation_ttl_sec` | 900 s (`"15m"`) | `conversation_ttl_sec` | TTL for the Redis conversation key (human-readable duration or plain seconds) |
-| `max_conversation_turns` | 20 | `max_conversation_turns` | Maximum non-system messages kept in history |
-| `fetch_timeout_ms` | 300 s (`"5m"`) | `fetch_timeout_ms` | Per-request HTTP timeout for LLM calls (human-readable duration or plain ms); timeouts are treated as final -- not retried |
+| `conversation_ttl_sec` | 900 s (`"15m"`) | `ai.conversation_ttl_sec` | TTL for the Redis conversation key (human-readable duration or plain seconds) |
+| `max_conversation_turns` | 20 | `ai.max_conversation_turns` | Maximum non-system messages kept in history |
+| `fetch_timeout_ms` | 300 s (`"5m"`) | `ai.fetch_timeout_ms` | Per-request HTTP timeout for LLM calls (human-readable duration or plain ms); timeouts are treated as final -- not retried |
 
 After every successful user-originated exchange, the TTL resets to the configured value. If no user interacts within the TTL window, the Redis key expires and the conversation is lost on next restart.
 
@@ -129,17 +129,14 @@ Later, when a user message triggers persistence:
 All settings are in `etc/automaton.yaml`:
 
 ```yaml
-# Conversation cache TTL -- human-readable duration ("45s", "15m") or plain seconds
-# (default: 900 = 15 minutes)
-conversation_ttl_sec: "15m"
-
-# Maximum messages kept in conversation history (default: 20)
-max_conversation_turns: 20
-
-# Per-request LLM HTTP timeout -- human-readable duration ("45s", "5m") or plain ms
-# (default: 300 s). Local models on modest hardware can exceed a minute per completion;
-# raise this if you see "Fetch timed out" errors under load.
-fetch_timeout_ms: "5m"
+ai:
+  # Conversation cache TTL -- human-readable duration ("45s", "15m") or plain seconds (default: 900 = 15 min)
+  conversation_ttl_sec: "15m"
+  # Maximum messages kept in conversation history (default: 20)
+  max_conversation_turns: 20
+  # Per-request LLM HTTP timeout -- human-readable duration ("45s", "5m") or plain ms (default: 300 s);
+  # local models on modest hardware can exceed a minute per completion -- raise if you see "Fetch timed out".
+  fetch_timeout_ms: "5m"
 ```
 
 To make conversations expire faster, reduce `conversation_ttl_sec`. Automated announcements are produced by rule-based automations rather than a built-in messenger -- control their cadence per automation (`timer_interval`, `silence_between`; see [weatherman example](../examples/weatherman.md)).

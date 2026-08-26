@@ -1,43 +1,52 @@
 # ================================================================
-# AUTOMATON -- Main Configuration File
+# AUTOMATON -- Main Configuration File (distribution template)
 # ================================================================
-# All behavioral settings in one place. Service connection strings and
-# secrets remain in .env (MQTT_URL, REDIS_URL, AI_API_URL, etc.).
-# ================================================================
-# This is a distribution template. Copy to "automaton.yaml" and customize
-# for your environment. The system automatically falls back to this .dist
-# file if the active config is missing.
+# Copy this file to "automaton.yaml" and customize for your environment;
+# the system falls back to this .dist file if the active config is missing.
+# Behavioral settings live here; connection strings & secrets stay in .env
+# (MQTT_URL, REDIS_URL, AI_API_URL, ...). Full reference: doc/configuration.md.
 # ================================================================
 
-# ================================================================
-# AUTOMATION SECTION
-# ================================================================
-# Controls global automation behavior. Custom automations are defined
-# in separate YAML files under their respective directories.
+# ----------------------------------------------------------------
+# LOCALE -- language + time display (drives AI prompt, TTS voice, UI greetings)
+# ----------------------------------------------------------------
+locale:
+  # BCP 47 code == directory name under etc/i18n/. Available: pl_PL, en_US
+  language: en_US
+  # Time display format: "12h" (01:30pm) or "24h" (13:30)
+  time_format: "24h"
 
-# How long automations skip a device after a human manually changes it.
-# Accepts a human-readable duration ("90s", "25m", "1h") or legacy plain milliseconds;
-# defaults to 15 minutes when omitted. Set to 0 to disable the cooldown entirely.
-human_interaction_cooldown_ms: "15m"
+# ----------------------------------------------------------------
+# AI -- provider + conversation settings (API secret stays in .env)
+# ----------------------------------------------------------------
+ai:
+  model: gemma-4-E2B-it      # required for chat requests
+  max_tokens: -1            # -1 = omit from request, let the provider default apply
+  temperature: 1.0          # sampling 0.0-1.0 (lower=deterministic, higher=creative)
+  fetch_timeout_ms: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models
+  conversation_ttl_sec: "15m"   # how long idle conversations linger in Redis before purge
+  max_conversation_turns: 15    # message turns retained in context window
+  strip_ai_formatting: false    # strip markdown/emoji before UI/TTS
+  stupid_ai_engine: true        # simplify prompts for weak models; set false only with a capable model
 
-# Optional origin-classification tuning (all accept "30s"/"25m"-style durations).
-# Uncomment to override the built-in safe defaults:
-# ai_echo_window_instant_ms: "15s"   # token TTL for ON/OFF/TOGGLE commands
-# ai_echo_window_travel_ms: "90s"    # token TTL for OPEN/CLOSE/POS:N/STOP travel
-# ai_motion_stall_timeout_ms: "20s"  # no-progress window before assuming external stop
-# ai_settle_absorb_window_ms: "10s"  # how long post-completion motor-status churn is absorbed
-# ai_failed_command_backoff_ms: "10m" # retry backoff after a command produced no observable response
+# ----------------------------------------------------------------
+# LOGGER -- Winston console/file transports & log file paths
+# ----------------------------------------------------------------
+logger:
+  file:
+    max_size: 5242880       # bytes per log file (5MB)
+    max_files: 8            # rotated files kept
+    tailable: true
+  console:
+    console_warn_levels: [warn]
+    stderr_levels: [error]
+  path:                     # relative to project root
+    debug: var/log/debug.log
+    warn: var/log/warn.log
+    trace: var/log/trace.log  # TRACE-level diagnostics only; never shown in UI/console
 
-# -- Where to find custom configurations --------------------------
-# These paths can be overridden below under the `paths` section. Defaults are:
-#   configs.network     -> etc/device/network.yaml
-#   configs.interaction -> etc/interaction/interaction.yaml
-#   directories.automation  -> etc/automation/
-#   directories.interaction -> etc/interaction/
-# Uncomment and edit below to override any of these defaults.
-# ================================================================
-
-# Override config/directory paths (optional - commented out = use defaults)
+# Override config/directory locations (optional). Defaults are the etc/* paths below.
+# Uncomment and edit to relocate any of them.
 # paths:
 #   configs:
 #     network: "etc/device/network.yaml"
@@ -46,152 +55,69 @@ human_interaction_cooldown_ms: "15m"
 #     automation: "etc/automation/"
 #     interaction: "etc/interaction/"
 
-# ================================================================
-# i18n SECTION
-# ================================================================
-# Language and time-format settings used across the entire UI.
+# ----------------------------------------------------------------
+# AUTOMATION -- global device/interaction behavior
+# ----------------------------------------------------------------
+automation:
+  # Skip a device this long after a human changes it manually ("90s","15m", or ms; 0 = off)
+  human_interaction_cooldown_ms: "15m"
+  # Optional origin-classification tuning (uncomment to override built-in defaults):
+  # echo_window_instant_ms: "15s"    # token TTL for ON/OFF/TOGGLE commands
+  # echo_window_travel_ms: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
+  # motion_stall_timeout_ms: "20s"   # no-progress window before assuming external stop
+  # settle_absorb_window_ms: "10s"   # post-completion motor-status churn absorption
+  # travel_echo_grace_ms: "2s"       # pre-motion near-target grace window
+  # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
 
-# AI assistant language (system prompt, tool descriptions, UI greetings).
-# Available languages: pl, en
-ai_language: en
+# ----------------------------------------------------------------
+# UI -- terminal interface. See doc/ui/index.md for widget/channel reference.
+# ----------------------------------------------------------------
+ui:
+  status_bar:
+    lines:
+      # Line 1 -- time + time-of-day (left); activity indicator follows the left side
+      - left:
+          - type: time
+            render_seconds: false
+          - type: separator
+            char: " |"
+          - type: time_of_day
+        right: []
+      # Line 2 -- sensor readings (left), connection status (right)
+      - left:
+          - type: temp
+            device: "Living Room Temperature"
+            label: "Living Room"
+            format: "{value}*C"
+          - type: separator
+            char: " |"
+          - type: temp
+            device: "Bedroom Temperature"
+            label: "Bedroom"
+            format: "{value}*C"
+        right:
+          - [{type: state, key: "mqtt.connected", iconTrue: "[o]", iconFalse: "[x]", label: "MQTT"}]
+          - [{type: state, key: "redis.connected", iconTrue: "[o]", iconFalse: "[x]", label: "Redis"}]
 
-# Time display format: "12h" (01:30pm) or "24h" (13:30)
-time_format: "24h"
-# ================================================================
+  layout:
+    min_width: 60           # below this terminal width the UI shows a resize warning instead of rendering
 
-# ================================================================
-# TTS SECTION
-# ================================================================
-# Text-to-speech service auto-enables when TTS_API_URL is set in .env.
-# Output endpoint (speaker device) configured via TTS_TCP_ENDPOINT in .env.
-# Locale-specific voice templates live in etc/i18n/{locale}/tts.yaml.
-# ================================================================
-# ================================================================
-# AI SECTION
-# ================================================================
-# Provider settings sent to the LLM with every chat request, plus
-# conversation management options. API secrets stay in .env.
+  window_settings:
+    max_buffer_lines: 2000  # per-window buffer cap (warning: >5000 raises memory/crash risk)
 
-# Model name to use (e.g., qwen2.5-3b-instruct). Required for chat requests.
-model: gemma-4-E2B-it
-
-# Maximum tokens in the AI response (default: 2048). Use -1 for unlimited
-# (omits max_tokens from the request, letting the provider use its default).
-max_tokens: -1
-
-# Sampling temperature 0.0-1.0 (default: 0.1).
-# Lower = more deterministic; higher = more creative/random.
-temperature: 1.0
-
-# HTTP timeout for LLM requests -- human-readable duration ("45s", "5m", "1h") or plain ms.
-# Local models on modest hardware can take well over a minute per completion, so keep this
-# generous; lower it if you want slow backends surfaced as failures faster. Default: 300 s.
-fetch_timeout_ms: "5m"
-
-# Conversation history TTL -- how long idle conversations linger in Redis before purge.
-# Accepts a human-readable duration ("45s", "15m", "1h") or legacy plain seconds.
-conversation_ttl_sec: "15m"
-
-# Maximum number of message turns to retain in context window.
-# Prevents token explosion during very long conversations.
-max_conversation_turns: 15
-
-# Strip markdown formatting and emoji from AI responses before displaying
-# in UI or passing to TTS. Some AI models use bold/italic/emoji that may not
-# render well in terminal UI or sound awkward when spoken.
-strip_ai_formatting: false
-
-# Treat the configured model as a weak ("stupid") engine: components simplify their
-# prompts by pre-rendering linguistic content instead of asking the model to convert
-# raw data into words itself. Currently used by ttsWeatherMan -- its opening time line
-# ships clock parts as plain digits ("Jest 32 minut po godzinie 9 rano") rather than
-# relying on the model to spell out {% time %}; further accommodations will hook into
-# this switch over time. Set false only with a capable model to restore legacy behaviour.
-stupid_ai_engine: true
-# ================================================================
-
-# ================================================================
-# UI SECTION
-# ================================================================
-# Terminal UI layout, status bar widgets, and window definitions.
-
-status_bar:
-  lines:
-    # Line 1 -- time + time-of-day (left), activity indicator stays after left
-    # Time format is derived from i18n section time_format setting.
-    - left:
-        - type: time
-          render_seconds: false
-        - type: separator
-          char: " |"
-        - type: time_of_day
-      right: []
-    # Line 2 -- sensor readings (left), connection status (right)
-    - left:
-        - type: temp
-          device: "Living Room Temperature"
-          label: "Living Room"
-          format: "{value}*C"
-        - type: separator
-          char: " |"
-        - type: temp
-          device: "Bedroom Temperature"
-          label: "Bedroom"
-          format: "{value}*C"
-      right:
-        # First bracket group
-        - [{type: state, key: "mqtt.connected", iconTrue: "[o]", iconFalse: "[x]", label: "MQTT"}]
-        # Second bracket group
-        - [{type: state, key: "redis.connected", iconTrue: "[o]", iconFalse: "[x]", label: "Redis"}]
-
-layout:
-  # Minimum terminal width before UI clamps rendering width.
-  # Going below this risks OOM crashes during resize due to excessive wrapping.
-  min_width: 60
-
-window_settings:
-  # Maximum buffered entries per window (before trimming oldest).
-  # WARNING: Setting above 5000 significantly increases memory usage and crash risk.
-  max_buffer_lines: 2000
-
-windows:
-  - id: logs
-    channel: "!log"
-    title: "Logs"
-    shortcut: 1
-    readonly: true
-  - id: device
-    channel: "!sensors"
-    title: "Devices"
-    shortcut: 2
-    readonly: true
-  - id: ai
-    channel: "#automaton"
-    title: "AI Chat"
-    shortcut: 3
-    readonly: false
-# ================================================================
-
-# ================================================================
-# LOGGER SECTION
-# ================================================================
-# Winston logger configuration for console and file transports.
-
-logger:
-  # Winston file logger settings.
-  file:
-    max_size: 5242880    # 5MB in bytes
-    max_files: 8
-    tailable: true
-
-  # Winston console logger settings.
-  console:
-    console_warn_levels: [warn]
-    stderr_levels: [error]
-
-  # Logger relative paths (non-absolute paths become relative to project root).
-  path:
-    debug: var/log/debug.log
-    warn: var/log/warn.log
-    trace: var/log/trace.log   # TRACE-level diagnostics only; never shown in UI/console
-# ================================================================
+  windows:                  # IRC-style channels; ! = read-only, # = interactive
+    - id: logs
+      channel: "!log"
+      title: "Logs"
+      shortcut: 1
+      readonly: true
+    - id: device
+      channel: "!sensors"
+      title: "Devices"
+      shortcut: 2
+      readonly: true
+    - id: ai
+      channel: "#automaton"
+      title: "AI Chat"
+      shortcut: 3
+      readonly: false

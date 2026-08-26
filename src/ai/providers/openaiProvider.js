@@ -90,9 +90,9 @@ class OpenAiProvider {
         this.#apiKey = config.apiKey || process.env['AI_API_KEY'] || null
 
         // Provider settings loaded from ConfigService (config param overrides everything)
-        const model       = config.model      ?? ConfigService.get('model')
-        const maxTokens   = config.maxTokens  ?? ConfigService.get('max_tokens', 2048)
-        const temperature = config.temperature ?? ConfigService.get('temperature', 0.1)
+        const model       = config.model      ?? ConfigService.get('ai.model')
+        const maxTokens   = config.maxTokens  ?? ConfigService.get('ai.max_tokens', 2048)
+        const temperature = config.temperature ?? ConfigService.get('ai.temperature', 0.1)
 
         this.#model       = model || ''
         this.#maxTokens   = maxTokens
@@ -249,7 +249,7 @@ class OpenAiProvider {
     #resolveFetchTimeoutMs() {
         let raw
         try {
-            raw = ConfigService.get('fetch_timeout_ms')
+            raw = ConfigService.get('ai.fetch_timeout_ms')
         } catch {
             return DEFAULT_FETCH_TIMEOUT_MS   // config not initialized yet -- default is safe
         }
@@ -259,7 +259,7 @@ class OpenAiProvider {
         if (ms != null && Number.isFinite(ms) && ms > 0) return Math.round(ms)
 
         LoggerService.warn(
-            `Invalid fetch_timeout_ms ${JSON.stringify(raw)} (expected e.g. "5m" or plain ms); using default ${DEFAULT_FETCH_TIMEOUT_MS}ms`,
+            `Invalid ai.fetch_timeout_ms ${JSON.stringify(raw)} (expected e.g. "5m" or plain ms); using default ${DEFAULT_FETCH_TIMEOUT_MS}ms`,
             'OpenAiProvider'
         )
         return DEFAULT_FETCH_TIMEOUT_MS

@@ -64,8 +64,7 @@ function assert(condition, label) {
 const wm = new TtsWeatherManAutomation()
 await wm.init()   // loads #bundle from the active locale + starts a harmless timer (stopped below)
 
-const locale = I18nLoader.getLanguage()
-const dir = ({ pl: 'pl_PL', en: 'en_US' })[locale] || 'pl_PL'
+const dir = I18nLoader.getLocale()
 const bundle = yamlParse(fs.readFileSync(path.join(ROOT, 'etc/i18n', dir, 'weatherman.yaml'), 'utf8'))
 console.log(`\n(using ${dir} weatherman bundle)\n`)
 

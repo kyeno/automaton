@@ -242,7 +242,7 @@ export default class AutomationBase {
 
     /**
      * Return the human-interaction cooldown in milliseconds.
-     * Reads `human_interaction_cooldown_ms` from ConfigService -- either legacy plain
+     * Reads `automation.human_interaction_cooldown_ms` from ConfigService -- either legacy plain
      * milliseconds or a human-readable duration ("25m", "1h"). Missing values silently
      * default to DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS (15 minutes); present but
      * invalid values log a warning and fall back to that same default (fail-open).
@@ -250,12 +250,12 @@ export default class AutomationBase {
      * @returns {number} Cooldown in milliseconds (>= 0)
      */
     getHumanInteractionCooldownMs() {
-        const raw = ConfigService.get('human_interaction_cooldown_ms')
+        const raw = ConfigService.get('automation.human_interaction_cooldown_ms')
         if (raw == null) return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
         const ms = temporal.parseDurationMs(raw)
         if (ms == null || ms < 0) {
             LoggerService.warn(
-                `Invalid human_interaction_cooldown_ms ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS)})`,
+                `Invalid automation.human_interaction_cooldown_ms ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS)})`,
                 `Auto:${this.name}`
             )
             return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS

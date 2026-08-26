@@ -20,7 +20,7 @@ import { wrapAnsi, visibleLen } from '../../lib/terminal.js'
 import AnsiColors from '../../enum/ansiColors.js'
 
 // ---------------------------------------------------------------------------
-// Constants (overridable via ui.yaml windows.max_buffer_lines / layout.min_width)
+// Rendering constants (per-window buffer limit overridable via ui.window_settings.max_buffer_lines)
 // ---------------------------------------------------------------------------
 
 /** Max buffered entries per window; above 5000 risks OOM on narrow-terminal resize. */

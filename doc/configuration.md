@@ -41,30 +41,31 @@ This is the central configuration file. All behavioral settings live here.
 
 ```yaml
 # How long automations skip a device after a human manually changes it.
-# Accepts a human-readable duration ("90s", "25m", "1h") or legacy plain milliseconds;
-# defaults to 15 minutes when omitted. Set to 0 to disable the cooldown entirely.
-human_interaction_cooldown_ms: "25m"
-
-# Optional origin-classification tuning (all accept "30s"/"25m"-style durations).
-# Uncomment to override the built-in safe defaults:
-# ai_echo_window_instant_ms: "15s"   # token TTL for ON/OFF/TOGGLE commands
-# ai_echo_window_travel_ms: "90s"    # token TTL for OPEN/CLOSE/POS:N/STOP travel
-# ai_motion_stall_timeout_ms: "20s"  # no-progress window before assuming external stop
-# ai_settle_absorb_window_ms: "10s"  # how long post-completion motor-status churn is absorbed
-# ai_failed_command_backoff_ms: "10m" # retry backoff after a command produced no observable response
+# Accepts a duration ("90s", "25m", "1h") or legacy plain ms; default 15 min when omitted.
+# Set to 0 to disable the cooldown entirely.
+automation:
+  human_interaction_cooldown_ms: "25m"
+  # Optional origin-classification tuning (durations). Uncomment to override built-in defaults:
+  # echo_window_instant_ms: "15s"    # token TTL for ON/OFF/TOGGLE commands
+  # echo_window_travel_ms: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
+  # motion_stall_timeout_ms: "20s"   # no-progress window before assuming external stop
+  # settle_absorb_window_ms: "10s"   # post-completion motor-status churn absorption
+  # travel_echo_grace_ms: "2s"       # pre-motion near-target grace window
+  # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
 ```
 
-This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are interpreted as milliseconds, strings use the same `<integer><unit>` grammar (`d`, `h`, `m`, `s`). The optional `ai_*` keys fine-tune origin classification — echo windows, stall watchdog, settle absorption of post-completion tails, and retry backoff for unresponsive devices; see [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) for what each one controls.
+This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are interpreted as milliseconds, strings use the same `<integer><unit>` grammar (`d`, `h`, `m`, `s`). The optional origin-classification tuning keys (nested under `automation:`) fine-tune origin classification — echo windows, stall watchdog, settle absorption of post-completion tails, and retry backoff for unresponsive devices; see [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) for what each one controls.
 
-### i18n Section
+### Locale Section
 
 ```yaml
-ai_language: pl        # Available: pl, en
-time_format: "12h"     # Display format: "12h" or "24h"
+locale:
+  language: pl_PL      # Full BCP 47 code == dir under etc/i18n/. Available: pl_PL, en_US
+  time_format: "12h"   # Display format: "12h" or "24h"
 ```
 
-- **`ai_language`** -- Selects which language bundle to load from `etc/i18n/{locale}/`. This determines the system prompt language, tool descriptions, and UI greetings for the AI assistant.
-- **`time_format`** -- Controls how time is displayed throughout the UI.
+- **`locale.language`** -- Full BCP 47 locale code selecting the bundle directory under `etc/i18n/{code}/`. Determines the system prompt language, tool descriptions, UI greetings AND the TTS voice model/effects. Does NOT change the app/UI interface language (no plans to add that).
+- **`locale.time_format`** -- Controls how time is displayed throughout the UI.
 
 ### TTS Configuration
 
@@ -77,22 +78,27 @@ TTS is configured entirely through environment variables and locale-specific i18
 ### AI Section
 
 ```yaml
-model: your-model-name
-max_tokens: -1          # -1 = unlimited (provider default)
-temperature: 1.0        # 0.0 (deterministic) to 1.0 (creative)
-conversation_ttl_sec: "15m"   # Conversation history TTL ("45s"/"15m"/... or legacy seconds)
-max_conversation_turns: 15   # Max message turns retained in context
-stupid_ai_engine: true       # Treat the model as weak -- components pre-render linguistic content instead of relying on it
+ai:
+  model: your-model-name
+  max_tokens: -1              # -1 = unlimited (provider default)
+  temperature: 1.0            # 0.0 (deterministic) to 1.0 (creative)
+  fetch_timeout_ms: "5m"      # Per-request LLM HTTP timeout ("45s"/"5m"/... or plain ms); final, not retried
+  conversation_ttl_sec: "15m" # Conversation history TTL ("45s"/"15m"/... or legacy seconds)
+  max_conversation_turns: 15  # Max message turns retained in context
+  strip_ai_formatting: false  # Strip markdown/emoji from responses before UI/TTS
+  stupid_ai_engine: true      # Treat the model as weak -- components pre-render linguistic content instead of relying on it
 ```
 
 | Setting | Description |
 |---------|-------------|
-| `model` | Model name sent to the LLM provider with every chat request |
-| `max_tokens` | Maximum response tokens; use `-1` to omit (provider default) |
-| `temperature` | Sampling temperature: lower = more deterministic, higher = more creative |
-| `conversation_ttl_sec` | After this period of inactivity, conversation history is purged from Redis (accepts human-readable durations like `"15m"` or plain seconds) |
-| `max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
-| `stupid_ai_engine` | Weak-model accommodation switch (default `true`): when enabled, components simplify prompts by pre-rendering linguistic content up front -- e.g., TtsWeatherMan ships its opening time line with clock parts as plain digits (*"Jest 32 minut po godzinie 9 rano"*) instead of asking the model to spell out `{% time %}`. Set `false` only with a capable model; further small-model accommodations will hook into this flag |
+| `ai.model` | Model name sent to the LLM provider with every chat request |
+| `ai.max_tokens` | Maximum response tokens; use `-1` to omit (provider default) |
+| `ai.temperature` | Sampling temperature: lower = more deterministic, higher = more creative |
+| `ai.fetch_timeout_ms` | Per-request HTTP timeout for LLM calls (human-readable duration or plain ms); timeouts are treated as final — not retried |
+| `ai.conversation_ttl_sec` | After this period of inactivity, conversation history is purged from Redis (accepts human-readable durations like `"15m"` or plain seconds) |
+| `ai.max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
+| `ai.strip_ai_formatting` | Strip markdown formatting and emoji from responses before displaying in UI / passing to TTS |
+| `ai.stupid_ai_engine` | Weak-model accommodation switch (default `true`): when enabled, components simplify prompts by pre-rendering linguistic content up front -- e.g., TtsWeatherMan ships its opening time line with clock parts as plain digits (*"Jest 32 minut po godzinie 9 rano"*) instead of asking the model to spell out `{% time %}`. Set `false` only with a capable model; further small-model accommodations will hook into this flag |
 
 **Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (e.g., TtsWeatherManAutomation announces on its own timer with silence windows and day-position markers; system-originated messages still appear with a yellow `<system>` prefix and stay out of conversation caching). See [Example Automations](./examples/index.md).
 
@@ -103,24 +109,25 @@ The UI section defines the terminal interface layout, status bar widgets, and wi
 #### Status Bar
 
 ```yaml
-status_bar:
-  lines:
-    - left:
-        - type: time
-          render_seconds: false
-        - type: separator
-          char: " |"
-        - type: time_of_day
-      right: []
-    - left:
-        - type: temp
-          device: "Your Device Name"
-          label: "Short Label"
-          format: "{value}*C"
-        # ... more widgets ...
-      right:
-        - [{type: state, key: "mqtt.connected", iconTrue: "[o]", iconFalse: "[x]", label: "MQTT"}]
-        - [{type: state, key: "redis.connected", iconTrue: "[o]", iconFalse: "[x]", label: "Redis"}]
+ui:
+  status_bar:
+    lines:
+      - left:
+          - type: time
+            render_seconds: false
+          - type: separator
+            char: " |"
+          - type: time_of_day
+        right: []
+      - left:
+          - type: temp
+            device: "Your Device Name"
+            label: "Short Label"
+            format: "{value}*C"
+          # ... more widgets ...
+        right:
+          - [{type: state, key: "mqtt.connected", iconTrue: "[o]", iconFalse: "[x]", label: "MQTT"}]
+          - [{type: state, key: "redis.connected", iconTrue: "[o]", iconFalse: "[x]", label: "Redis"}]
 ```
 
 Available widget types for the status bar:
@@ -136,32 +143,33 @@ Available widget types for the status bar:
 #### Layout Settings
 
 ```yaml
-layout:
-  min_width: 60           # Minimum terminal width before UI clamps rendering
-
-window_settings:
-  max_buffer_lines: 2000  # Max buffered entries per window (warning: >5000 increases memory usage)
+ui:
+  layout:
+    min_width: 60           # below this terminal width the UI shows a resize warning instead of rendering
+  window_settings:
+    max_buffer_lines: 2000  # per-window buffer cap (warning: >5000 raises memory/crash risk)
 ```
 
 #### Windows
 
 ```yaml
-windows:
-  - id: logs
-    channel: "!log"
-    title: "Logs"
-    shortcut: 1            # Alt+1 to switch
-    readonly: true
-  - id: device
-    channel: "!sensors"
-    title: "Devices"
-    shortcut: 2
-    readonly: true
-  - id: ai
-    channel: "#automaton"
-    title: "AI Chat"
-    shortcut: 3
-    readonly: false        # Accepts user input
+ui:
+  windows:
+    - id: logs
+      channel: "!log"
+      title: "Logs"
+      shortcut: 1            # Alt+1 to switch
+      readonly: true
+    - id: device
+      channel: "!sensors"
+      title: "Devices"
+      shortcut: 2
+      readonly: true
+    - id: ai
+      channel: "#automaton"
+      title: "AI Chat"
+      shortcut: 3
+      readonly: false        # Accepts user input
 ```
 
 Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows are created only when their backing services are configured -- if AI or TTS is disabled/unconfigured, that window simply does not exist in the UI.
@@ -458,7 +466,7 @@ Defines voice model settings and audio effects per locale. Referenced by the TTS
 1. Create a new directory: `etc/i18n/{locale}/`
 2. Copy and translate `ai.yaml` from an existing bundle
 3. Create `tts.yaml` with appropriate voice model settings
-4. Set `ai_language` in `etc/automaton.yaml` to your locale's language code (e.g., `de` for German)
+4. Set `locale.language` in `etc/automaton.yaml` to your full locale code (e.g., `de_DE` for German)
 
 ---
 

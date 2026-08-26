@@ -59,7 +59,7 @@ Environment variables (.env):
   TTS_API_URL                       TTS server API endpoint (e.g., http://host:port/tts)
   TTS_TCP_ENDPOINT                  Audio playback destination (ip:port)
 
-Behavior settings are in etc/automaton.yaml (ai_language, time_format).
+Behavior settings are in etc/automaton.yaml (locale.language, locale.time_format).
 AI model settings are in etc/ai.yaml (model, max_tokens, temperature, etc.).
 `
 
@@ -327,14 +327,17 @@ async function bootstrap() {
     // Core services (required -- any failure crashes)
     await initService('CacheService', () => CacheService.init())
     await initService('MqttService', () => MqttService.init())
+
+    // I18n Loader must initialize BEFORE the automation/interaction containers so that
+    // locale-dependent automations (e.g., TTS weatherman) resolve their bundles against
+    // the configured locale rather than the built-in default. Reads etc/automaton.yaml
+    // (locale.language + locale.time_format) and loads the active AI language bundle.
+    await initService('I18nLoader', () => I18nLoader.init(), true)
+
     await initService('DeviceContainer', () => DeviceContainer.init())
     await initService('AutomationContainer', () => AutomationContainer.init())
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('NetworkPresence', () => NetworkPresence.init())
-
-    // I18n Loader reads config/i18n.yaml (ai_language + time_format) and loads
-    // the AI language bundle -- all in a single init call.
-    await initService('I18nLoader', () => I18nLoader.init(), true)
 
     // AI Assistant -- optional; skipped entirely when unconfigured so startup logs
     // reflect reality instead of claiming a disabled service initialized.

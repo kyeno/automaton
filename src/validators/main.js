@@ -14,20 +14,46 @@
 'use strict'
 
 export default {
-    // Top-level duration settings -- legacy plain number or human-readable string ("25m")
-    human_interaction_cooldown_ms: { type: ['number', 'string'], required: false },
+    // Automation section -- global device/interaction behavior (durations)
+    automation: {
+        type: 'object',
+        required: false,
+        properties: {
+            human_interaction_cooldown_ms: { type: ['number', 'string'] },
+            echo_window_instant_ms:      { type: ['number', 'string'] },
+            echo_window_travel_ms:       { type: ['number', 'string'] },
+            motion_stall_timeout_ms:     { type: ['number', 'string'] },
+            settle_absorb_window_ms:     { type: ['number', 'string'] },
+            travel_echo_grace_ms:        { type: ['number', 'string'] },
+            failed_command_backoff_ms:   { type: ['number', 'string'] }
+        }
+    },
 
-    // i18n section
-    ai_language: { type: 'string', enum: ['pl', 'en'], required: true },
-    time_format: { type: 'string', enum: ['12h', '24h'], required: true },
+    // Locale / localization section
+    locale: {
+        type: 'object',
+        required: true,
+        properties: {
+            language:    { type: 'string', required: true },
+            time_format: { type: 'string', enum: ['12h', '24h'], required: true }
+        }
+    },
 
-    // AI section
-    model: { type: 'string', required: true },
-    max_tokens: { type: 'number', required: true },
-    temperature: { type: 'number', required: true },
-    conversation_ttl_sec: { type: ['number', 'string'], required: false },
-    max_conversation_turns: { type: 'number', required: false },
-    stupid_ai_engine: { type: 'boolean', required: false },
+    // AI section -- provider + conversation settings
+    ai: {
+        type: 'object',
+        required: true,
+        properties: {
+            model:                 { type: 'string', required: true },
+            max_tokens:            { type: 'number', required: true },
+            temperature:           { type: 'number', required: true },
+            fetch_timeout_ms:      { type: ['number', 'string'], required: false },
+            conversation_ttl_sec:  { type: ['number', 'string'], required: false },
+            max_conversation_turns:{ type: 'number', required: false },
+            strip_ai_formatting:   { type: 'boolean', required: false },
+            stupid_ai_engine:      { type: 'boolean', required: false }
+        }
+    },
 
     // Paths section (optional - provides config file paths and directory paths)
     paths: {
@@ -86,39 +112,45 @@ export default {
         }
     },
 
-    // UI section
-    status_bar: {
+    // UI section -- terminal interface (status bar, layout, buffer limit, windows). See doc/ui/.
+    ui: {
         type: 'object',
         required: true,
         properties: {
-            lines: { type: 'array', required: true }
-        }
-    },
-    layout: {
-        type: 'object',
-        required: false,
-        properties: {
-            min_width: { type: 'number' }
-        }
-    },
-    window_settings: {
-        type: 'object',
-        required: false,
-        properties: {
-            max_buffer_lines: { type: 'number' }
-        }
-    },
-    windows: {
-        type: 'array',
-        required: true,
-        items: {
-            type: 'object',
-            properties: {
-                id: { type: 'string', required: true },
-                channel: { type: 'string', required: true },
-                title: { type: 'string', required: true },
-                shortcut: { type: 'number', required: true },
-                readonly: { type: 'boolean' }
+            status_bar: {
+                type: 'object',
+                required: true,
+                properties: {
+                    lines: { type: 'array', required: true }
+                }
+            },
+            layout: {
+                type: 'object',
+                required: false,
+                properties: {
+                    min_width: { type: 'number' }
+                }
+            },
+            window_settings: {
+                type: 'object',
+                required: false,
+                properties: {
+                    max_buffer_lines: { type: 'number' }
+                }
+            },
+            windows: {
+                type: 'array',
+                required: true,
+                items: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string', required: true },
+                        channel: { type: 'string', required: true },
+                        title: { type: 'string', required: true },
+                        shortcut: { type: 'number', required: true },
+                        readonly: { type: 'boolean' }
+                    }
+                }
             }
         }
     }

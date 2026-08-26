@@ -39,7 +39,7 @@ import temporal from '../../lib/date.js'
  * Zigbee2MQTT state confirmations typically arrive within 500ms-3s; this covers
  * network latency and broker reconnects while keeping the attribution window
  * short enough that a later manual toggle is not mistaken for our own
- * confirmation. Override with `ai_echo_window_instant_ms` in main config.
+ * confirmation. Override with `automation.echo_window_instant_ms` in main config.
  * @type {number}
  */
 const INSTANT_ECHO_WINDOW_DEFAULT_MS = 15_000
@@ -49,7 +49,7 @@ const INSTANT_ECHO_WINDOW_DEFAULT_MS = 15_000
  * Roller shutters take ~40-60 seconds to complete full travel, so the token
  * must outlive the whole motion -- forward-progress reports keep refreshing it
  * until the target is reached or an external override is detected. Override
- * with `ai_echo_window_travel_ms` in main config.
+ * with `automation.echo_window_travel_ms` in main config.
  * @type {number}
  */
 const TRAVEL_ECHO_WINDOW_DEFAULT_MS = 90_000
@@ -59,7 +59,7 @@ const TRAVEL_ECHO_WINDOW_DEFAULT_MS = 90_000
  * forward progress for this long, the movement is presumed to have been stopped
  * externally (e.g., wall-switch STOP on an unmodeled device) and origin flips
  * to human immediately. Forward-progress reports re-arm the watchdog. Override
- * with `ai_motion_stall_timeout_ms` in main config.
+ * with `automation.motion_stall_timeout_ms` in main config.
  * @type {number}
  */
 const MOTION_STALL_TIMEOUT_DEFAULT_MS = 20_000
@@ -71,7 +71,7 @@ const MOTION_STALL_TIMEOUT_DEFAULT_MS = 20_000
  * are absorbed instead of being misread as external input. Any motion beyond the
  * settle-wobble tolerance exits absorption immediately and is classified normally,
  * so a genuine human action right after completion is still caught in one report.
- * Override with `ai_settle_absorb_window_ms` in main config.
+ * Override with `automation.settle_absorb_window_ms` in main config.
  * @type {number}
  */
 const SETTLE_ABSORB_WINDOW_DEFAULT_MS = 10_000
@@ -82,7 +82,7 @@ const SETTLE_ABSORB_WINDOW_DEFAULT_MS = 10_000
  * last-known (possibly stale) state, and zigbee2mqtt may advertise an estimate already at
  * target, all before any physical motion has started. Such early matches do not consume
  * the token; after the grace elapses normal immediate confirmation resumes. Override with
- * `ai_travel_echo_grace_ms` in main config.
+ * `automation.travel_echo_grace_ms` in main config.
  * @type {number}
  */
 const TRAVEL_ECHO_GRACE_DEFAULT_MS = 2_000
@@ -92,7 +92,7 @@ const TRAVEL_ECHO_GRACE_DEFAULT_MS = 2_000
  * produced no observable response at all (offline/faulty device). Prevents hammering
  * a dead actuator every tick while never giving up permanently -- any real state
  * change on the device clears the backoff early. Override with
- * `ai_failed_command_backoff_ms` in main config.
+ * `automation.failed_command_backoff_ms` in main config.
  * @type {number}
  */
 const FAILED_COMMAND_BACKOFF_DEFAULT_MS = 10 * 60_000
@@ -143,7 +143,7 @@ const PENDING_MARKER_KEY_SUFFIX = ':pending'
 /**
  * Fallback duration (seconds) for the human-interaction cooldown applied to a
  * device, used only when main config omits or misconfigures
- * `human_interaction_cooldown_ms`. Mirrors DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
+ * `automation.human_interaction_cooldown_ms`. Mirrors DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
  * from AutomationBase (15 minutes). Written as the Redis cooldown key TTL so
  * automations can check remaining time via getHumanCooldownRemaining().
  * @type {number}
@@ -888,32 +888,32 @@ export default class DeviceBase {
 
     /**
      * Echo window for instant commands (ON/OFF/TOGGLE), read live from main config
-     * (`ai_echo_window_instant_ms`) so the value can be tuned without code changes.
+     * (`automation.echo_window_instant_ms`) so the value can be tuned without code changes.
      * Missing values silently use INSTANT_ECHO_WINDOW_DEFAULT_MS; present but
      * invalid ones log a warning and fall back to that same default (fail-open).
      * @returns {number} Window in milliseconds (> 0)
      */
     getInstantEchoWindowMs() {
-        return this.#durationFromConfig('ai_echo_window_instant_ms', INSTANT_ECHO_WINDOW_DEFAULT_MS)
+        return this.#durationFromConfig('automation.echo_window_instant_ms', INSTANT_ECHO_WINDOW_DEFAULT_MS)
     }
 
     /**
      * Echo window for travel commands (OPEN/CLOSE/POS:N/STOP); see
      * {@link getInstantEchoWindowMs} for resolution rules. Config key:
-     * `ai_echo_window_travel_ms`.
+     * `automation.echo_window_travel_ms`.
      * @returns {number} Window in milliseconds (> 0)
      */
     getTravelEchoWindowMs() {
-        return this.#durationFromConfig('ai_echo_window_travel_ms', TRAVEL_ECHO_WINDOW_DEFAULT_MS)
+        return this.#durationFromConfig('automation.echo_window_travel_ms', TRAVEL_ECHO_WINDOW_DEFAULT_MS)
     }
 
     /**
      * Motion-stall watchdog timeout; see {@link getInstantEchoWindowMs} for
-     * resolution rules. Config key: `ai_motion_stall_timeout_ms`.
+     * resolution rules. Config key: `automation.motion_stall_timeout_ms`.
      * @returns {number} Timeout in milliseconds (> 0)
      */
     getMotionStallTimeoutMs() {
-        return this.#durationFromConfig('ai_motion_stall_timeout_ms', MOTION_STALL_TIMEOUT_DEFAULT_MS)
+        return this.#durationFromConfig('automation.motion_stall_timeout_ms', MOTION_STALL_TIMEOUT_DEFAULT_MS)
     }
 
     /**
@@ -922,17 +922,17 @@ export default class DeviceBase {
      * @returns {number} Window in milliseconds
      */
     getSettleAbsorbWindowMs() {
-        return this.#durationFromConfig('ai_settle_absorb_window_ms', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
+        return this.#durationFromConfig('automation.settle_absorb_window_ms', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
     }
 
     /**
      * Pre-motion grace during which near-target travel reports cannot confirm completion;
      * see {@link getInstantEchoWindowMs} for resolution rules. Config key:
-     * `ai_travel_echo_grace_ms`.
+     * `automation.travel_echo_grace_ms`.
      * @returns {number} Grace window in milliseconds (> 0)
      */
     getTravelEchoGraceMs() {
-        return this.#durationFromConfig('ai_travel_echo_grace_ms', TRAVEL_ECHO_GRACE_DEFAULT_MS)
+        return this.#durationFromConfig('automation.travel_echo_grace_ms', TRAVEL_ECHO_GRACE_DEFAULT_MS)
     }
 
     /**
@@ -941,7 +941,7 @@ export default class DeviceBase {
      * @returns {number} Backoff in milliseconds
      */
     getFailedCommandBackoffMs() {
-        return this.#durationFromConfig('ai_failed_command_backoff_ms', FAILED_COMMAND_BACKOFF_DEFAULT_MS)
+        return this.#durationFromConfig('automation.failed_command_backoff_ms', FAILED_COMMAND_BACKOFF_DEFAULT_MS)
     }
 
     /**
@@ -989,7 +989,7 @@ export default class DeviceBase {
 
     /**
      * Resolve the human-interaction cooldown duration in whole seconds for the
-     * Redis cooldown key TTL. Reads `human_interaction_cooldown_ms` from main
+     * Redis cooldown key TTL. Reads `automation.human_interaction_cooldown_ms` from main
      * config -- either legacy plain milliseconds or a human-readable duration
      * ("25m", "1h") via temporal.parseDurationMs(). Missing values silently fall back
      * to HUMAN_INTERACTION_COOLDOWN_SECONDS; present but invalid ones log a warning
@@ -999,7 +999,7 @@ export default class DeviceBase {
      * @returns {number} Cooldown in whole seconds (>= 0)
      */
     #humanCooldownSeconds() {
-        const raw = ConfigService.get('human_interaction_cooldown_ms')
+        const raw = ConfigService.get('automation.human_interaction_cooldown_ms')
         if (raw == null) return HUMAN_INTERACTION_COOLDOWN_SECONDS
         const ms = temporal.parseDurationMs(raw)
         if (ms == null || ms < 0) {

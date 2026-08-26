@@ -19,8 +19,8 @@
 import AnsiColors from '../../enum/ansiColors.js'
 import { visibleLen } from '../../lib/terminal.js'
 
-/** Minimum usable slot width below which rendering is suppressed. */
-const MIN_SLOT_WIDTH = 50
+/** Default minimum usable slot width below which rendering is suppressed. */
+const DEFAULT_MIN_SLOT_WIDTH = 50
 
 // ---------------------------------------------------------------------------
 // UiLayoutManager
@@ -34,6 +34,7 @@ const MIN_SLOT_WIDTH = 50
 class UiLayoutManager {
     #term
     #slots = {}
+    #minSlotWidth = DEFAULT_MIN_SLOT_WIDTH
 
     // -- Initialization ---------------------------------------------------
 
@@ -124,14 +125,32 @@ class UiLayoutManager {
     }
 
     /**
+     * Override the minimum terminal width at which the UI renders normally.
+     * Below this width the "terminal too narrow" warning replaces content,
+     * guarding against OOM from excessive text wrapping on resize.
+     * Invalid values are ignored (the default floor stays in effect).
+     * @param {number} value - Minimum usable slot/terminal width in columns (>0)
+     */
+    setMinWidth(value) {
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+            this.#minSlotWidth = Math.floor(value)
+        }
+    }
+
+    /** Current minimum-width floor used by {@link isTooNarrow}. */
+    get minSlotWidth() {
+        return this.#minSlotWidth
+    }
+
+    /**
      * Check if any slot is too narrow for safe rendering.
-     * Returns true when the main slot width is below MIN_SLOT_WIDTH,
-     * indicating renderers should bail out and show a warning instead.
+     * Returns true when the main slot width is below the configured minimum
+     * width, indicating renderers should bail out and show a warning instead.
      * @returns {boolean}
      */
     isTooNarrow() {
         const slot = this.#slots['main']
-        return !slot || slot.width < MIN_SLOT_WIDTH
+        return !slot || slot.width < this.#minSlotWidth
     }
 
     /**

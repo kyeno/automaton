@@ -1,11 +1,11 @@
 /**
  * I18n Loader -- Unified Internationalization & Formatting Configuration Manager.
  *
- * Loads etc/automaton.yaml which controls AI language (`ai_language`) and time format
- * (`time_format`) settings for consistent display across the entire UI (status bar,
- * log window, AI chat). Also loads the AI language bundle from
- * etc/ai/i18n/{lang}.yaml. Provides a singleton so all modules share the same
- * loaded configuration and bundle.
+ * Loads etc/automaton.yaml which controls the active locale (`locale.language`) and
+ * time format (`locale.time_format`) settings for consistent display across the
+ * entire UI (status bar, log window, AI chat). Also loads the AI language bundle
+ * from etc/i18n/{locale}/ai.yaml. Provides a singleton so all modules share the
+ * same loaded configuration and bundle.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -30,14 +30,8 @@ import { PROJECT_ROOT } from '../lib/projectRoot.js'
 /** Root directory containing per-locale i18n subdirectories. */
 const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
 
-/** Default fallback language. */
-const DEFAULT_LANGUAGE = 'pl'
-
-/** Short-code -> BCP 47 locale mapping (e.g., config "pl" -> directory "pl_PL"). */
-const LOCALE_MAP = { pl: 'pl_PL', en: 'en_US' }
-
-/** Supported short-language codes as written in automaton.yaml ai_language. */
-const SUPPORTED_LANGUAGES = Object.keys(LOCALE_MAP)
+/** Default fallback locale (directory name under etc/i18n/). */
+const DEFAULT_LOCALE = 'pl_PL'
 
 /** Valid time format values. */
 const VALID_TIME_FORMATS = ['12h', '24h']
@@ -55,7 +49,7 @@ const DEFAULT_TIME_FORMAT = '12h'
  */
 class SI18nLoader {
 
-    /** @type {string} */ #language = DEFAULT_LANGUAGE
+    /** @type {string} */ #locale = DEFAULT_LOCALE
     /** @type {string} */ #timeFormat = DEFAULT_TIME_FORMAT
     /** @type {Record<string, unknown>|null} */ #bundle = null
     /** @type {boolean} */ #initialized = false
@@ -72,25 +66,19 @@ class SI18nLoader {
         await this.#loadBundle()
         this.#initialized = true
         LoggerService.debug(
-            `i18n: ai_language='${this.#language}', time_format='${this.#timeFormat}'`,
+            `i18n: language='${this.#locale}', time_format='${this.#timeFormat}'`,
             'I18nLoader'
         )
     }
 
     /**
-     * Return the resolved AI language code (e.g., 'pl', 'en').
+     * Return the active locale directory name (e.g., 'pl_PL', 'en_US').
+     * This is automaton.yaml's locale.language value and matches a subdirectory
+     * under etc/i18n/. Consumers use it directly to build bundle file paths.
      * @returns {string}
      */
-    getLanguage() {
-        return this.#language
-    }
-
-    /**
-     * Alias for getLanguage() -- used by consumers that expect "ai_language".
-     * @returns {string}
-     */
-    getAiLanguage() {
-        return this.#language
+    getLocale() {
+        return this.#locale
     }
 
     /**
@@ -137,7 +125,7 @@ class SI18nLoader {
      */
     formatNumber(value, fractionDigits = 2) {
         // Convert underscore to hyphen for BCP 47 compliance (pl_PL -> pl-PL)
-        const locale = (LOCALE_MAP[this.#language] || this.#language).replace('_', '-')
+        const locale = this.#locale.replace('_', '-')
         try {
             let formatted = new Intl.NumberFormat(locale, {
                 minimumFractionDigits: 0,
@@ -165,7 +153,7 @@ class SI18nLoader {
      * @returns {string} Formatted time string respecting locale and time_format config
      */
     formatTime(date = new Date()) {
-        const locale = (LOCALE_MAP[this.#language] || this.#language).replace('_', '-')
+        const locale = this.#locale.replace('_', '-')
         try {
             return new Intl.DateTimeFormat(locale, {
                 hour: 'numeric',
@@ -203,22 +191,34 @@ class SI18nLoader {
     // -- Private Helpers --------------------------------------------------
 
     /**
-     * Load and parse etc/automaton.yaml to extract ai_language and time_format.
+     * Load and parse etc/automaton.yaml to extract locale.language and locale.time_format.
      * @private
      */
     #loadConfig() {
         try {
             // ConfigService is initialized early in main.js before LoggerService,
             // so it's guaranteed to be ready by the time I18nLoader.init() runs.
-            const lang = ConfigService.get('ai_language')
-            const tf   = ConfigService.get('time_format')
+            const lang = ConfigService.get('locale.language')
+            const tf   = ConfigService.get('locale.time_format')
 
-            // Parse ai_language
-            if (lang && SUPPORTED_LANGUAGES.includes(String(lang).trim().toLowerCase())) {
-                this.#language = String(lang).trim().toLowerCase()
+            // Parse locale.language -- value must name an existing bundle directory.
+            if (lang) {
+                const candidate = String(lang).trim()
+                if (fs.existsSync(path.join(I18N_ROOT, candidate))) {
+                    this.#locale = candidate
+                } else {
+                    const available = fs.readdirSync(I18N_ROOT, { withFileTypes: true })
+                        .filter((e) => e.isDirectory())
+                        .map((e) => e.name)
+                        .join(', ') || '(none)'
+                    LoggerService.warn(
+                        `Unknown locale '${candidate}' -- no bundle at etc/i18n/${candidate} -- falling back to '${DEFAULT_LOCALE}'. Available locales: ${available}`,
+                        'I18nLoader'
+                    )
+                }
             }
 
-            // Parse time_format
+            // Parse locale.time_format
             if (tf && VALID_TIME_FORMATS.includes(String(tf).trim())) {
                 this.#timeFormat = String(tf).trim()
             }
@@ -231,34 +231,22 @@ class SI18nLoader {
     }
 
     /**
-     * Resolve a short language code to its BCP 47 locale directory name.
-     * Falls back to the input itself if no mapping exists (forward-compatible).
-     * @param {string} lang - Short language code (e.g., "pl")
-     * @returns {string} Locale directory name (e.g., "pl_PL")
-     * @private
-     */
-    #resolveLocale(lang) {
-        return LOCALE_MAP[lang] || lang
-    }
-
-    /**
-     * Load the YAML bundle file for the determined language from the locale
+     * Load the YAML bundle file for the determined locale from the locale
      * subdirectory (e.g., etc/i18n/pl_PL/ai.yaml).
      * @async
      * @private
      */
     async #loadBundle() {
-        const locale   = this.#resolveLocale(this.#language)
-        const filePath = path.join(I18N_ROOT, locale, 'ai.yaml')
+        const filePath = path.join(I18N_ROOT, this.#locale, 'ai.yaml')
 
         try {
             if (!fs.existsSync(filePath)) {
                 LoggerService.warn(
-                    `AI i18n bundle not found: ${filePath} -- falling back to '${DEFAULT_LANGUAGE}'`,
+                    `AI i18n bundle not found: ${filePath} -- falling back to '${DEFAULT_LOCALE}'`,
                     'I18nLoader'
                 )
-                this.#language = DEFAULT_LANGUAGE
-                const fallbackPath = path.join(I18N_ROOT, this.#resolveLocale(DEFAULT_LANGUAGE), 'ai.yaml')
+                this.#locale = DEFAULT_LOCALE
+                const fallbackPath = path.join(I18N_ROOT, DEFAULT_LOCALE, 'ai.yaml')
                 const doc = yamlParseDocument(fs.readFileSync(fallbackPath, 'utf8'))
                 this.#bundle = doc.contents?.toJSON()
                 return
@@ -268,7 +256,7 @@ class SI18nLoader {
             this.#bundle = doc.contents?.toJSON() || {}
         } catch (error) {
             LoggerService.error(
-                `Failed to load AI i18n bundle for '${this.#language}': ${error.message}`,
+                `Failed to load AI i18n bundle for '${this.#locale}': ${error.message}`,
                 'I18nLoader'
             )
             this.#bundle = {}

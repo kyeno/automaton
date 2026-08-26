@@ -202,7 +202,7 @@ class AiWindow extends BaseWindow {
      */
     #showWelcome() {
         // Model name loaded from ConfigService instead of direct YAML read
-        const model = ConfigService.get('model', 'unknown')
+        const model = ConfigService.get('ai.model', 'unknown')
         let host = process.env['AI_API_URL'] || ''
 
         // Strip protocol and trailing path segments (/v1, etc.)
