@@ -1,6 +1,7 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- Create "greeter" TTS/AI automation that will work in tandem with network monitor and greet people when their computers go online
 - Postpone automations so they don't fire all at once
 - Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
