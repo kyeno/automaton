@@ -54,7 +54,7 @@ personas:
 - VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
 
 ### Slash commands
-- Add slash command to debug config
+- Add slash command to debug config; allow live config editions with /config set something value commands with validators
 +/- Add slash commands to debug automation container, interaction container, device container
 - Add slash commands to debug state and eventbus(?); probably rewrite /status command
 - Consider using autocompletion for the commands
