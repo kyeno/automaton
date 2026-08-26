@@ -2,7 +2,7 @@
 
 ## Overview
 
-Automaton persists AI conversation history in Redis so that user-initiated chats survive application restarts. System-originated messages -- e.g., automated announcements sent by rule-based automations -- are isolated entirely: they never linger in the shared in-memory history between turns and are excluded from caching, so they can neither slow down later prompts nor extend TTLs indefinitely. All turns (user- and system-origin) run serialized through an internal FIFO queue, so concurrent callers can never interleave against one conversation.
+Automaton persists AI conversation history in Redis so that user-initiated chats survive application restarts. System-originated messages -- e.g., automated announcements sent by rule-based automations -- are isolated entirely: they never linger in the shared in-memory history between turns and are excluded from caching, so they can neither slow down later prompts nor extend TTLs indefinitely. By default each such turn also runs **standalone** -- the LLM sees only a fresh system prompt plus its own message (`ai.include_chat_history_in_system_calls`, default `false`); set it to `true` when an announcement should be aware of prior chat context. All turns (user- and system-origin) run serialized through an internal FIFO queue, so concurrent callers can never interleave against one conversation.
 
 ---
 
@@ -67,7 +67,7 @@ Rule-based automations send automated prompts to the AI on their own timers (e.g
 
 There are now **three** layers of protection:
 
-1. **Turn isolation (primary)** - When `processMessage()` detects `options.origin === ChatMessageOrigin.SYSTEM`, it snapshots the message-array length before pushing the prompt and restores it in a `finally` block after the turn completes -- success, tool-loop completion, or failure alike. A system turn therefore leaves zero residue: no accumulated context growth, and no orphan user messages when the LLM call fails mid-turn.
+1. **Turn isolation (primary)** - When `processMessage()` detects `options.origin === ChatMessageOrigin.SYSTEM`, the turn leaves zero residue behind either way it runs: by default (`ai.include_chat_history_in_system_calls: false`) it executes standalone against a freshly built `[systemPrompt]` array that is discarded afterwards -- no chat history ever reaches the LLM; with the flag set to `true`, the message-array length is instead snapshotted before pushing the prompt and restored in a `finally` block after the turn completes -- success, tool-loop completion, or failure alike. A system turn therefore never accumulates context growth, and failed ticks leave no orphan user messages behind.
 2. **Skip persistence call** - System-origin turns skip both `#trimConversation()` and `#persistConversation()` entirely, so they cannot reset the Redis TTL.
 3. **Filter during persistence** - Even if system-originated messages were present in memory (e.g., legacy state restored before an upgrade), `#persistConversation()` filters them out via `_origin !== 'system'` before writing to Redis.
 
@@ -99,20 +99,24 @@ User types message in chat input
   └─ Return response to UI
 ```
 
-### System-Originated Exchange (Isolated, Not Cached)
+### System-Originated Exchange (Isolated, Not Cached, Standalone by Default)
 
 ```
 Rule-based automation runs (e.g., weatherman timer tick)
   │
   ├─ processMessage(prompt, { origin: 'system' })      [serialized via internal FIFO queue]
-  ├─ Snapshot #messages.length                         ← isolation baseline
-  ├─ Push user message to #messages (_origin: 'system')
+  ├─ ai.include_chat_history_in_system_calls?
+  │    false (default): swap #messages for a fresh [systemPrompt] array
+  │                     → model sees ONLY system prompt + announcement (standalone, faster inference)
+  │    true:            snapshot #messages.length over the full shared history
+  │                     → model sees system + prior conversation + announcement
+  ├─ Push user message (_origin: 'system')
   ├─ Tool execution loop (all msgs get _origin: 'system')
   ├─ First AI text response received
   ├─ #trimConversation()          ← SKIPPED (isSystemOrigin = true)
   ├─ #persistConversation()       ← SKIPPED (isSystemOrigin = true)
   ├─ EventBus.emit('tts:speak')   ← still fired
-  ├─ Restore #messages.length     ← finally block -- zero residue, even when the LLM call fails
+  ├─ Restore saved state (array reference or length)   ← finally block -- zero residue, even when the LLM call fails
   └─ Return response to UI        (or rethrow so the automation can degrade visibly)
 
 Later, when a user message triggers persistence:

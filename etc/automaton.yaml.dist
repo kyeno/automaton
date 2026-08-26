@@ -28,6 +28,7 @@ ai:
   max_conversation_turns: 15    # message turns retained in context window
   strip_ai_formatting: false    # strip markdown/emoji before UI/TTS
   stupid_ai_engine: true        # simplify prompts for weak models; set false only with a capable model
+  include_chat_history_in_system_calls: false  # system-origin announcements receive prior chat context; default false keeps them standalone (faster inference)
 
 # ----------------------------------------------------------------
 # LOGGER -- Winston console/file transports & log file paths

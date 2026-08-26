@@ -87,6 +87,7 @@ ai:
   max_conversation_turns: 15  # Max message turns retained in context
   strip_ai_formatting: false  # Strip markdown/emoji from responses before UI/TTS
   stupid_ai_engine: true      # Treat the model as weak -- components pre-render linguistic content instead of relying on it
+  include_chat_history_in_system_calls: false  # Announcements (system-origin turns) receive prior chat context; false = standalone [default]
 ```
 
 | Setting | Description |
@@ -99,6 +100,7 @@ ai:
 | `ai.max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
 | `ai.strip_ai_formatting` | Strip markdown formatting and emoji from responses before displaying in UI / passing to TTS |
 | `ai.stupid_ai_engine` | Weak-model accommodation switch (default `true`): when enabled, components simplify prompts by pre-rendering linguistic content up front -- e.g., TtsWeatherMan ships its opening time line with clock parts as plain digits (*"Jest 32 minut po godzinie 9 rano"*) instead of asking the model to spell out `{% time %}`. Set `false` only with a capable model; further small-model accommodations will hook into this flag |
+| `ai.include_chat_history_in_system_calls` | Controls whether system-origin turns (rule-based automation announcements such as TtsWeatherMan) include accumulated chat history in their LLM request. Default `false`: each announcement runs standalone against a fresh system prompt + its own message -- faster inference and deterministic rewrites for small models. Set `true` when an announcement should be aware of prior conversation context |
 
 **Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (e.g., TtsWeatherManAutomation announces on its own timer with silence windows and day-position markers; system-originated messages still appear with a yellow `<system>` prefix and stay out of conversation caching). See [Example Automations](./examples/index.md).
 

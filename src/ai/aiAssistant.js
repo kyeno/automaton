@@ -165,11 +165,14 @@ class SAiAssistant {
       * but the shared conversation is only ever driven one turn at a time -- in request
       * order. A failing turn still releases the queue for the next caller.
       *
-      * System-origin turns ({@link ChatMessageOrigin.SYSTEM}) are isolated from the
-      * shared history: the message array length is snapshotted before the prompt is
-      * pushed and restored on every exit path (success, tool-loop completion or failure),
-      * so weather-style announcements never accumulate in context and failed ticks leave
-      * no orphan user messages behind.
+      * System-origin turns ({@link ChatMessageOrigin.SYSTEM}) are isolated from the shared
+      * history either way they run: by default they execute standalone against a fresh
+      * system-prompt-only array with no chat history sent at all (see
+      * {@link #systemCallsIncludeChatHistory}), and when ai.include_chat_history_in_system_calls
+      * is enabled the message-array length is instead snapshotted before the prompt is pushed
+      * and restored on every exit path (success, tool-loop completion or failure). Either way,
+      * weather-style announcements never accumulate in context and failed ticks leave no orphan
+      * user messages behind.
       *
       * @param {string} userInput - The user's input message.
       * @param {Object} [options] - Optional processing options.
@@ -189,23 +192,55 @@ class SAiAssistant {
     }
 
     /**
-     * Run one turn with system-origin isolation: snapshot where the shared conversation
-     * stood before the prompt was pushed and restore it on every exit path -- success,
-     * tool-loop completion, or failure. User-origin turns are left untouched.
+     * Whether system-origin turns include accumulated chat history in their LLM request.
+     * Governed by ai.include_chat_history_in_system_calls (default false): standalone
+     * announcements see only the fresh system prompt plus their own message -- faster
+     * inference and deterministic rewrites for small models; set true explicitly when an
+     * announcement should be aware of prior conversation context.
+     *
+     * Exposed without the # prefix so unit tests can pin both payload shapes against a
+     * stubbed provider (the singleton instance itself is frozen).
+     * @returns {boolean} true only when the flag is explicitly enabled
+     */
+    systemCallsIncludeChatHistory() {
+        return ConfigService.get('ai.include_chat_history_in_system_calls', false) === true
+    }
+
+    /**
+     * Run one turn with system-origin isolation: user-origin turns execute directly on the
+     * shared conversation; system-origin runs leave zero residue behind -- either executing
+     * standalone against a fresh [systemPrompt] array (default, no chat history sent) or
+     * trimming their own messages off afterwards in context-aware mode. The FIFO queue
+     * serializes turns, so swapping #messages mid-slot cannot interleave with another caller.
      * @param {string} userInput - The user's input message.
      * @param {Object} [options] - Optional processing options (see processMessage()).
      * @returns {Promise<string>} The assistant's textual reply.
      */
     async #runTurnIsolated(userInput, options = {}) {
-        const isSystemOrigin = (options.origin || 'user') === ChatMessageOrigin.SYSTEM
-        const restoreAt = isSystemOrigin ? this.#messages.length : null
+        const origin = options.origin || 'user'
+        if (origin !== ChatMessageOrigin.SYSTEM) {
+            return await this.#executeTurn(userInput, options)
+        }
 
+        // Standalone mode (default): the model sees only the freshly built system prompt plus
+        // this announcement. Shared state is restored in finally even when the LLM call fails.
+        if (!this.systemCallsIncludeChatHistory()) {
+            const savedMessages = this.#messages
+            this.#messages = [{ role: 'system', content: this.getEffectiveSystemPrompt() }]
+            try {
+                return await this.#executeTurn(userInput, options)
+            } finally {
+                this.#messages = savedMessages
+            }
+        }
+
+        // Context-aware mode: full history visible to the turn; snapshot where the shared
+        // conversation stood before the prompt was pushed and restore it on every exit path.
+        const restoreAt = this.#messages.length
         try {
             return await this.#executeTurn(userInput, options)
         } finally {
-            if (isSystemOrigin && restoreAt !== null) {
-                this.#messages.length = restoreAt
-            }
+            this.#messages.length = restoreAt
         }
     }
 

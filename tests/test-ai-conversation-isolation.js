@@ -6,7 +6,9 @@
  * replies referencing prior weather reports) and where a failed tick could leave an
  * orphan user message with no assistant reply behind. Also pins FIFO serialization so
  * concurrent callers (chat input vs periodic automation) can never interleave pushes or
- * tool loops against one conversation.
+ * tool loops against one conversation. Also pins ai.include_chat_history_in_system_calls:
+ * by default a system call sees only [system prompt, announcement] -- no prior chat text;
+ * with the flag enabled the same call carries full history. Residue guarantees hold either way.
  *
  * Stubs OpenAiProvider.chat with scripted responses + a call recorder; drives the real
  * processMessage() pipeline. No network or MQTT required; if Redis is running, any
@@ -142,6 +144,41 @@ try {
     const overlap = cA.startedAt < cB.finishedAt && cB.startedAt < cA.finishedAt
     assert(calls.length >= 2 && !overlap, `chat calls do not temporally overlap (${calls.length} recorded)`)
     assert(baseline() === l4 + 4, 'both user turns fully present afterwards (no cross-contamination)')
+
+    // ── 5. ai.include_chat_history_in_system_calls toggle ────────────────
+    console.log('── 5. chat-history inclusion for system calls ──')
+    AiAssistant.clearConversation()
+    scripted = [{ role: 'assistant', content: 'SEED_REPLY' }]
+    await AiAssistant.processMessage('SEED_USER hello there', {})
+    const lSeed = baseline()   // [system, SEED_USER, SEED_REPLY]
+
+    // Default (flag absent/false) -- standalone payload, zero residue in shared state
+    calls.length = 0
+    scripted = [{ role: 'assistant', content: 'C.' }]
+    reply = await AiAssistant.processMessage('WEATHER_GAMMA gamma report.', { origin: ChatMessageOrigin.SYSTEM })
+    assert(reply === 'C.', 'standalone tick still returns its reply to the caller')
+    let gCall = calls[calls.length - 1]
+    assert(gCall.messages.length === 2, `default mode sends only [system, prompt] (${gCall.messages.length} msgs sent)`)
+    assert(JSON.stringify(gCall.messages).includes('WEATHER_GAMMA'), 'announcement text present in standalone payload')
+    assert(!JSON.stringify(gCall.messages).includes('SEED_'), 'no seeded user history leaked into standalone payload')
+    assert(baseline() === lSeed, 'shared history intact after a standalone tick')
+
+    // Flag on -- context-aware payload; residue guarantee must hold here too.
+    // AiAssistant is a frozen singleton instance -- patch its PROTOTYPE instead.
+    const assistantProto = Object.getPrototypeOf(AiAssistant)
+    const originalInclude = assistantProto.systemCallsIncludeChatHistory
+    assistantProto.systemCallsIncludeChatHistory = () => true
+    try {
+        calls.length = 0
+        scripted = [{ role: 'assistant', content: 'D.' }]
+        await AiAssistant.processMessage('WEATHER_DELTA delta report.', { origin: ChatMessageOrigin.SYSTEM })
+        const dCall = calls[calls.length - 1]
+        assert(dCall.messages.length > 2, `context-aware mode includes prior conversation (${dCall.messages.length} msgs sent)`)
+        assert(JSON.stringify(dCall.messages).includes('SEED_USER'), 'seeded user message visible to context-aware tick')
+        assert(baseline() === lSeed, 'shared history intact after a context-aware tick as well')
+    } finally {
+        assistantProto.systemCallsIncludeChatHistory = originalInclude
+    }
 } finally {
     OpenAiProvider.prototype.chat = originalChat
     if (CacheService.isConnected()) {

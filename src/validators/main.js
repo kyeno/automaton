@@ -51,7 +51,8 @@ export default {
             conversation_ttl_sec:  { type: ['number', 'string'], required: false },
             max_conversation_turns:{ type: 'number', required: false },
             strip_ai_formatting:   { type: 'boolean', required: false },
-            stupid_ai_engine:      { type: 'boolean', required: false }
+            stupid_ai_engine:      { type: 'boolean', required: false },
+            include_chat_history_in_system_calls: { type: 'boolean', required: false }
         }
     },
 
