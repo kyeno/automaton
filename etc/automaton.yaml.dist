@@ -122,3 +122,8 @@ ui:
       title: "AI Chat"
       shortcut: 3
       readonly: false
+    - id: tts
+      channel: "#tts"
+      title: "TTS"
+      shortcut: 4
+      readonly: false

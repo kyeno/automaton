@@ -86,6 +86,11 @@ ui:
       title: 'AI Assistant'
       shortcut: 3
       readonly: false
+    - id: tts
+      channel: '#tts'
+      title: 'TTS'
+      shortcut: 4
+      readonly: false
 ```
 
 ### Channel Prefixes

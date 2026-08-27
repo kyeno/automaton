@@ -172,6 +172,11 @@ ui:
       title: "AI Chat"
       shortcut: 3
       readonly: false        # Accepts user input
+    - id: tts
+      channel: "#tts"
+      title: "TTS"
+      shortcut: 4
+      readonly: false
 ```
 
 Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows are created only when their backing services are configured -- if AI or TTS is disabled/unconfigured, that window simply does not exist in the UI.
