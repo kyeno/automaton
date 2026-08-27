@@ -109,6 +109,8 @@ Options:
       --no-trace     Disable TRACE-level file logging
       --no-ai        Disable AI features (overrides AI_* env vars)
       --no-tts       Disable TTS features (overrides TTS_* env vars)
+  -c, --config-override "key.path: value"    Override a config parameter (repeatable; strictly validated)
+
   -h, --help         Show help message
 ```
 
@@ -116,6 +118,8 @@ The `bin/automaton` script wraps `npm start` and automatically loads variables f
 
 ```bash
 sh bin/automaton --no-ui
+sh bin/automaton -c "locale.language: en_US" -c "ai.temperature: 0.7"
+
 ```
 
 `--no-ai` and `--no-tts` behave exactly as if the corresponding environment variables were never set.

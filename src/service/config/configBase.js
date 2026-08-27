@@ -66,6 +66,8 @@ class ConfigBase {
         /** @type {Record<string, unknown>} */
         this.#data = {}
         this.#hasValidator = false
+        this.#schemaPromise = null
+
 
         this.#load()
     }
@@ -76,6 +78,8 @@ class ConfigBase {
     /** @type {string} */ #sectionName
     /** @type {Record<string, unknown>} */ #data
     /** @type {boolean} */ #hasValidator
+    /** @type {Promise<Record<string, ConfigSchemaNode>|null>} */ #schemaPromise
+
 
     // -- Loading ------------------------------------------------------------
 
@@ -112,70 +116,155 @@ class ConfigBase {
             )
         }
 
-        // Attempt to load optional validator
-        this.#tryLoadValidator()
     }
 
     /**
-     * Try to discover and apply a validator from src/validators/.
-     * Validators are optional - missing validators do NOT cause errors.
+     * Load (and cache) this section's validator schema from src/validators/.
+     *
+     * Memoized: repeated calls share one import promise so validation stays
+     * deterministic no matter how many code paths trigger it. A missing or
+     * broken validator file simply means "nothing to check" for this section.
      * @private
+     * @returns {Promise<Record<string, ConfigSchemaNode>|null>} Schema object, or null when absent
      */
-    async #tryLoadValidator() {
-        const validatorPath = path.join(
-            PROJECT_ROOT, 'src', 'validators', `${this.#sectionName}.js`
-        )
+    async #ensureSchema() {
+        if (!this.#schemaPromise) {
+            this.#schemaPromise = (async () => {
+                const validatorPath = path.join(
+                    PROJECT_ROOT, 'src', 'validators', `${this.#sectionName}.js`
+                )
 
-        if (!fs.existsSync(validatorPath)) {
-            this.#hasValidator = false
-            return
+                if (!fs.existsSync(validatorPath)) return null
+
+                try {
+                    /* v8 ignore next 2 */
+                    const mod = await import(validatorPath)
+                    const schema = mod.default ?? mod
+                    if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+                        this.#hasValidator = true
+                        return /** @type {Record<string, ConfigSchemaNode>} */ (schema)
+                    }
+                    return null
+                } catch {
+                    // Validator load failure is non-fatal - skip validation for this section.
+                    return null
+                }
+            })()
         }
 
-        try {
-            /* v8 ignore next 2 */
-            const mod = await import(validatorPath)
-            /** @type {Record<string, ConfigSchemaNode>} */
-            const schema = mod.default ?? mod
+        return this.#schemaPromise
+    }
 
-            if (schema && typeof schema === 'object') {
-                const errors = this.#validate(this.#data, schema, '')
-                // Record the outcome BEFORE reporting it: at config-load time
-                // LoggerService may not be initialized yet (main.js boots config
-                // before logger), and its methods throw pre-init -- that must
-                // neither invalidate a successful check nor swallow warnings.
-                this.#hasValidator = true
-                // Import LoggerService dynamically to avoid circular deps at init time
-                const report = async () => {
-                    const { default: LoggerService } = await import('../loggerService.js')
-                    if (errors.length > 0) {
-                        for (const err of errors) {
-                            LoggerService.warn?.(`Config validation [${this.#sectionName}]: ${err}`, 'ConfigBase')
-                        }
-                    } else {
-                        LoggerService.debug?.(
-                            `Config "${this.#filePath}" validated OK (${Object.keys(this.#data).length} top-level keys)`,
-                            'ConfigBase'
-                        )
-                    }
-                }
-                try {
-                    await report()
-                } catch {
-                    // Logger unavailable at this stage. Validation failures are
-                    // the only signal for required-key problems, so fall back
-                    // to stderr; success notices can simply be dropped.
-                    for (const err of errors) {
-                        process.stderr.write(`Config validation [${this.#sectionName}]: ${err}\n`)
-                    }
-                }
-            } else {
-                this.#hasValidator = false
-            }
-        } catch {
-            // Validator load failure is non-fatal - just skip validation
-            this.#hasValidator = false
+    /**
+     * Validate the current data against this section's schema and THROW on any violation.
+     *
+     * Strict by design (nginx-style): a config that exists but breaks its schema must
+     * abort startup with every problem listed at once instead of running degraded.
+     * Sections without a validator are no-ops. Safe to call repeatedly -- e.g., after
+     * applyOverrides() -- since it always re-checks the live data.
+     *
+     * @throws {Error} Aggregated list of every schema violation found
+     */
+    async ensureValidated() {
+        const schema = await this.#ensureSchema()
+        if (!schema) return
+
+        const errors = this.#validate(this.#data, schema, '')
+        if (errors.length > 0) {
+            throw new Error(
+                `Config validation failed [${this.#sectionName}] (${this.#filePath}):\n` +
+                errors.map(e => `  ${e}`).join('\n')
+            )
         }
     }
+
+    /**
+     * Apply parsed CLI overrides ("key.path: value" pairs) onto the loaded data.
+     *
+     * Every target parameter must already exist in the configuration or be declared
+     * by the section's schema; anything else is reported as an unknown-parameter error
+     * so typos can never silently create brand-new keys. All problems are collected
+     * before any mutation happens. Type/enum conformance of the merged document is
+     * enforced afterwards by ensureValidated().
+     *
+     * @param {{ path: string, value: unknown }[]} entries - Parsed override pairs
+     * @throws {Error} When one or more target parameters are unknown
+     */
+    async applyOverrides(entries) {
+        if (!Array.isArray(entries) || entries.length === 0) return
+
+        const schema = await this.#ensureSchema() ?? {}
+        /** @type {string[]} */
+        const unknowns = []
+
+        for (const entry of entries) {
+            const knownInData = this.has(entry.path)
+            const knownInSchema = !!this.#resolveInSchema(schema, String(entry.path))
+            if (!knownInData && !knownInSchema) {
+                unknowns.push(`Unknown config parameter "${entry.path}" -- not found in ${this.#filePath} nor in its schema`)
+            }
+        }
+
+        if (unknowns.length > 0) {
+            const validTopLevel = Array.from(new Set([...Object.keys(this.#data), ...Object.keys(schema)])).sort()
+            throw new Error(
+                'Invalid config override(s):\n' +
+                unknowns.map(u => `  ${u}`).join('\n') + '\n' +
+                `Valid top-level parameters: ${validTopLevel.join(', ')}`
+            )
+        }
+
+        for (const entry of entries) {
+            this.#setPath(String(entry.path).split('.'), entry.value)
+        }
+    }
+
+    /**
+     * Resolve a dot-notation path against the validator schema and return the leaf
+     * definition, or undefined when any segment is missing. Walks through each node's
+     * `properties` map; array item schemas are intentionally not addressable by name.
+     * @private
+     * @param {Record<string, ConfigSchemaNode>} schema - Top-level schema object
+     * @param {string} dotPath - Dot-separated key path
+     * @returns {ConfigSchemaNode|undefined} Leaf schema definition, if present
+     */
+    #resolveInSchema(schema, dotPath) {
+        const parts = dotPath.split('.')
+        if (!parts.length || !schema[parts[0]]) return undefined
+
+        /** @type {unknown} */
+        let def = schema[parts[0]]
+        for (let i = 1; i < parts.length; i++) {
+            if (def == null || typeof def !== 'object') return undefined
+            def = /** @type {Record<string, unknown>} */ (def).properties?.[parts[i]]
+        }
+        return def
+    }
+
+    /**
+     * Write a value at a dot-path inside the loaded data, materializing plain-object
+     * intermediates as needed (e.g., overriding paths.configs.network while the whole
+     * `paths:` block is still commented out in the YAML file). Existing objects and
+     * arrays are descended into untouched.
+     * @private
+     * @param {string[]} segments - Non-empty key segments
+     * @param {unknown} value - Value to store at the leaf
+     */
+    #setPath(segments, value) {
+        /** @type {Record<string, unknown>} */
+        let cur = this.#data
+        for (let i = 0; i < segments.length - 1; i++) {
+            const seg = segments[i]
+            let next = cur[seg]
+            if (next === undefined || next === null || typeof next !== 'object') {
+                next = {}
+                cur[seg] = next
+            }
+            cur = /** @type {Record<string, unknown>} */ (next)
+        }
+        cur[segments[segments.length - 1]] = value
+    }
+
 
     /**
      * Recursively validate a config object against a schema definition.

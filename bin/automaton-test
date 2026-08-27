@@ -87,6 +87,8 @@ console.log('\n── Test scripts ──\n')
 
 const testScripts = [
   'test-config-validation.js',
+  'test-config-overrides.js',
+
   'test-device-instantiation.js',
   'test-automation-instantiation.js',
   'test-automations-cmd.js',

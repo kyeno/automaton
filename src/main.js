@@ -48,7 +48,13 @@ Options:
       --no-trace     Disable TRACE-level file logging
       --no-ai        Disable AI features (overrides AI_* environment settings)
       --no-tts       Disable TTS features (overrides TTS_* environment settings)
+  -c, --config-override "key.path: value"   Override a config parameter from etc/automaton.yaml (strictly validated; repeatable)
+
   -h, --help         Show this help message
+
+Examples:
+  ./bin/automaton --no-ui
+  ./bin/automaton -c "locale.language: en_US" -c "ai.temperature: 0.7"
 
 Environment variables (.env):
   MQTT_URL                          MQTT broker URL (required)
@@ -59,7 +65,8 @@ Environment variables (.env):
   TTS_API_URL                       TTS server API endpoint (e.g., http://host:port/tts)
   TTS_TCP_ENDPOINT                  Audio playback destination (ip:port)
 
-Behavior settings are in etc/automaton.yaml (locale.language, locale.time_format).
+Behavior settings are in etc/automaton.yaml (locale.language, locale.time_format); individual values can be overridden per-run via -c/--config-override.
+
 AI model settings are in etc/ai.yaml (model, max_tokens, temperature, etc.).
 `
 
@@ -81,6 +88,8 @@ try {
             'no-trace': { type: 'boolean', default: false },
             'no-ai':    { type: 'boolean', default: false },
             'no-tts':   { type: 'boolean', default: false },
+            'config-override': { type: 'string', short: 'c', multiple: true },
+
             help:       { type: 'boolean', default: false, short: 'h' },
         },
         allowPositionals: true,
@@ -127,10 +136,24 @@ StateService.set('cli.noUi', parsed.values['no-ui'])
 StateService.set('cli.noTrace', parsed.values['no-trace'])
 StateService.set('cli.noAi', parsed.values['no-ai'])
 StateService.set('cli.noTts', parsed.values['no-tts'])
+StateService.set('cli.configOverrides', parsed.values['config-override'] ?? [])
 
-// Phase 1 -- Configuration & Logging (must succeed before anything else)
-await ConfigService.init()
-LoggerService.init()
+// Phase 1 -- Configuration & Logging (must succeed before anything else).
+// Guarded explicitly: no service is up yet at this point, so a failure prints a
+// CRITICAL ERROR block straight to stderr and exits(1) instead of surfacing as an
+// unhandled rejection (code review item D9).
+try {
+    await ConfigService.init(parsed.values['config-override'] ?? [])
+    LoggerService.init()
+} catch (e) {
+    const detail = e instanceof Error ? e.message : String(e)
+    process.stderr.write(
+        `\n${AnsiColors.bold}${AnsiColors.red}CRITICAL ERROR${AnsiColors.reset}: Automaton failed to start -- ${detail}\n` +
+        `${e instanceof Error && e.stack ? '\n' + e.stack + '\n' : ''}`
+    )
+    process.exit(1)
+}
+
 LoggerService.info(`Automaton starting, node.js ${process.version}`, 'Main')
 
 if (parsed.values['no-ui']) {
@@ -148,6 +171,11 @@ if (parsed.values['no-ai']) {
 if (parsed.values['no-tts']) {
     LoggerService.info('TTS disabled via --no-tts flag', 'Main')
 }
+
+if ((parsed.values['config-override'] ?? []).length > 0) {
+    LoggerService.info(`Config override(s) active: ${parsed.values['config-override'].join(', ')}`, 'Main')
+}
+
 
 // ---------------------------------------------------------------------------
 // Graceful shutdown -- checks each service before cleanup

@@ -31,6 +31,17 @@ Copy `.env.example` to `.env` and adjust values. This file is gitignored and sho
 
 > The AI and TTS services are optional. If their URLs are not set, those features will be disabled at startup with a warning. You can also disable them per-run without touching `.env`: starting Automaton with `--no-ai` or `--no-tts` behaves exactly as if the corresponding variables were unset.
 
+### Overriding settings from the command line
+
+Any parameter of `etc/automaton.yaml` can be overridden for a single run without editing the file, using `-c` / `--config-override`:
+
+```bash
+sh bin/automaton -c "locale.language: en_US" -c "ai.temperature: 0.7"
+```
+
+The flag is repeatable -- each occurrence takes one `"key.path: value"` pair and values are interpreted as YAML (numbers, booleans, quoted strings; inline objects work too for whole subtrees). Overrides go through the same strict schema validation as the config file itself: an unknown parameter or a wrong type/value aborts startup with an error instead of running with broken settings.
+
+
 ---
 
 ## 2. Main Configuration (`etc/automaton.yaml`)

@@ -3,7 +3,8 @@
  *
  * Manages multiple named configuration sections loaded from YAML files. Each
  * section is backed by a {@link ConfigBase} instance that handles parsing,
- * optional schema validation, and dot-notation access.
+ * optional strict schema validation, CLI overrides, and dot-notation access.
+
  *
  * At startup, loads the "main" config (etc/automaton.yaml), then discovers any
  * additional configs referenced in its `paths.configs` map and loads them as
@@ -25,6 +26,9 @@ import path from 'node:path'
 
 import LoggerService from './loggerService.js'
 import ConfigBase from './config/configBase.js'
+
+import { parse as yamlParse } from 'yaml'
+
 
 // ---------------------------------------------------------------------------
 // Default paths (used when not overridden in main config)
@@ -68,13 +72,20 @@ class SConfigContainer {
      * Initialize the configuration container.
      *
      * Phase 1 - Validate required environment variables.
-     * Phase 2 - Load "main" config (etc/automaton.yaml).
-     * Phase 3 - Discover and load additional configs from `paths.configs`.
+     * Phase 2 - Parse raw --config-override values (all syntax problems reported at once).
+     * Phase 3 - Load "main" config (etc/automaton.yaml), apply overrides, validate strictly.
+     * Phase 4 - Discover and load additional configs from `paths.configs`.
      *
-     * Call once early during bootstrap before any other service needs config.
-     * Throws on fatal errors with descriptive messages.
+     * Validation is strict (nginx-style): a missing file, unparseable YAML or any
+     * schema violation aborts startup instead of running with broken settings.
+     *
+     * @param {string[]} [overrides] - Raw "key.path: value" strings collected from repeated
+     *                                 -c/--config-override flags; applied to the main section only
+     * @throws {Error} On missing env vars, bad override syntax, unknown parameters or schema violations
+
      */
-    async init() {
+    async init(overrides = []) {
+
         // ------------------------------------------------------------------
         // Phase 1 - Validate required environment variables
         // ------------------------------------------------------------------
@@ -103,21 +114,52 @@ class SConfigContainer {
         try { LoggerService.debug?.('Validating environment variables...', 'ConfigService') } catch {}
 
         // ------------------------------------------------------------------
-        // Phase 2 - Load main config
+        // Phase 2 - Parse CLI overrides (strict syntax check, all problems at once)
         // ------------------------------------------------------------------
-        try {
-            this.#sections.set('main', new ConfigBase('etc/automaton.yaml', 'main'))
-            try { LoggerService.debug?.('Loaded main configuration from etc/automaton.yaml', 'ConfigService') } catch {}
-        } catch (error) {
-            throw new Error(
-                `Failed to load main configuration: ${error.message}`
-            )
+        const rawOverrides = Array.isArray(overrides) ? overrides : []
+        /** @type {{ path: string, value: unknown }[]} */
+        const entries = []
+        /** @type {string[]} */
+        const parseProblems = []
+
+        for (const raw of rawOverrides) {
+            try {
+                entries.push(this.parseConfigOverride(raw))
+            } catch (error) {
+                parseProblems.push(error.message)
+            }
+        }
+
+        if (parseProblems.length > 0) {
+            throw new Error('Invalid --config-override value(s):\n' + parseProblems.map(p => `  ${p}`).join('\n'))
         }
 
         // ------------------------------------------------------------------
-        // Phase 3 - Load additional configs from paths.configs
+        // Phase 3 - Load main config, apply overrides, validate strictly.
+        // Any violation is fatal (nginx-style): die here with a clear message
+        // instead of starting up with broken settings.
+        // ------------------------------------------------------------------
+        let base
+        try {
+            base = new ConfigBase('etc/automaton.yaml', 'main')
+        } catch (error) {
+            throw new Error(`Failed to load main configuration: ${error.message}`)
+        }
+
+        if (entries.length > 0) {
+            await base.applyOverrides(entries)
+        }
+
+        await base.ensureValidated()
+
+        this.#sections.set('main', base)
+        try { LoggerService.debug?.('Loaded main configuration from etc/automaton.yaml', 'ConfigService') } catch {}
+
+        // ------------------------------------------------------------------
+        // Phase 4 - Load additional configs from paths.configs
         // ------------------------------------------------------------------
         await this.#loadExtraConfigs()
+
     }
 
     /**
@@ -140,17 +182,72 @@ class SConfigContainer {
                 filePath = path.join('etc', name, `${name}.yaml`)
             }
 
+            /** @type {ConfigBase|null} */
+            let base = null
             try {
-                this.#sections.set(name, new ConfigBase(filePath, name))
-                try { LoggerService.debug?.(`Loaded config section "${name}" from ${filePath}`, 'ConfigService') } catch {}
+                base = new ConfigBase(filePath, name)
             } catch (error) {
-                try { LoggerService.warn?.(`Failed to load config section "${name}": ${error.message}`, 'ConfigService') } catch {}
-                // Non-fatal - section simply won't be available
+                try { LoggerService.warn?.(`Failed to load config "${filePath}" as "${name}": ${error.message}`, 'ConfigService') } catch {}
+                // Missing/unreadable optional sections stay non-fatal -- the section simply won't be available.
+                continue
             }
+
+            this.#sections.set(name, base)
+            try { LoggerService.debug?.(`Loaded config section "${name}" from ${filePath}`, 'ConfigService') } catch {}
+
+            // Strict validation: a present-but-invalid section aborts startup.
+            await base.ensureValidated()
+
         }
 
         const sectionNames = Array.from(this.#sections.keys())
         try { LoggerService.info?.(`Config container ready (${sectionNames.length} section(s): ${sectionNames.join(', ')})`, 'ConfigService') } catch {}
+    }
+
+    /**
+     * Parse one raw --config-override / -c CLI value into a typed override pair.
+     *
+     * Expected shape is a single YAML mapping entry: "key.path: value". The value side
+     * is interpreted as YAML so numbers, booleans and quoted strings keep their natural
+     * types (inline objects/arrays are allowed for whole-subtree overrides too).
+     *
+     * @param {string} raw - Raw CLI string (e.g., 'locale.language: en_US')
+     * @returns {{ path: string, value: unknown }} Dot-path plus its typed value
+     * @throws {Error} Descriptive message describing the syntax problem
+     */
+    parseConfigOverride(raw) {
+        const trimmed = String(raw ?? '').trim()
+        if (!trimmed) {
+            throw new Error('empty --config-override value (expected format: "key.path: value")')
+        }
+
+        let doc
+        try {
+            doc = yamlParse(trimmed)
+        } catch (error) {
+            throw new Error(`"${raw}" is not valid YAML (${String(error.message).split('\n')[0]})`)
+        }
+
+        if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+            throw new Error(`"${raw}" must be a single "key.path: value" pair`)
+        }
+
+        const entries = Object.entries(/** @type {Record<string, unknown>} */ (doc))
+        if (entries.length !== 1) {
+            throw new Error(
+                `"${raw}" contains ${entries.length} keys -- repeat the -c/--config-override flag instead of listing several in one`
+            )
+        }
+
+        const [path, value] = entries[0]
+        if (value === null || value === undefined) {
+            throw new Error(`"${raw}" has an empty value for "${path}" (expected format: "key.path: value")`)
+        }
+        if (path.split('.').some(seg => seg.trim().length === 0)) {
+            throw new Error(`invalid parameter path "${path}" in "${raw}" (segments between dots must not be empty)`)
+        }
+
+        return { path, value }
     }
 
     // -- Public API: Section access -----------------------------------------

@@ -10,7 +10,7 @@ elif [ "$unamestr" = 'FreeBSD' ] || [ "$unamestr" = 'Darwin' ]; then
     export $(grep -v '^#' "$PROJECT_DIR/.env" | xargs -0)
 fi
 cd "$PROJECT_DIR"
-npm run start -- $*
+npm run start -- "$@"
 exit_code=$?
 cd "$ORIG_DIR"
 exit $exit_code

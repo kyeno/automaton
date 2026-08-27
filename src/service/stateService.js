@@ -11,6 +11,8 @@
  *   - cli.noTrace                      (boolean) -- CLI --no-trace flag was passed
  *   - cli.noAi                         (boolean) -- CLI --no-ai flag was passed
  *   - cli.noTts                        (boolean) -- CLI --no-tts flag was passed
+ *   - cli.configOverrides              (string[]) -- raw -c/--config-override values passed at startup
+
  *   - lifecycle.initializedServices    (Set<string>) -- names of successfully initialized services
  *   - lifecycle.shuttingDown           (boolean) -- true once graceful shutdown has started
  *   - lifecycle.lastError              (Error|null) -- last uncaught exception or rejection reason
