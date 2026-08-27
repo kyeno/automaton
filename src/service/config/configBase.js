@@ -139,19 +139,35 @@ class ConfigBase {
 
             if (schema && typeof schema === 'object') {
                 const errors = this.#validate(this.#data, schema, '')
-                // Import LoggerService dynamically to avoid circular deps at init time
-                const { default: LoggerService } = await import('../loggerService.js')
-                if (errors.length > 0) {
-                    for (const err of errors) {
-                        LoggerService.warn?.(`Config validation [${this.#sectionName}]: ${err}`, 'ConfigBase')
-                    }
-                } else {
-                    LoggerService.debug?.(
-                        `Config "${this.#filePath}" validated OK (${Object.keys(this.#data).length} top-level keys)`,
-                        'ConfigBase'
-                    )
-                }
+                // Record the outcome BEFORE reporting it: at config-load time
+                // LoggerService may not be initialized yet (main.js boots config
+                // before logger), and its methods throw pre-init -- that must
+                // neither invalidate a successful check nor swallow warnings.
                 this.#hasValidator = true
+                // Import LoggerService dynamically to avoid circular deps at init time
+                const report = async () => {
+                    const { default: LoggerService } = await import('../loggerService.js')
+                    if (errors.length > 0) {
+                        for (const err of errors) {
+                            LoggerService.warn?.(`Config validation [${this.#sectionName}]: ${err}`, 'ConfigBase')
+                        }
+                    } else {
+                        LoggerService.debug?.(
+                            `Config "${this.#filePath}" validated OK (${Object.keys(this.#data).length} top-level keys)`,
+                            'ConfigBase'
+                        )
+                    }
+                }
+                try {
+                    await report()
+                } catch {
+                    // Logger unavailable at this stage. Validation failures are
+                    // the only signal for required-key problems, so fall back
+                    // to stderr; success notices can simply be dropped.
+                    for (const err of errors) {
+                        process.stderr.write(`Config validation [${this.#sectionName}]: ${err}\n`)
+                    }
+                }
             } else {
                 this.#hasValidator = false
             }
