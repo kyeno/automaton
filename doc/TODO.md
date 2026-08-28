@@ -57,6 +57,7 @@ personas:
 
 ### Slash commands
 - FIX: /config rendering YAMLs without indentation; reloading doesn't render greeting on AI channel
+- FIX: /config autocomplete renders old design stuff
 - Add "force" option to run automations via cmd
 - MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
 - MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
