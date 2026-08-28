@@ -45,6 +45,13 @@ const DEFAULT_PATHS = Object.freeze({
     }
 })
 
+/**
+ * Main-config subtrees whose changes gate dependent-subsystem refreshes during
+ * `/config reload`: locale drives i18n + TTS templates, ai.* the assistant, and
+ * ui.windows the IRC-style channel definitions.
+ */
+const RELOAD_RELEVANCE_LABELS = Object.freeze(['locale', 'ai', 'ui.windows'])
+
 // ---------------------------------------------------------------------------
 // SConfigContainer (singleton)
 // ---------------------------------------------------------------------------
@@ -58,6 +65,9 @@ class SConfigContainer {
 
     /** @type {Map<string, ConfigBase>} */
     #sections = new Map()
+
+    /** Dot-paths of runtime overrides applied via /config set ("section.path") -- reported as discarded on reload(). */
+    #runtimeOverrides = new Set()
 
     // -- Singleton ----------------------------------------------------------
 
@@ -259,6 +269,227 @@ class SConfigContainer {
      */
     section(name) {
         return this.#sections.get(name) ?? undefined
+    }
+
+    /**
+     * List all currently loaded configuration sections in load order ("main" first).
+     * Introspection helper for UI/debug tooling -- e.g., the /config debug listing.
+     * @returns {Array<{name: string, filePath: string, hasValidator: boolean, config: ConfigBase}>}
+     */
+    listSections() {
+        const result = []
+        for (const [name, base] of this.#sections.entries()) {
+            result.push({
+                name,
+                filePath: base.filePath,
+                hasValidator: Boolean(base.hasValidator),
+                config: base,
+            })
+        }
+        return result
+    }
+
+    // -- Manual reload (/config reload) --------------------------------------
+
+    /**
+     * Record a runtime override committed via /config set so that reload() can report it
+     * as discarded -- once config files are re-read from disk they are the source of truth.
+     * @param {string} sectionName - Section name the override was applied to ("main", "network", ...)
+     * @param {string} dotPath - Dotted parameter path that was overridden
+     */
+    noteSessionOverride(sectionName, dotPath) {
+        this.#runtimeOverrides.add(`${String(sectionName).trim()}.${String(dotPath).trim()}`)
+    }
+
+    /**
+     * All runtime overrides recorded since startup or the last successful reload.
+     * @returns {string[]} Entries shaped like "section.parameter.path"
+     */
+    sessionOverrides() {
+        return [...this.#runtimeOverrides]
+    }
+
+    /**
+     * Re-read every config file from disk and swap the results into the live sections --
+     * the manual counterpart of startup loading, used by `/config reload`.
+     *
+     * Two-phase safe swap:
+     *   Phase A -- build candidate ConfigBase instances (main first; extra sections are
+     *              discovered from the CANDIDATE main's paths.configs) and validate each
+     *              strictly. Missing/unreadable optional sections stay non-fatal exactly
+     *              like at startup discovery; a schema violation anywhere is fatal.
+     *   Phase B -- only when every candidate is clean: refresh existing section instances
+     *              in place (so consumers holding references keep working), add newly
+     *              declared ones, drop removed ones ("main" always survives), and clear
+     *              the /config set override ledger -- those values lived only in memory.
+     * On failure nothing changes and every problem is reported verbatim.
+     *
+     * The report also carries `changed`: which relevance subtrees (locale.*, ai.*,
+     * ui.windows) actually differ pre/post swap so callers can gate dependent subsystems
+     * instead of refreshing everything unconditionally.
+     *
+     * @returns {Promise<{ok:boolean, reloaded:string[], added:string[], dropped:{name:string,error?:string}[], failed:{section:string,error:string}[], discardedOverrides:string[], changed:string[]}>}
+     */
+    async reload() {
+        const pre = this.#snapshotRelevance()
+
+        /** @type {{section:string, error:string}[]} */
+        const failed = []
+        /** @type {{name:string, base:ConfigBase}[]} */
+        const candidates = []
+        /** @type {Map<string,string>} Previously loaded sections that could not be re-read, with reason */
+        const dropReasons = new Map()
+
+        // ---- Phase A: build + validate candidates --------------------------
+        let mainCandidate = null
+        try {
+            mainCandidate = new ConfigBase('etc/automaton.yaml', 'main')
+            await mainCandidate.ensureValidated()
+        } catch (error) {
+            return {
+                ok: false, reloaded: [], added: [], dropped: [],
+                failed: [{ section: 'main', error: String(error.message ?? error) }],
+                discardedOverrides: this.sessionOverrides(), changed: [],
+            }
+        }
+        candidates.push({ name: 'main', base: mainCandidate })
+
+        const configsMap = mainCandidate.get('paths.configs') ?? DEFAULT_PATHS.configs
+        for (const [name, relativePath] of Object.entries(configsMap)) {
+            if (!relativePath || typeof relativePath !== 'string') continue
+
+            let filePath = relativePath
+            if (!filePath.startsWith('etc/') && !path.isAbsolute(filePath)) {
+                filePath = path.join('etc', name, `${name}.yaml`)
+            }
+
+            /** @type {ConfigBase|null} */
+            let base = null
+            try {
+                base = new ConfigBase(filePath, name)
+            } catch (error) {
+                // Same leniency as startup discovery: missing/unreadable optional sections are skipped.
+                // If one was loaded before, it drops out of the live set -- with the reason preserved.
+                if (this.#sections.has(name)) dropReasons.set(name, String(error.message ?? error))
+                continue
+            }
+
+            try {
+                await base.ensureValidated()   // present-but-invalid is fatal, exactly like at startup
+            } catch (error) {
+                failed.push({ section: name, error: String(error.message ?? error) })
+                continue
+            }
+
+            candidates.push({ name, base })
+        }
+
+        if (failed.length > 0) {
+            return {
+                ok: false, reloaded: [], added: [], dropped: [], failed,
+                discardedOverrides: this.sessionOverrides(), changed: [],
+            }
+        }
+
+        // ---- Phase B: safe swap ---------------------------------------------
+        const desired = new Set(candidates.map((c) => c.name))
+        /** @type {string[]} */
+        const reloaded = []
+        /** @type {string[]} */
+        const added = []
+        /** @type {{name:string,error?:string}[]} */
+        const dropped = []
+
+        for (const candidate of candidates) {
+            const existing = this.#sections.get(candidate.name)
+            if (existing && typeof existing.refresh === 'function') {
+                existing.refresh()          // same instance -- consumers keep their references
+                reloaded.push(candidate.name)
+            } else {
+                this.#sections.set(candidate.name, candidate.base)
+                added.push(candidate.name)
+            }
+        }
+
+        for (const [name] of [...this.#sections.entries()]) {
+            if (!desired.has(name)) {
+                this.#sections.delete(name)
+                dropped.push(dropReasons.has(name) ? { name, error: dropReasons.get(name) } : { name })
+            }
+        }
+
+        const discardedOverrides = this.sessionOverrides()
+        this.#runtimeOverrides.clear()
+
+        if (added.length > 0 || dropped.length > 0) {
+            try {
+                LoggerService.info?.(
+                    `Config sections changed on reload (+${added.join(', ') || 'none'} / -${dropped.map((d) => d.name).join(',') || 'none'})`,
+                    'ConfigService'
+                )
+            } catch {}
+        }
+
+        return { ok: true, reloaded, added, dropped, failed: [], discardedOverrides, changed: this.#diffRelevance(pre) }
+    }
+
+    /**
+     * Snapshot the config subtrees whose changes should trigger dependent-subsystem
+     * refreshes during /config reload. JSON serialization gives stable equality checks
+     * over plain YAML data without deep-compare bookkeeping.
+     * @private
+     * @returns {Record<string,string>} label -> serialized subtree
+     */
+    #snapshotRelevance() {
+        const main = this.#sections.get('main')
+        /** @type {Record<string,string>} */
+        const snap = {}
+        for (const label of RELOAD_RELEVANCE_LABELS) {
+            try { snap[label] = JSON.stringify(main?.get(label)) } catch { snap[label] = '' }
+        }
+        return snap
+    }
+
+    /**
+     * Compare a pre-reload relevance snapshot against current state.
+     * @private
+     * @param {Record<string,string>} pre - Snapshot taken before the swap
+     * @returns {string[]} Labels that actually differ
+     */
+    #diffRelevance(pre) {
+        const post = this.#snapshotRelevance()
+        return RELOAD_RELEVANCE_LABELS.filter((label) => pre[label] !== post[label])
+    }
+
+    /**
+     * Resolve a section reference to one of the loaded sections. Accepts the exact
+     * section name ("main"), its YAML filename ("automaton.yaml") or any path suffix
+     * ("device/network"), case-insensitively. First match in load order wins. Retained
+     * as an internal/introspection helper -- the /config command surface addresses the
+     * main section directly and no longer exposes per-file selection to users.
+     * @param {string} query - Section name, filename or path fragment
+     * @returns {{name: string, filePath: string, hasValidator: boolean, config: ConfigBase}|null}
+     *          Matching section descriptor, or null when nothing matches
+     */
+    resolveSection(query) {
+        const raw = String(query ?? '').trim()
+        if (!raw) return null
+
+        const sections = this.listSections()
+
+        // 1) Exact section-name match (case-insensitive for convenience)
+        let hit = sections.find((s) => s.name.toLowerCase() === raw.toLowerCase())
+        if (hit) return hit
+
+        // 2) Filename / path-suffix fallback against the resolved file location
+        const norm = (s) => s.toLowerCase().replace(/\.ya?ml$/i, '')
+        const q = norm(raw)
+        hit = sections.find((s) => {
+            const fileNorm = norm(s.filePath)
+            const baseFile = fileNorm.split('/').pop()
+            return q === baseFile || fileNorm.endsWith(`/${q}`)
+        })
+        return hit ?? null
     }
 
     /**

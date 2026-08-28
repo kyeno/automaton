@@ -66,6 +66,7 @@ class STtsService {
     /** @type {boolean} */     #enabled = false
     /** @type {Record<string, unknown>|null} */ #template = null
     /** @type {Function|null} */ #unsubscribe = null
+    /** @type {boolean} */     #initialized = false
 
     // -- Lifecycle --------------------------------------------------------
 
@@ -80,6 +81,7 @@ class STtsService {
         if (!apiUrl || !String(apiUrl).trim()) {
             LoggerService.debug('TTS: TTS_API_URL not set -- TTS disabled', 'TtsService')
             this.#enabled = false
+            this.#initialized = true
             return
         }
 
@@ -99,6 +101,8 @@ class STtsService {
                 'TtsService'
             )
         }
+
+        this.#initialized = true
     }
 
     // -- Public API -------------------------------------------------------
@@ -119,6 +123,54 @@ class STtsService {
      */
     isConfigured() {
         return Boolean(process.env.TTS_API_URL && String(process.env.TTS_API_URL).trim())
+    }
+
+    /**
+     * Whether init() has completed at all (enabled or not) -- gate callers use before
+     * invoking refreshConfig() from `/config reload` so uninitialized services are never touched.
+     * @returns {boolean}
+     */
+    isReady() {
+        return this.#initialized
+    }
+
+    /**
+     * Re-read locale-dependent TTS settings after a successful /config reload. The payload
+     * template lives under etc/i18n/{active locale}/tts.yaml, so switching locale.language
+     * changes which one applies; the speak-channel subscription is reconciled to match.
+     * Environment-driven enablement (TTS_API_URL) still wins over everything here.
+     * @async
+     * @returns {Promise<{enabled:boolean, model:string|null}>} Post-refresh state for caller reporting
+     */
+    async refreshConfig() {
+        const apiUrl = process.env.TTS_API_URL
+        if (!apiUrl || !String(apiUrl).trim()) {
+            this.#enabled = false
+            return { enabled: false, model: null }
+        }
+
+        // Force full re-resolution -- the locale directory may have changed since init().
+        this.#template = null
+        await this.#loadTemplate()
+
+        if (this.#template && !this.#unsubscribe) {
+            this.#subscribe()
+            this.#enabled = true
+        } else if (this.#template) {
+            this.#enabled = true   // subscription persists -- only the payload defaults swapped
+        } else {
+            if (typeof this.#unsubscribe === 'function') {
+                this.#unsubscribe()
+                this.#unsubscribe = null
+            }
+            this.#enabled = false
+        }
+
+        LoggerService.info(
+            `TTS config refreshed -- enabled=${this.#enabled}, model=${this.#template?.model ?? '(none)'}`,
+            'TtsService'
+        )
+        return { enabled: this.#enabled, model: this.#template?.model ?? null }
     }
 
     /**

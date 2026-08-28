@@ -156,26 +156,81 @@ class ConfigBase {
     }
 
     /**
-     * Validate the current data against this section's schema and THROW on any violation.
+     * Validate the current data against this section's schema WITHOUT throwing.
+     * Returns every problem as a descriptive string -- an empty array means valid (or
+     * that the section has no validator at all). Pure read-only check; the non-fatal
+     * twin of ensureValidated(), meant for callers that report problems instead of
+     * aborting (e.g., the /config set live-override command).
+     * @returns {Promise<string[]>} Array of error messages (empty if OK)
+     */
+    async validate() {
+        const schema = await this.#ensureSchema()
+        if (!schema) return []
+
+        return this.#validate(this.#data, schema, '')
+    }
+
+    /**
+     * Validate the current data and THROW on any violation.
      *
      * Strict by design (nginx-style): a config that exists but breaks its schema must
      * abort startup with every problem listed at once instead of running degraded.
      * Sections without a validator are no-ops. Safe to call repeatedly -- e.g., after
-     * applyOverrides() -- since it always re-checks the live data.
+     * applyOverrides() -- since it always re-checks the live data. The pure checking
+     * work lives in validate(); this wrapper only adds the fatal throw on top.
      *
      * @throws {Error} Aggregated list of every schema violation found
      */
     async ensureValidated() {
-        const schema = await this.#ensureSchema()
-        if (!schema) return
-
-        const errors = this.#validate(this.#data, schema, '')
+        const errors = await this.validate()
         if (errors.length > 0) {
             throw new Error(
                 `Config validation failed [${this.#sectionName}] (${this.#filePath}):\n` +
                 errors.map(e => `  ${e}`).join('\n')
             )
         }
+    }
+
+    /**
+     * Re-read the backing YAML file from disk and atomically replace this section's data.
+     * Used by ConfigService.reload(): parse/read errors propagate so callers can abort
+     * before swapping anything; schema checking stays the caller's job (ensureValidated()).
+     * The .dist fallback rule re-evaluates on every call -- a hand-written active file
+     * promoted over its template is picked up again without a restart.
+     */
+    refresh() {
+        this.#load()
+    }
+
+    /**
+     * Check that every target parameter is known -- present in the loaded data or
+     * declared by the section's schema. Pure read-only; collects all problems before
+     * reporting so typos can never silently create brand-new keys. Shared between the
+     * fatal startup path (applyOverrides()) and the non-fatal UI path (/config set).
+     * @param {{ path: string, value: unknown }[]} [entries] - Override pairs to check
+     * @returns {Promise<{problems: string[], validTopLevel: string[]|null}>} Problem lines plus
+     *          sorted valid top-level key names when at least one path was unknown
+     */
+    async checkOverridePaths(entries = []) {
+        if (!Array.isArray(entries) || entries.length === 0) return { problems: [], validTopLevel: null }
+
+        const schema = await this.#ensureSchema() ?? {}
+        /** @type {string[]} */
+        const problems = []
+
+        for (const entry of entries) {
+            const knownInData = this.has(entry.path)
+            const knownInSchema = !!this.#resolveInSchema(schema, String(entry.path))
+            if (!knownInData && !knownInSchema) {
+                problems.push(`Unknown config parameter "${entry.path}" -- not found in ${this.#filePath} nor in its schema`)
+            }
+        }
+
+        if (problems.length > 0) {
+            const validTopLevel = Array.from(new Set([...Object.keys(this.#data), ...Object.keys(schema)])).sort()
+            return { problems, validTopLevel }
+        }
+        return { problems, validTopLevel: null }
     }
 
     /**
@@ -193,30 +248,41 @@ class ConfigBase {
     async applyOverrides(entries) {
         if (!Array.isArray(entries) || entries.length === 0) return
 
-        const schema = await this.#ensureSchema() ?? {}
-        /** @type {string[]} */
-        const unknowns = []
-
-        for (const entry of entries) {
-            const knownInData = this.has(entry.path)
-            const knownInSchema = !!this.#resolveInSchema(schema, String(entry.path))
-            if (!knownInData && !knownInSchema) {
-                unknowns.push(`Unknown config parameter "${entry.path}" -- not found in ${this.#filePath} nor in its schema`)
-            }
-        }
-
-        if (unknowns.length > 0) {
-            const validTopLevel = Array.from(new Set([...Object.keys(this.#data), ...Object.keys(schema)])).sort()
+        const { problems, validTopLevel } = await this.checkOverridePaths(entries)
+        if (problems.length > 0) {
             throw new Error(
                 'Invalid config override(s):\n' +
-                unknowns.map(u => `  ${u}`).join('\n') + '\n' +
-                `Valid top-level parameters: ${validTopLevel.join(', ')}`
+                problems.map(p => `  ${p}`).join('\n') + '\n' +
+                `Valid top-level parameters: ${(validTopLevel ?? []).join(', ')}`
             )
         }
 
         for (const entry of entries) {
             this.#setPath(String(entry.path).split('.'), entry.value)
         }
+    }
+
+    /**
+     * Dry-run a single override against both the known-parameter guard and the full
+     * schema WITHOUT mutating anything. Returns every problem found as descriptive
+     * strings -- an empty list means the value would pass startup validation and may
+     * be committed with applyOverrides(). Sections without a validator still get the
+     * unknown-path check, so typos are caught there too.
+     * @param {{ path: string, value: unknown }} entry - Override pair to test
+     * @returns {Promise<{problems: string[], validTopLevel: string[]|null}>} Problems plus
+     *          valid top-level keys when the target parameter itself was unknown
+     */
+    async validateOverride(entry) {
+        const { problems, validTopLevel } = await this.checkOverridePaths([entry])
+        if (problems.length > 0) return { problems, validTopLevel }
+
+        // Candidate tree on a deep clone -- live data stays untouched no matter what.
+        const candidate = structuredClone(this.#data)
+        this.#writeInto(candidate, String(entry.path).split('.'), entry.value)
+
+        const schema = await this.#ensureSchema()
+        if (!schema) return { problems: [], validTopLevel: null }
+        return { problems: this.#validate(candidate, schema, ''), validTopLevel: null }
     }
 
     /**
@@ -251,8 +317,22 @@ class ConfigBase {
      * @param {unknown} value - Value to store at the leaf
      */
     #setPath(segments, value) {
+        this.#writeInto(this.#data, segments, value)
+    }
+
+    /**
+     * Core of #setPath() operating on an arbitrary root object -- shared with
+     * validateOverride(), which writes candidate values into a deep clone instead of
+     * the live data. Materializes plain-object intermediates as needed; existing
+     * objects and arrays are descended into untouched.
+     * @private
+     * @param {Record<string, unknown>} root - Object tree to write into
+     * @param {string[]} segments - Non-empty key segments
+     * @param {unknown} value - Value to store at the leaf
+     */
+    #writeInto(root, segments, value) {
         /** @type {Record<string, unknown>} */
-        let cur = this.#data
+        let cur = root
         for (let i = 0; i < segments.length - 1; i++) {
             const seg = segments[i]
             let next = cur[seg]
@@ -389,6 +469,16 @@ class ConfigBase {
      */
     toJSON() {
         return structuredClone(this.#data)
+    }
+
+    /** File path this section was loaded from (.dist fallback included when used). */
+    get filePath() {
+        return this.#filePath
+    }
+
+    /** Section name used for validator lookup and display purposes. */
+    get sectionName() {
+        return this.#sectionName
     }
 
     /**

@@ -88,10 +88,14 @@ console.log('\n── Test scripts ──\n')
 const testScripts = [
   'test-config-validation.js',
   'test-config-overrides.js',
+  'test-config-cmd.js',
+  'test-config-reload.js',
 
   'test-device-instantiation.js',
   'test-automation-instantiation.js',
   'test-automations-cmd.js',
+  'test-interactions-cmd.js',
+  'test-devices-cmd.js',
   'test-silence-between.js',
   'test-weatherman-day-position.js',
   'test-weatherman-time-phrase.js',
@@ -108,6 +112,7 @@ const testScripts = [
   'test-provider-timeout.js',
   'test-string-utils.js',
   'test-input-component.js',
+  'test-command-completer.js',
   'test-terminal-wrap.js',
   'test-log-window-buffer.js',
   'test-ui-min-width.js',

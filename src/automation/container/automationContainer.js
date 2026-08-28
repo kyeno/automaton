@@ -220,6 +220,16 @@ class SAutomationContainer {
         return result
     }
 
+    /**
+     * Get all registered automation names as a flat array -- an additive read-only view used by
+     * tab-completion and listing helpers. Mirrors getAll() so only successfully instantiated
+     * entries are included; sorted for stable output.
+     * @returns {string[]} Sorted array of automation names
+     */
+    getNames() {
+        return [...this.getAll().keys()].sort()
+    }
+
     // -- Lifecycle helpers ------------------------------------------------
 
     /**

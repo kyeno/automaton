@@ -62,13 +62,45 @@ class SI18nLoader {
      * @async
      */
     async init() {
-        this.#loadConfig()
-        await this.#loadBundle()
+        const result = await this.reload()
         this.#initialized = true
         LoggerService.debug(
-            `i18n: language='${this.#locale}', time_format='${this.#timeFormat}'`,
+            `i18n: language='${result.locale}', time_format='${result.timeFormat}'`,
             'I18nLoader'
         )
+    }
+
+    /**
+     * Re-read locale settings from (reloaded) config and swap in the matching
+     * language bundle. Used by `/config reload` after a successful config swap so a
+     * changed locale.language / locale.time_format takes effect without a restart.
+     * Safe to call repeatedly; reports what actually changed for caller output.
+     * @async
+     * @returns {Promise<{locale:string, timeFormat:string, changed:boolean}>} Post-reload state
+     */
+    async reload() {
+        const before = { locale: this.#locale, timeFormat: this.#timeFormat }
+
+        this.#loadConfig()
+        await this.#loadBundle()
+
+        const after = { locale: this.#locale, timeFormat: this.#timeFormat }
+        if (before.locale !== after.locale || before.timeFormat !== after.timeFormat) {
+            LoggerService.info(
+                `i18n reloaded -- locale ${before.locale} -> ${after.locale}, time_format ${before.timeFormat} -> ${after.timeFormat}`,
+                'I18nLoader'
+            )
+        }
+        return { ...after, changed: before.locale !== after.locale || before.timeFormat !== after.timeFormat }
+    }
+
+    /**
+     * Whether init()/reload() has run at least once -- gate callers use before invoking
+     * subsystem refreshes from `/config reload` so uninitialized services are never touched.
+     * @returns {boolean}
+     */
+    get isReady() {
+        return this.#initialized
     }
 
     /**

@@ -39,7 +39,7 @@ function assertEqual(actual, expected, label) {
  * feeds a key event through every registered 'key' listener exactly like
  * terminal-kit would.
  * @param {number} width - Simulated input slot width in columns
- * @returns {{press: function(string): void, buffer: function(): string, lastRender: function(): object}}
+ * @returns {{component: InputComponent, press: function(string): void, buffer: function(): string, lastRender: function(): object}}
  */
 function createInput(width) {
     const renders = []
@@ -78,6 +78,7 @@ function createInput(width) {
     component.init()
 
     return {
+        component,
         press(name) { for (const fn of keyListeners) fn(name, {}) },
         buffer() {
             const r = renders[renders.length - 1]
@@ -226,6 +227,99 @@ console.log('\n\u2500\u2500 Sliding window width bound \u2500\u2500\n')
     h.press('home')
     assertEqual(h.lastRender().after, 'abcdefghijklmnopq', 'home re-renders from the start of the buffer')
     assertEqual(h.lastRender().col, 3, 'cursor column accounts for the prompt width only when cursor is at start')
+}
+
+// -- Tab completion ---------------------------------------------------------------
+
+console.log('\n\u2500\u2500 Tab completion \u2500\u2500\n')
+
+{
+    // Unique verb match: provider reports where the word begins so the slash stays put
+    const h = createInput(80)
+    h.component.setCompletionProvider(() => ({ text: 'automations', tokenStart: 1 }))
+    for (const ch of '/automa'.split('')) h.press(ch)
+    assertEqual(h.buffer(), '/automa', 'partial verb typed before Tab')
+    h.press('tab')
+    assertEqual(h.buffer(), '/automations', 'Tab splices the completed verb after the leading slash')
+    assertEqual(hasLoneSurrogate(h.buffer()), false, 'completed line is surrogate-clean')
+}
+
+{
+    // Ambiguous candidates: repeated Tabs cycle through alternatives and wrap around
+    const h = createInput(80)
+    h.component.setCompletionProvider(() => ({ text: 'list', tokenStart: 13, alternatives: ['list', 'debug', 'run'] }))
+    for (const ch of '/automations '.split('')) h.press(ch)
+    h.press('tab'); assertEqual(h.buffer(), '/automations list', 'first Tab applies the first alternative')
+    h.press('tab'); assertEqual(h.buffer(), '/automations debug', 'second Tab cycles to the next alternative')
+    h.press('tab'); assertEqual(h.buffer(), '/automations run', 'third Tab reaches the last alternative')
+    h.press('tab'); assertEqual(h.buffer(), '/automations list', 'further Tabs wrap back to the start of the list')
+}
+
+{
+    // Any other keystroke invalidates a pending cycle; the next Tab re-queries the provider
+    let calls = 0
+    const h = createInput(80)
+    h.component.setCompletionProvider((buffer, cursorPos) => {
+        calls++
+        if (calls === 1) return { text: 'alpha', tokenStart: 0, alternatives: ['alpha', 'beta'] }
+        return { text: 'zeta', tokenStart: 0 }
+    })
+    h.press('tab')
+    assertEqual(h.buffer(), 'alpha', 'initial ambiguous completion applied from provider result')
+    h.press('b')
+    assertEqual(h.buffer(), 'alphab', 'typing after a completion keeps both pieces')
+    h.press('tab')
+    assertEqual(calls, 2, 'post-typing Tab queries the provider again instead of continuing the stale cycle')
+    assertEqual(h.buffer(), 'zeta', 'fresh provider result replaces the word being completed')
+}
+
+{
+    // Without an installed provider Tab remains the historical no-op
+    const h = createInput(80)
+    for (const ch of '/automa'.split('')) h.press(ch)
+    h.press('tab')
+    assertEqual(h.buffer(), '/automa', 'Tab is inert when no completion provider is installed')
+}
+
+{
+    // A throwing provider must never crash the editor or swallow later keystrokes
+    const h = createInput(80)
+    h.component.setCompletionProvider(() => { throw new Error('candidate source exploded') })
+    for (const ch of ['a', 'b', 'c']) h.press(ch)
+    h.press('tab')
+    assertEqual(h.buffer(), 'abc', 'provider exception leaves the buffer untouched')
+    h.press('d')
+    assertEqual(h.buffer(), 'abcd', 'editor stays fully functional after a failed completion attempt')
+}
+
+{
+    // Content right of the cursor survives a mid-word replacement
+    const h = createInput(80)
+    h.component.setCompletionProvider(() => ({ text: 'X', tokenStart: 2 }))
+    for (const ch of 'ab cd'.split('')) h.press(ch)
+    h.press('left'); h.press('left')   // end=5 -> 4 (before d) -> 3 (between space and c)
+    assertEqual(h.lastRender().before, 'ab ', 'cursor positioned mid-buffer before completion')
+    h.press('tab')
+    assertEqual(h.buffer(), 'abXcd', 'mid-buffer completion splices in place and keeps right-of-cursor text intact')
+}
+
+{
+    // Astral characters adjacent to a completed word stay whole through splice + cursor math
+    const EMOJI = '\u{1F44D}'
+    const target = `${EMOJI} automations`
+    const h = createInput(80)
+    // The word starts after emoji (2 UTF-16 units) + space -- tokenStart is a string offset
+    h.component.setCompletionProvider(() => ({ text: 'automations', tokenStart: 3 }))
+    h.press(EMOJI); h.press(' ')
+    h.press('tab')
+    assertEqual(h.buffer(), target, 'completion after an astral character preserves both pieces')
+    assertEqual(hasLoneSurrogate(h.buffer()), false, 'no lone surrogates around the splice point')
+
+    // Control harness types the identical final string one code point at a time; matching cursor
+    // columns prove the completion path counts code points exactly like direct typing does.
+    const control = createInput(80)
+    for (const ch of [...target]) control.press(ch)
+    assertEqual(h.lastRender().col, control.lastRender().col, 'cursor column identical to typing the result directly')
 }
 
 // -- Summary -----------------------------------------------------------------------

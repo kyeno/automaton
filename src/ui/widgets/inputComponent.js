@@ -29,8 +29,10 @@ import StateService from '../../service/stateService.js'
 /**
  * Persistent bottom-row command prompt widget.
  * Accumulates keystrokes into a buffer, handles Enter (submit), Backspace,
- * and Arrow keys (history navigation). Ctrl+C terminates the UI -- handled
- * earlier by Ui's own key listener. Renders the prompt with the current
+ * and Arrow keys (history navigation). Tab completes the word under the cursor
+ * through an optionally installed provider -- cycling ambiguous candidates on
+ * repeated presses; without one it remains a no-op. Ctrl+C terminates the UI --
+ * handled earlier by Ui's own key listener. Renders the prompt with the current
  * channel name in the layout's 'input' slot.
  */
 class InputComponent {
@@ -45,6 +47,8 @@ class InputComponent {
     #viewStart = 0
     #channelName = ''   // e.g. "!log", "#automaton"
     #active = false
+    #completionProvider = null   // tab-completion fn or null when Tab stays a no-op
+    #pendingCompletion = null    // in-progress ambiguous cycle {alternatives, index, tokenStart}
 
     // -- Initialization ---------------------------------------------------
 
@@ -110,6 +114,21 @@ class InputComponent {
     }
 
     /**
+     * Install the tab-completion provider consulted on every Tab press. The provider receives
+     * the current buffer and cursor position and returns either null (nothing to complete) or an
+     * object with text -- replacement for the word being completed -- tokenStart -- where that
+     * word begins in the buffer as a UTF-16 string offset (the unit slice() uses; astral characters
+     * therefore count double there) -- and optionally alternatives, the full candidate list behind
+     * an ambiguous match which repeated Tab presses then cycle through in order (wrapping at the end).
+     * Pass null to disable completion; until one is installed Tab remains a no-op exactly as before.
+     * @param {?function(string, number): ({text: string, tokenStart: number, alternatives?: Array<string>}|null)} fn
+     */
+    setCompletionProvider(fn) {
+        this.#completionProvider = typeof fn === 'function' ? fn : null
+        this.#resetCompletionCycle()
+    }
+
+    /**
      * Destroy this component: deactivate, clear callbacks and state.
      */
     destroy() {
@@ -121,6 +140,8 @@ class InputComponent {
         this.#cursorPos = 0
         this.#viewStart = 0
         this.#channelName = ''
+        this.#completionProvider = null
+        this.#pendingCompletion = null
     }
 
     // -- Callbacks --------------------------------------------------------
@@ -134,6 +155,10 @@ class InputComponent {
         if (!this.#active) return
 
         const n = name.toLowerCase()
+
+        // Any keystroke other than Tab invalidates a previous ambiguous-completion cycle so stale
+        // candidates can never leak into a word being typed now.
+        if (n !== 'tab') this.#resetCompletionCycle()
 
         // Skip keys that were pre-consumed by Ui (e.g., Alt+number shortcuts)
         if (this.#consumedKeys.has(n) || this.#consumedKeys.has(name)) {
@@ -235,8 +260,13 @@ class InputComponent {
             return
         }
 
-        // Ignore Tab key
-        if (n === 'tab') return
+        // Tab: complete the token under the cursor via the installed provider (if any), cycling
+        // through an ambiguous candidate list on repeated presses. Without a provider this stays
+        // the historical no-op so plain chat windows are unaffected.
+        if (n === 'tab') {
+            this.#handleTab()
+            return
+        }
 
         // Printable single-code-point keys: insert at the cursor position.
         // Accepts BMP and astral characters but rejects lone surrogates so a
@@ -249,6 +279,64 @@ class InputComponent {
     }
 
     // -- Private Helpers --------------------------------------------------
+
+    /**
+     * Handle a Tab press using the installed completion provider. When a previous Tab left an
+     * ambiguous candidate list pending, advance to the next entry (wrapping past the end); otherwise
+     * ask the provider for a fresh completion of whatever word sits under the cursor. Both outcomes
+     * splice into the buffer exactly where the word was typed -- anything right of the cursor is
+     * preserved untouched -- and render through the same path every other edit uses, so surrogate-
+     * safe cursor math stays identical. Provider errors never propagate: a broken candidate source
+     * must not be able to crash the editor.
+     * @private
+     */
+    #handleTab() {
+        if (!this.#completionProvider) return
+
+        let text = ''
+        let start = 0
+        try {
+            const pending = this.#pendingCompletion
+            if (pending && Array.isArray(pending.alternatives) && pending.alternatives.length > 1) {
+                // Cycle: step to the next alternative in offer order, wrapping around at the end
+                const alts = pending.alternatives
+                const idx = (pending.index + 1) % alts.length
+                text = String(alts[idx])
+                start = Math.max(0, Number(pending.tokenStart) || 0)
+                this.#pendingCompletion = { ...pending, index: idx }
+            } else {
+                const result = this.#completionProvider(this.#currentBuffer, this.#cursorPos)
+                if (!result || typeof result !== 'object') return
+                text = String(result.text ?? '')
+                if (text === '') return
+                start = Number.isInteger(result.tokenStart) ? Math.max(0, result.tokenStart) : 0
+                if (Array.isArray(result.alternatives) && result.alternatives.length > 1) {
+                    this.#pendingCompletion = { alternatives: [...result.alternatives], index: 0, tokenStart: start }
+                } else {
+                    this.#pendingCompletion = null
+                }
+            }
+        } catch {
+            this.#pendingCompletion = null
+            return
+        }
+
+        // Replace exactly what was typed for this word; code-point counting keeps astral characters
+        // intact in #cursorPos just like every other insertion path.
+        const safeStart = Math.min(start, this.#cursorPos)
+        this.#currentBuffer = this.#currentBuffer.slice(0, safeStart) + text + this.#currentBuffer.slice(this.#cursorPos)
+        this.#cursorPos = safeStart + [...text].length
+        this.#renderPrompt()
+    }
+
+    /**
+     * Drop any in-progress ambiguous-completion cycle so a stale candidate list can never be applied
+     * to a different word. Called on every non-Tab keystroke and whenever completion is re-enabled.
+     * @private
+     */
+    #resetCompletionCycle() {
+        this.#pendingCompletion = null
+    }
 
     /**
      * Step an index left by one full Unicode code point. The step first moves

@@ -142,6 +142,61 @@ class SAiAssistant {
     }
 
     /**
+     * Whether init() has completed at all (with or without a working provider) -- gate
+     * callers use before invoking resetConversation() from `/config reload`.
+     * @returns {boolean}
+     */
+    isReady() {
+        return this.#initialized
+    }
+
+    /**
+     * Reset the conversation to a fresh system-prompt state and drop any cached history.
+     * Called by /config reload when ai.* settings changed: re-snapshots ai.* config values,
+     * rebuilds the LLM provider so new model/sampling parameters apply, then delegates the
+     * actual message/cache reset to the existing clearConversation() path. Safe no-op
+     * before init().
+     * @async
+     * @returns {Promise<{reset:boolean, dropped:number}>} How much live state was cleared
+     */
+    async resetConversation() {
+        if (!this.#initialized) return { reset: false, dropped: 0 }
+
+        const hadProvider = this.#provider !== null
+        const dropped = Math.max(0, this.#messages.length - 1)
+
+        // Re-read ai.* now that ConfigService holds the freshly reloaded values
+        this.#loadConfig()
+        if (hadProvider) this.#reinitProvider()   // picks up new model / max_tokens / temperature
+
+        this.clearConversation()                  // fresh system prompt + cache key drop
+
+        LoggerService.info(
+            `AI conversation reset (${dropped} message(s) cleared from context)`,
+            'AiAssistant'
+        )
+        return { reset: true, dropped }
+    }
+
+    /**
+     * Construct and validate a fresh LLM provider against current config. Mirrors the
+     * init() path; failure disables AI features again instead of throwing.
+     * @private
+     */
+    #reinitProvider() {
+        try {
+            this.#provider = new OpenAiProvider()
+            this.#provider.init()
+        } catch (error) {
+            LoggerService.warn(
+                `AI provider not initialized (${error.message}) - AI features disabled`,
+                'AiAssistant'
+            )
+            this.#provider = null
+        }
+    }
+
+    /**
      * Check whether an AI provider can be constructed, regardless of init state.
      * Mirrors OpenAiProvider requirements (API URL + model name); safe to call before
      * init(). Used by bootstrap and the UI to skip work entirely when unconfigured.

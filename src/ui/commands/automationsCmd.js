@@ -182,7 +182,7 @@ class AutomationsCmd extends CommandBase {
         for (const [key, instance] of map.entries()) {
             entries.push({ name: key, props: this.#baseProps(instance) })
         }
-        this.#renderTree(entries)
+        this.printTree(entries)
     }
 
     /**
@@ -226,7 +226,7 @@ class AutomationsCmd extends CommandBase {
             props.push(['config keys', Object.keys(automation.config).join(', ')])
         }
 
-        this.#renderTree([{ name: automation.name ?? rawName, props }])
+        this.printTree([{ name: automation.name ?? rawName, props }])
     }
 
     /**
@@ -255,6 +255,24 @@ class AutomationsCmd extends CommandBase {
         this.ctx.print(`Done -- see log window for "Auto:${name}" details.`)
     }
 
+    // -- Tab completion -----------------------------------------------------
+
+    /**
+     * Tab-completion candidates for /automations arguments. The first token offers the known
+     * subcommands; once "run" or "debug" has been typed, registered automation names are offered
+     * so "/automations run TtsWea<Tab>" completes without consulting the list view first.
+     * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
+     * @returns {Array<string>|null} Candidates for the next token, or null when none apply
+     */
+    completeNextToken(typedTokens) {
+        if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'run']
+        const sub = String(typedTokens[0]).toLowerCase()
+        if (sub !== 'run' && sub !== 'debug') return null
+        const container = this.ctx.automationContainer
+        if (container && typeof container.getNames === 'function') return container.getNames()
+        return null
+    }
+
     // -- Shared helpers -------------------------------------------------------
 
     /**
@@ -272,44 +290,6 @@ class AutomationsCmd extends CommandBase {
             ['triggers', triggers.length > 0 ? triggers.join(', ') : '--'],
             ['rules', String(rulesCount)],
         ]
-    }
-
-    /**
-     * Draw entries as an aligned tree using box-drawing characters (escaped).
-     * Each entry is { name, props: [[label, value], ...] }.
-     * @param {Array<{name: string, props: Array<[string, string]>}>} entries - Entries to draw
-     */
-    #renderTree(entries) {
-        // Build the tree output line by line
-        const lines = []
-        const total = entries.length
-
-        for (let i = 0; i < total; i++) {
-            const entry = entries[i]
-            const isLast = i === total - 1
-
-            // Branch prefix marks whether this is an intermediate or the last entry
-            const branchPrefix = isLast ? '\u2514\u2500 ' : '\u251c\u2500 '
-            // Continuation column keeps nested property lines aligned under the branch
-            const contCol = '\u2502   '
-
-            // Automation name header
-            lines.push(`${branchPrefix}${entry.name}`)
-
-            // Properties -- each gets a branch marker based on its position in the list
-            const props = entry.props
-            for (let j = 0; j < props.length; j++) {
-                const [label, value] = props[j]
-                const propIsLast = j === props.length - 1
-                const propBranch = propIsLast ? '\u2514\u2500' : '\u251c\u2500'
-                lines.push(`${contCol}${propBranch} ${label}: ${value}`)
-            }
-
-            // Blank separator between automations (not after the last one)
-            if (!isLast) lines.push('')
-        }
-
-        this.ctx.print(lines.join('\n'))
     }
 
     /**

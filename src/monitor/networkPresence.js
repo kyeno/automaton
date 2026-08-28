@@ -265,6 +265,61 @@ class SNetworkPresence {
             EventBus.publish(`network:${deviceName}`)
         }
     }
+
+    // -- Read-only views (used by /devices) ----------------------------------
+
+    /**
+     * Flat listing of every configured network device -- an additive read-only view used
+     * by the /devices command. Tolerates a missing or malformed config section without
+     * throwing; entries are sorted by device name for stable output.
+     * @returns {Array<{name: string, category: string, ip: string}>} One entry per configured device
+     */
+    getNetworkDevices() {
+        const out = []
+        if (!this.#config || typeof this.#config !== 'object') return out
+        for (const [category, devices] of Object.entries(this.#config)) {
+            if (!devices || typeof devices !== 'object' || Array.isArray(devices)) continue
+            for (const [name, ipAddress] of Object.entries(devices)) {
+                if (typeof ipAddress === 'string' && ipAddress.trim() !== '') {
+                    out.push({ name, category, ip: ipAddress })
+                }
+            }
+        }
+        return out.sort((a, b) => a.name.localeCompare(b.name))
+    }
+
+    /**
+     * Flat list of configured network device names -- convenience projection of
+     * getNetworkDevices() used by tab-completion. Inherits the same sorting and
+     * malformed-config tolerance as the full listing.
+     * @returns {string[]} Device names only
+     */
+    getDeviceNames() {
+        return this.getNetworkDevices().map((d) => d.name)
+    }
+
+    /**
+     * Presence state for one configured device, looked up case-insensitively across all
+     * categories. Returns null when the device is unknown or no cache entry exists yet
+     * (cold start, expired TTL, Redis unavailable) so callers can render "unknown"
+     * instead of guessing -- never throws.
+     * @param {string} name - Device name as configured in network.yaml
+     * @returns {Promise<'online'|'offline'|null>} Resolved presence label or null
+     */
+    async getPresence(name) {
+        const match = this.getNetworkDevices().find(
+            (d) => d.name.toLowerCase() === String(name ?? '').toLowerCase()
+        )
+        if (!match) return null
+        try {
+            const value = await CacheService.get(`network:${match.category}:${match.name}`)
+            if (value === STATE_ONLINE) return 'online'
+            if (value === STATE_OFFLINE) return 'offline'
+            return null
+        } catch {
+            return null
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

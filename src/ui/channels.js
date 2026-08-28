@@ -99,6 +99,27 @@ class SChannelManager {
     }
 
     /**
+     * Whether definitions have been read from config at least once -- gate callers use so
+     * `/config reload` only resets the cache when there is actually something stale to drop.
+     * @returns {boolean}
+     */
+    get isLoaded() {
+        return this.#loaded
+    }
+
+    /**
+     * Drop all cached channel definitions so the next access re-reads automaton.yaml's
+     * ui.windows block. Called by /config reload when window definitions changed; adding or
+     * removing windows still requires a restart because Ui builds window instances eagerly.
+     */
+    reset() {
+        this.#channels = []
+        this.#byId.clear()
+        this.#byShortcut.clear()
+        this.#loaded = false
+    }
+
+    /**
      * Get the active window's channel name given its internal id.
      * Falls back to the title if no channel is configured.
      * @param {string} windowId

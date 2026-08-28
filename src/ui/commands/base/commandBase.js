@@ -86,7 +86,67 @@ class CommandBase {
         this.ctx = ctx ?? {}
     }
 
+    // -- Shared rendering helpers ------------------------------------------
+
+    /**
+     * Render entries as an aligned tree using box-drawing characters via ctx.print().
+     * Shared by listing commands (/automations list|debug, /config debug ...) so every
+     * command renders its trees identically. Each entry is
+     * { name, props: [[label, value], ...] }.
+     * @param {Array<{name: string, props?: Array<[string, string]>}>} entries - Entries to draw
+     */
+    printTree(entries) {
+        // Build the tree output line by line
+        const lines = []
+        const total = entries.length
+
+        for (let i = 0; i < total; i++) {
+            const entry = entries[i]
+            const isLast = i === total - 1
+
+            // Branch prefix marks whether this is an intermediate or the last entry
+            const branchPrefix = isLast ? '\u2514\u2500 ' : '\u251c\u2500 '
+            // Continuation column keeps nested property lines aligned under the branch
+            const contCol = '\u2502   '
+
+            // Entry name header
+            lines.push(`${branchPrefix}${entry.name}`)
+
+            // Properties -- each gets a branch marker based on its position in the list
+            const props = entry.props ?? []
+            for (let j = 0; j < props.length; j++) {
+                const [label, value] = props[j]
+                const propBranch = j === props.length - 1 ? '\u2514\u2500' : '\u251c\u2500'
+                lines.push(`${contCol}${propBranch} ${label}: ${value}`)
+            }
+
+            // Blank separator between entries (not after the last one)
+            if (!isLast) lines.push('')
+        }
+
+        this.ctx.print(lines.join('\n'))
+    }
+
     // -- Public API -------------------------------------------------------
+
+    /**
+     * Optional tab-completion provider for arguments following this command's verb.
+     * Receives the fully-typed tokens AFTER the verb, excluding the partial token currently
+     * being completed (e.g., [] when completing "/config <TAB>", ['run'] when completing
+     * "/automations run TtsWea<TAB>") and returns an array of candidate strings for the next
+     * token, or null when nothing can be offered at that position. Candidate lists are matched
+     * with terminal-kit's autoComplete() helper by the UI completer, so plain string arrays are
+     * all that is required here; data should come from the ctx containers' getNames()-style
+     * helpers rather than re-scanning registries. The default offers nothing -- override only
+     * in commands whose grammar accepts known values.
+     *
+     * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
+     * @returns {Array<string>|null} Candidates for the next token, or null for no completion
+     */
+    completeNextToken(typedTokens) {
+        void typedTokens
+        return null
+    }
 
     /**
      * Execute the command with parsed arguments.

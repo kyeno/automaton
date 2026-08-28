@@ -52,16 +52,15 @@ personas:
 - Improve how things are redrawn by statusbar; it seems to be constantly reading files
 - LATER: Consistent color palette across all windows (status bar, device window)
 - LATER: Proper nick highlighting (own messages emphasized in chat)
+- LATER: Nicer slash commands output, some color formatting etc.
 - VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
 
 ### Slash commands
-- Add slash command to debug config; allow live config editions with /config set something value commands with validators
-+/- Add slash commands to debug automation container, interaction container, device container
-- Add slash commands to debug state and eventbus(?); probably rewrite /status command
-- Consider using autocompletion for the commands
+- FIX: /config rendering YAMLs without indentation; reloading doesn't render greeting on AI channel
 - Add "force" option to run automations via cmd
-- LATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
-- Debug timers (LATER)
+- MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
+- MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
+- LATER: Debug timers (LATER)
 
 ---
 

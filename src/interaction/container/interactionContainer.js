@@ -274,6 +274,38 @@ class SInteractionContainer {
         return result
     }
 
+    /**
+     * Get all registered interaction names as a flat array -- an additive read-only view used by
+     * tab-completion and listing helpers. Mirrors getAll() so only successfully instantiated
+     * entries are included; sorted for stable output.
+     * @returns {string[]} Sorted array of interaction names
+     */
+    getNames() {
+        return [...this.getAll().keys()].sort()
+    }
+
+    /**
+     * Source metadata for one registered interaction -- an additive read-only view used by
+     * /interactions debug. Reports the authoritative kind ("yaml" or "custom") straight
+     * from the registry entry instead of inferring it from the prototype chain, plus the
+     * raw config object when available so action detail can be rendered without relying on
+     * instance internals. Returns null for unknown names or entries that never
+     * instantiated successfully.
+     * @param {string} name - Registered interaction name (exact match)
+     * @returns {{name: string, kind: string, config: Object|null}|null} Metadata or null
+     */
+    getSourceInfo(name) {
+        const entry = this.#interactions.get(name)
+        if (!entry || !entry.instance) return null
+
+        const config = entry.config ?? entry.instance?.config ?? null
+        return {
+            name,
+            kind: entry.isYaml === true ? 'yaml' : 'custom',
+            config: (config && typeof config === 'object') ? config : null,
+        }
+    }
+
     // -- Lifecycle helpers ------------------------------------------------
 
     /**

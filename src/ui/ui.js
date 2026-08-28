@@ -38,6 +38,10 @@ import AutomationContainer from '../automation/container/automationContainer.js'
 // Interactions
 import InteractionContainer from '../interaction/container/interactionContainer.js'
 
+// Devices & network presence (consumed by the /devices command via ctx)
+import DeviceContainer from '../device/container/deviceContainer.js'
+import NetworkPresence from '../monitor/networkPresence.js'
+
 // Windows
 import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
@@ -47,6 +51,7 @@ import TtsWindow from './windows/ttsWindow.js'
 // Widgets
 import StatusBar from './widgets/statusBar.js'
 import InputComponent from './widgets/inputComponent.js'
+import CommandCompleter from './completion/commandCompleter.js'
 
 // ---------------------------------------------------------------------------
 // Ui
@@ -170,6 +175,18 @@ class Ui {
                 if (win && typeof win.print === 'function') win.print(args.join(' '))
             },
             switchWindow: self.switchWindow.bind(self),
+            // Clear buffer contents of specific windows (only those that exist and expose clear()).
+            // Used by /config reload to drop stale rendered output from AI/TTS windows after a swap.
+            clearWindows(ids) {
+                const cleared = []
+                for (const id of Array.isArray(ids) ? ids : []) {
+                    const inst = self.#windows?.[id]?.instance
+                    if (inst && typeof inst.clear === 'function') {
+                        try { inst.clear(); cleared.push(id) } catch {}
+                    }
+                }
+                return cleared
+            },
             scrollPageUp: () => self.scrollActivePageUp(),
             scrollPageDown: () => self.scrollActivePageDown(),
             shutdown: () => self.shutdown(),
@@ -178,9 +195,29 @@ class Ui {
             commandContainer: CommandContainer,
             automationContainer: AutomationContainer,
             interactionContainer: InteractionContainer,
+            deviceContainer: DeviceContainer,
+            networkPresence: NetworkPresence,
+            configService: ConfigService,
         }
 
         await CommandContainer.init(ctx)
+
+        // Tab-completion: wire the single active editor to slash-command candidates. Lines starting
+        // with '/' always complete against the command grammar; bare text completes only when the
+        // active window is not a free-form chat surface so AI/TTS message windows stay untouched.
+        try {
+            const completer = new CommandCompleter()
+            this.#input.setCompletionProvider((buffer, cursorPos) => {
+                const line = String(buffer ?? '')
+                if (!line.startsWith('/')) {
+                    const win = this.#windows?.[this.#activeWindow]?.instance
+                    if ((win?.constructor?.inputMode || 'command') === 'chat') return null
+                }
+                return completer.complete(line, cursorPos)
+            })
+        } catch (e) {
+            LoggerService.warn(`Tab completion unavailable: ${e.message}`, 'UI')
+        }
 
         // Terminal resize handling. Slot geometry is refreshed immediately on
         // every event (cheap pure math), but the expensive work -- full

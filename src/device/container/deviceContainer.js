@@ -382,6 +382,17 @@ class SDeviceContainer {
         return result
     }
 
+    /**
+     * Get all registered device names as a flat array -- an additive read-only view used by
+     * tab-completion and listing helpers. Delegates to getAll() so bridge filtering behaves
+     * identically in both places.
+     * @param {{includeBridge?: boolean}} [options={}] - Same filtering options as getAll()
+     * @returns {string[]} Array of device names
+     */
+    getNames({ includeBridge = true } = {}) {
+        return Object.keys(this.getAll({ includeBridge }))
+    }
+
     // -- Dynamic device management ------------------------------------
 
     /**
