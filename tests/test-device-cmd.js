@@ -1,6 +1,6 @@
 /**
  * Devices command tests.
- * Behavioral coverage for the /devices subcommand dispatcher: registry counts + usage help on
+ * Behavioral coverage for the /device subcommand dispatcher: registry counts + usage help on
  * bare invocation, "list" with both/one-registry filters (including invalid-filter handling),
  * and cross-registry "debug <name>" covering exact, case-insensitive, ambiguous (present in
  * BOTH registries), unknown, and missing-name paths -- plus presence rendering from a fake
@@ -17,7 +17,7 @@
  */
 'use strict'
 
-import DevicesCmd from '../src/ui/commands/devicesCmd.js'
+import DeviceCmd from '../src/ui/commands/deviceCmd.js'
 import NetworkPresence from '../src/monitor/networkPresence.js'
 
 let passed = 0
@@ -45,7 +45,7 @@ function assert(condition, label) {
 
 // -- Fakes ---------------------------------------------------------------------
 
-/** Fake Zigbee sensor instance shaped like the accessors /devices reads. */
+/** Fake Zigbee sensor instance shaped like the accessors /device reads. */
 class Sensor {
     constructor(name, id, stateLast = {}) {
         this.name = name
@@ -109,7 +109,7 @@ function makeBareNetworkSource(entries) {
 // -- Harness ---------------------------------------------------------------------
 
 /**
- * Instantiate a DevicesCmd wired to a recording print context and optional registry fakes.
+ * Instantiate a DeviceCmd wired to a recording print context and optional registry fakes.
  * @param {{deviceContainer?: Object, networkPresence?: Object}} registries - Fakes or omissions
  * @returns {{cmd: Object, printed: string[]}} Command instance plus captured output lines
  */
@@ -118,7 +118,7 @@ function createHarness({ deviceContainer, networkPresence } = {}) {
     const ctx = { print: (text) => printed.push(String(text)) }
     if (deviceContainer !== undefined) ctx.deviceContainer = deviceContainer
     if (networkPresence !== undefined) ctx.networkPresence = networkPresence
-    return { cmd: new DevicesCmd(ctx), printed }
+    return { cmd: new DeviceCmd(ctx), printed }
 }
 
 const zigbeeContainer = { getAll: ({ includeBridge = true } = {}) => (includeBridge ? zigbeeDevices : zigbeeDevices) }
@@ -132,7 +132,7 @@ console.log('\n\u2500\u2500 Bare invocation \u2500\u2500\n')
     assertEqual(h.printed[0], 'Zigbee devices: 2 | Network devices: 2', 'counts reported per registry')
     const out = h.printed.join('\n')
     assert(
-        out.startsWith('Zigbee devices: 2 | Network devices: 2\n\nUsage: /devices <subcommand> [args]'),
+        out.startsWith('Zigbee devices: 2 | Network devices: 2\n\nUsage: /device <subcommand> [args]'),
         true,
         'usage header follows counts after a blank line'
     )
@@ -147,7 +147,7 @@ console.log('\n\u2500\u2500 Bare invocation \u2500\u2500\n')
     const h = createHarness({ deviceContainer: zigbeeContainer, networkPresence: makeNetworkSource(networkEntries) })
     await h.cmd.execute('frobnicate x')
     assertEqual(h.printed[0], 'Unknown subcommand "frobnicate"', 'unknown subcommand error line')
-    assertEqual(h.printed[1].startsWith('Usage: /devices'), true, 'fallback shows usage after error')
+    assertEqual(h.printed[1].startsWith('Usage: /device'), true, 'fallback shows usage after error')
 }
 
 console.log('\n\u2500\u2500 list \u2500\u2500\n')

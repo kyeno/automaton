@@ -266,11 +266,11 @@ class SNetworkPresence {
         }
     }
 
-    // -- Read-only views (used by /devices) ----------------------------------
+    // -- Read-only views (used by /device) -----------------------------------
 
     /**
      * Flat listing of every configured network device -- an additive read-only view used
-     * by the /devices command. Tolerates a missing or malformed config section without
+     * by the /device command. Tolerates a missing or malformed config section without
      * throwing; entries are sorted by device name for stable output.
      * @returns {Array<{name: string, category: string, ip: string}>} One entry per configured device
      */

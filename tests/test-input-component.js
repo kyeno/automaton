@@ -236,23 +236,23 @@ console.log('\n\u2500\u2500 Tab completion \u2500\u2500\n')
 {
     // Unique verb match: provider reports where the word begins so the slash stays put
     const h = createInput(80)
-    h.component.setCompletionProvider(() => ({ text: 'automations', tokenStart: 1 }))
+    h.component.setCompletionProvider(() => ({ text: 'automation', tokenStart: 1 }))
     for (const ch of '/automa'.split('')) h.press(ch)
     assertEqual(h.buffer(), '/automa', 'partial verb typed before Tab')
     h.press('tab')
-    assertEqual(h.buffer(), '/automations', 'Tab splices the completed verb after the leading slash')
+    assertEqual(h.buffer(), '/automation', 'Tab splices the completed verb after the leading slash')
     assertEqual(hasLoneSurrogate(h.buffer()), false, 'completed line is surrogate-clean')
 }
 
 {
     // Ambiguous candidates: repeated Tabs cycle through alternatives and wrap around
     const h = createInput(80)
-    h.component.setCompletionProvider(() => ({ text: 'list', tokenStart: 13, alternatives: ['list', 'debug', 'run'] }))
-    for (const ch of '/automations '.split('')) h.press(ch)
-    h.press('tab'); assertEqual(h.buffer(), '/automations list', 'first Tab applies the first alternative')
-    h.press('tab'); assertEqual(h.buffer(), '/automations debug', 'second Tab cycles to the next alternative')
-    h.press('tab'); assertEqual(h.buffer(), '/automations run', 'third Tab reaches the last alternative')
-    h.press('tab'); assertEqual(h.buffer(), '/automations list', 'further Tabs wrap back to the start of the list')
+    h.component.setCompletionProvider(() => ({ text: 'list', tokenStart: 12, alternatives: ['list', 'debug', 'run'] }))
+    for (const ch of '/automation '.split('')) h.press(ch)
+    h.press('tab'); assertEqual(h.buffer(), '/automation list', 'first Tab applies the first alternative')
+    h.press('tab'); assertEqual(h.buffer(), '/automation debug', 'second Tab cycles to the next alternative')
+    h.press('tab'); assertEqual(h.buffer(), '/automation run', 'third Tab reaches the last alternative')
+    h.press('tab'); assertEqual(h.buffer(), '/automation list', 'further Tabs wrap back to the start of the list')
 }
 
 {
@@ -306,10 +306,10 @@ console.log('\n\u2500\u2500 Tab completion \u2500\u2500\n')
 {
     // Astral characters adjacent to a completed word stay whole through splice + cursor math
     const EMOJI = '\u{1F44D}'
-    const target = `${EMOJI} automations`
+    const target = `${EMOJI} automation`
     const h = createInput(80)
     // The word starts after emoji (2 UTF-16 units) + space -- tokenStart is a string offset
-    h.component.setCompletionProvider(() => ({ text: 'automations', tokenStart: 3 }))
+    h.component.setCompletionProvider(() => ({ text: 'automation', tokenStart: 3 }))
     h.press(EMOJI); h.press(' ')
     h.press('tab')
     assertEqual(h.buffer(), target, 'completion after an astral character preserves both pieces')

@@ -1,12 +1,12 @@
 /**
- * Devices Command -- lists and inspects devices from both device registries.
+ * Device Command -- lists and inspects devices from both device registries.
  *
  * Subcommands:
- *   /devices                  Show registry counts plus GNU-style usage help
- *   /devices list             List every registered device (Zigbee tree + network table)
- *   /devices list zigbee      Zigbee devices only (bridge/coordinator excluded)
- *   /devices list network     Network-presence devices only (category, IP per entry)
- *   /devices debug <name>     Cross-registry lookup: full detail for one device by name,
+ *   /device                   Show registry counts plus GNU-style usage help
+ *   /device list             List every registered device (Zigbee tree + network table)
+ *   /device list zigbee      Zigbee devices only (bridge/coordinator excluded)
+ *   /device list network     Network-presence devices only (category, IP per entry)
+ *   /device debug <name>     Cross-registry lookup: full detail for one device by name,
  *                             case-insensitive; names present in BOTH registries render both
  *
  * Reads DeviceContainer and NetworkPresence through ctx so tests can inject fakes; a
@@ -27,9 +27,8 @@ import CommandBase from './base/commandBase.js'
 // Command
 // ---------------------------------------------------------------------------
 
-class DevicesCmd extends CommandBase {
-    static name = 'devices'
-    static aliases = ['device']
+class DeviceCmd extends CommandBase {
+    static name = 'device'
     static description = 'List and inspect Zigbee + network devices'
     static takesArgs = true
 
@@ -48,7 +47,7 @@ class DevicesCmd extends CommandBase {
         }
 
         // First token is the subcommand; everything after it stays intact as the payload
-        // so multi-word device names keep working (same convention as /automations).
+        // so multi-word device names keep working (same convention as /automation).
         const spaceIdx = trimmed.indexOf(' ')
         const sub = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase()
         const rest = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1).trim()
@@ -67,9 +66,9 @@ class DevicesCmd extends CommandBase {
     }
 
     /**
-     * Tab-completion candidates for /devices arguments. The first token offers the known
+     * Tab-completion candidates for /device arguments. The first token offers the known
      * subcommands; once "debug" has been typed, the union of Zigbee and network device names is
-     * offered so "/devices debug office<Tab>" completes against both registries at once.
+     * offered so "/device debug office<Tab>" completes against both registries at once.
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
      * @returns {Array<string>|null} Candidates for the next token, or null when none apply
      */
@@ -91,6 +90,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Zigbee devices from ctx (bridge/coordinator excluded at the source), or an empty
      * object when the container is unavailable.
+     * @private
      * @returns {Record<string, Object>} Name-keyed map of device instances
      */
     #zigbeeDevices() {
@@ -106,6 +106,7 @@ class DevicesCmd extends CommandBase {
 
     /**
      * Configured network devices from ctx, or [] when NetworkPresence is unavailable.
+     * @private
      * @returns {Array<{name: string, category: string, ip: string}>} Sorted flat listing
      */
     #networkDevices() {
@@ -122,6 +123,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Bare invocation view: registry counts, usage help and the union of known names so
      * users can see what "debug" could address without typing it first.
+     * @private
      */
     #printOverview() {
         const zigbeeCount = Object.keys(this.#zigbeeDevices()).length
@@ -133,10 +135,11 @@ class DevicesCmd extends CommandBase {
 
     /**
      * Usage block shared by bare invocation and unknown-subcommand fallbacks.
+     * @private
      */
     #printUsageLines() {
         const lines = [
-            'Usage: /devices <subcommand> [args]',
+            'Usage: /device <subcommand> [args]',
             '',
             '  list [zigbee|network]   List registered devices from both or one registry',
             '  debug <name>            Inspect one device across both registries',
@@ -154,6 +157,7 @@ class DevicesCmd extends CommandBase {
     /**
      * "list" subcommand -- renders the Zigbee tree, the network table, or just one of
      * them when a filter token is given. Unknown filters are reported with valid options.
+     * @private
      * @param {string} rest - Argument string after "list" (may be empty)
      */
     async #handleList(rest) {
@@ -190,6 +194,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Render the Zigbee registry as a shared-style tree entry per device (name plus type
      * and id rows). Prints an explicit note when nothing is registered.
+     * @private
      * @param {boolean} headed - Whether to print the section header line first
      */
     async #renderZigbeeSection(headed) {
@@ -207,6 +212,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Render the network-presence registry as one tree entry per configured device with
      * category/IP rows. Presence state itself belongs in "debug" so listing stays cheap.
+     * @private
      * @param {boolean} headed - Whether to print the section header line first
      */
     async #renderNetworkSection(headed) {
@@ -231,6 +237,7 @@ class DevicesCmd extends CommandBase {
      * (case-insensitive). A hit in exactly one registry renders its full detail view;
      * a hit in both is reported as ambiguous and renders each under a labelled block so
      * nothing is hidden. Unknown names fall back to the union of available names.
+     * @private
      * @param {string} rawName - Name argument after "debug" (may be empty)
      */
     async #handleDebug(rawName) {
@@ -273,6 +280,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Render the full detail view for one configured network device including its live
      * presence state when a lookup is available; cold caches render as "unknown".
+     * @private
      * @param {{name: string, category: string, ip: string}} entry - Flat listing entry
      */
     async #renderNetworkDebug(entry) {
@@ -299,11 +307,12 @@ class DevicesCmd extends CommandBase {
     /**
      * Compact property rows for list views (type + id only -- deep state belongs in debug).
      * Tolerates devices that lack optional accessors.
+     * @private
      * @param {Object} device - Device instance from the registry
      * @returns {Array<[string, string]>} Rows of [label, value] pairs
      */
     #lightProps(device) {
-        const props = [['type', DevicesCmd.typeLabel(device)]]
+        const props = [['type', DeviceCmd.typeLabel(device)]]
         if (device && typeof device.getId === 'function') {
             const id = device.getId()
             if (id != null) props.push(['id', String(id)])
@@ -315,13 +324,14 @@ class DevicesCmd extends CommandBase {
      * Full detail rows for the debug view: type label, Zigbee id, last reported state,
      * origin and active kind when those accessors exist on the instance. Every accessor
      * is guarded so heterogeneous device classes never break rendering.
+     * @private
      * @param {Object} device - Device instance from the registry
      * @returns {Array<[string, string]>} Rows of [label, value] pairs
      */
     #zigbeeDebugProps(device) {
         const props = [
             ['registry', 'zigbee'],
-            ['type', DevicesCmd.typeLabel(device)],
+            ['type', DeviceCmd.typeLabel(device)],
         ]
         if (!device || typeof device !== 'object') return props
 
@@ -348,6 +358,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Resolve a Zigbee registry entry by user-supplied name: exact match first, then
      * case-insensitive comparison in sorted key order so mistyped casing still works.
+     * @private
      * @param {string} rawName - Name typed by the user (may be empty)
      * @returns {{key: string, device: Object}|null} Resolved entry or null when not found
      */
@@ -367,6 +378,7 @@ class DevicesCmd extends CommandBase {
     /**
      * Union of registered names from both registries, de-duplicated and sorted -- used by
      * usage footers and unknown-name fallbacks.
+     * @private
      * @returns {string[]} Sorted unique names
      */
     #allNames() {
@@ -377,6 +389,7 @@ class DevicesCmd extends CommandBase {
 
     /**
      * Print the union listing of known device names (or a note when none exist).
+     * @private
      */
     #printAvailableNames() {
         const names = this.#allNames()
@@ -404,4 +417,4 @@ class DevicesCmd extends CommandBase {
     }
 }
 
-export default DevicesCmd
+export default DeviceCmd

@@ -71,6 +71,10 @@ class SConfigContainer {
 
     // -- Singleton ----------------------------------------------------------
 
+    /**
+     * Synchronous singleton guard -- first instantiation wins and later calls return
+     * the existing instance, so ConfigService.get() is safe from any call site.
+     */
     constructor() {
         if (!SConfigContainer.instance) SConfigContainer.instance = this
         return SConfigContainer.instance

@@ -79,6 +79,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
     /**
      * Log how many rules were loaded. Uses debug level so it's visible but not noisy.
+     * @private
      */
     #logConfigLoaded() {
         this.log(`Config loaded: ${this.config.rules?.length ?? 0} rules defined`, 'debug')
@@ -204,18 +205,25 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * 
      * @param {Object} [triggerData] - Info about what triggered this run
      * @param {string} [triggerData.trigger] - Trigger source identifier
+     * @param {boolean} [triggerData.force] - When true (e.g., "/automation force"), bypasses the
+     *   silent-period suppression and per-rule once-per-day markers; human-interaction cooldowns still apply
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
-        // Suppress execution during configured silent period (before any work begins)
+        // Suppress execution during configured silent period (before any work begins),
+        // unless explicitly forced from outside (e.g., "/automation force")
         if (this.isInSilentPeriod()) {
-            this.log(
-                `Suppressed during silent period (${triggerSource})`,
-                'debug'
-            )
-            return
+            if (triggerData?.force === true) {
+                this.log(`Forced run -- silent period bypassed (${triggerSource})`, 'info')
+            } else {
+                this.log(
+                    `Suppressed during silent period (${triggerSource})`,
+                    'debug'
+                )
+                return
+            }
         }
 
         let context
@@ -252,7 +260,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 if (!match) continue
 
                 // Per-rule daily "once" marker -- at most one action per calendar day.
-                if (rule.once && await this.#hasActedToday(rule)) {
+                // A forced manual run may still act after the slot was used today; when it
+                // does, #markActedToday() refreshes the marker so later natural runs skip.
+                if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule)) {
                     this.log(`Rule "${rule.name}" already acted today, skipping`, 'debug')
                     continue
                 }
@@ -494,6 +504,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * each day without cleanup logic. Fails open when Redis is unavailable or the
      * entry cannot be parsed -- consistent with checkAndLogHumanInteraction().
      * 
+     * @private
      * @param {Object} rule - Rule object carrying an `once: true` flag
      * @returns {Promise<boolean>} true if this rule already acted today
      */
@@ -514,6 +525,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * human interaction). Failures are logged but never fatal -- worst case the rule may
      * act again on a later tick of the same day.
      * 
+     * @private
      * @param {Object} rule - Rule object carrying an `once: true` flag
      * @returns {Promise<void>}
      */
@@ -537,6 +549,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * Check if a numeric value satisfies range bounds defined in config.
      * Supports: lt, lte, gt, gte
      * 
+     * @private
      * @param {number|null} value - The sensor reading to check
      * @param {Object} constraints - Range bounds (lt, lte, gt, gte)
      * @returns {boolean}
@@ -559,6 +572,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      *   ["kyeno", "meerkat"] -> { kyeno: true, meerkat: true }
      *   { kyeno: true, meerkat: false }
      * 
+     * @private
      * @param {string|string[]|Object} presence - Raw condition value from YAML
      * @returns {Object} Map of device name to boolean
      */

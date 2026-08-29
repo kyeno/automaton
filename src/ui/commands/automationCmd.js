@@ -1,14 +1,18 @@
 /**
- * Automations Command -- lists, inspects, and manually triggers loaded automations.
+ * Automation Command -- lists, inspects, and manually triggers loaded automations.
  *
  * Subcommands:
- *   /automations              Show GNU-style usage help with available subcommands
- *   /automations list         List all loaded automations in a tree-like format
+ *   /automation               Show GNU-style usage help with available subcommands
+ *   /automation list         List all loaded automations in a tree-like format
  *                             (name, status, type, timer interval, triggers, rules)
- *   /automations debug <n>    Render one automation like list, plus silence window,
+ *   /automation debug <n>    Render one automation like list, plus silence window,
  *                             per-rule condition summaries, or config keys
- *   /automations run <n>      Call that automation's execute() now; the log shows
+ *   /automation run <n>      Call that automation's execute() now; the log shows
  *                             "Triggered by: manual" under its Auto:<name> context
+ *   /automation force <n>    Same as run but bypasses the silent period and any
+ *                             once-per-day rule markers; human-interaction cooldowns
+ *                             still apply so a manual poke never fights a device
+ *                             someone just touched
  *
  * Uses plain text via ctx.print() so it plays nicely with buffer-based UI windows.
  *
@@ -34,8 +38,8 @@ const MANUAL_TRIGGER_REASON = 'manual'
 // Command
 // ---------------------------------------------------------------------------
 
-class AutomationsCmd extends CommandBase {
-    static name = 'automations'
+class AutomationCmd extends CommandBase {
+    static name = 'automation'
     static description = 'Manage automations: list, inspect, manually trigger'
     static takesArgs = true
 
@@ -134,6 +138,9 @@ class AutomationsCmd extends CommandBase {
             case 'run':
                 await this.#handleRun(container, rest)
                 break
+            case 'force':
+                await this.#handleForce(container, rest)
+                break
             default:
                 this.ctx.print(`Unknown subcommand "${sub}"`)
                 this.#printUsage(container)
@@ -144,15 +151,18 @@ class AutomationsCmd extends CommandBase {
 
     /**
      * Print GNU-style usage help with all subcommands and the registered automations.
+     * @private
      * @param {Object} container - AutomationContainer instance
      */
     #printUsage(container) {
         const lines = [
-            'Usage: /automations <subcommand> [args]',
+            'Usage: /automation <subcommand> [args]',
             '',
             '  list             List all loaded automations',
             '  debug <name>     Show detailed info for one automation',
             '  run <name>       Manually trigger an automation now',
+            '  force <name>     Trigger now even during its silent period or after a',
+            '                   once/day marker fired (human-interaction cooldowns kept)',
             '',
         ]
         const names = this.#availableNames(container)
@@ -168,6 +178,7 @@ class AutomationsCmd extends CommandBase {
      * Render all loaded automations in a tree-like format (the "list" view).
      * Shows name, status (loaded/not), type (ruleBased etc.), triggers,
      * timer interval for timer-based ones, and rule count per automation.
+     * @private
      * @param {Object} container - AutomationContainer instance
      */
     #renderList(container) {
@@ -189,6 +200,7 @@ class AutomationsCmd extends CommandBase {
      * Render one automation like the list view but with extra detail: silence
      * window when configured, per-rule condition summaries, or top-level config
      * keys for automations that carry no rules at all.
+     * @private
      * @param {Object} container - AutomationContainer instance
      * @param {string} rawName - Name argument after "debug" (may be empty)
      */
@@ -213,7 +225,7 @@ class AutomationsCmd extends CommandBase {
         for (let i = 0; i < rules.length; i++) {
             const rule = rules[i] ?? {}
             let detail = `"${String(rule.name ?? '(unnamed)')}"`
-            const summary = AutomationsCmd.formatConditionSummary(rule.conditions)
+            const summary = AutomationCmd.formatConditionSummary(rule.conditions)
             if (summary !== '') detail += ` -- ${summary}`
             if (rule.once) detail += ' [once/day]'
             props.push([`rule ${i + 1}`, detail])
@@ -233,10 +245,13 @@ class AutomationsCmd extends CommandBase {
      * Manually trigger an automation's execute() method. The run still goes through
      * the normal guards (silent period, once-per-day markers, human-interaction
      * cooldowns); execution details are logged under the Auto:<name> context.
+     * @private
      * @param {Object} container - AutomationContainer instance
-     * @param {string} rawName - Name argument after "run" (may be empty)
+     * @param {string} rawName - Name argument after "run" or "force" (may be empty)
+     * @param {boolean} [force=false] - When true, dispatch carries force:true so automations
+     *   bypass their silent-period and once-per-day guards; human-interaction cooldowns apply either way
      */
-    async #handleRun(container, rawName) {
+    async #handleRun(container, rawName, force = false) {
         const automation = this.#findAutomation(container, rawName)
         if (!automation) {
             this.ctx.print(rawName ? `Unknown automation "${rawName}"` : 'Missing automation name')
@@ -245,9 +260,12 @@ class AutomationsCmd extends CommandBase {
         }
 
         const name = automation.name ?? rawName
-        this.ctx.print(`Running "${name}" (trigger: ${MANUAL_TRIGGER_REASON})...`)
+        const suffix = force ? ', forced' : ''
+        this.ctx.print(`Running "${name}" (trigger: ${MANUAL_TRIGGER_REASON}${suffix})...`)
         try {
-            await container.callAutomation(name, { trigger: MANUAL_TRIGGER_REASON })
+            await container.callAutomation(name, force
+                ? { trigger: MANUAL_TRIGGER_REASON, force: true }
+                : { trigger: MANUAL_TRIGGER_REASON })
         } catch (error) {
             this.ctx.print(`Execution failed: ${error.message}`)
             return
@@ -255,19 +273,32 @@ class AutomationsCmd extends CommandBase {
         this.ctx.print(`Done -- see log window for "Auto:${name}" details.`)
     }
 
+    /**
+     * Force-run an automation: identical to run except the dispatch carries force:true,
+     * which lets automations skip their silent period and per-rule once-per-day markers.
+     * Human-interaction cooldowns are intentionally NOT bypassed so a manual poke never
+     * fights a device someone just physically touched.
+     * @private
+     * @param {Object} container - AutomationContainer instance
+     * @param {string} rawName - Name argument after "force" (may be empty)
+     */
+    async #handleForce(container, rawName) {
+        await this.#handleRun(container, rawName, true)
+    }
+
     // -- Tab completion -----------------------------------------------------
 
     /**
-     * Tab-completion candidates for /automations arguments. The first token offers the known
-     * subcommands; once "run" or "debug" has been typed, registered automation names are offered
-     * so "/automations run TtsWea<Tab>" completes without consulting the list view first.
+     * Tab-completion candidates for /automation arguments. The first token offers the known
+     * subcommands; once "run", "debug" or "force" has been typed, registered automation names are offered
+     * so "/automation run TtsWea<Tab>" completes without consulting the list view first.
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
      * @returns {Array<string>|null} Candidates for the next token, or null when none apply
      */
     completeNextToken(typedTokens) {
-        if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'run']
+        if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'run', 'force']
         const sub = String(typedTokens[0]).toLowerCase()
-        if (sub !== 'run' && sub !== 'debug') return null
+        if (sub !== 'run' && sub !== 'debug' && sub !== 'force') return null
         const container = this.ctx.automationContainer
         if (container && typeof container.getNames === 'function') return container.getNames()
         return null
@@ -277,6 +308,7 @@ class AutomationsCmd extends CommandBase {
 
     /**
      * Build the standard property rows shown for every automation in list and debug views.
+     * @private
      * @param {Object} instance - Automation instance
      * @returns {Array<[string, string]>} Rows of [label, value] pairs
      */
@@ -285,7 +317,7 @@ class AutomationsCmd extends CommandBase {
         const rulesCount = Array.isArray(instance.config?.rules) ? instance.config.rules.length : 0
         return [
             ['status', instance._initialized ? '[OK]' : '[FAIL]'],
-            ['type', AutomationsCmd.getType(instance)],
+            ['type', AutomationCmd.getType(instance)],
             ['timer', temporal.msToHuman(instance.getTimerIntervalMs?.() ?? 0)],
             ['triggers', triggers.length > 0 ? triggers.join(', ') : '--'],
             ['rules', String(rulesCount)],
@@ -295,6 +327,7 @@ class AutomationsCmd extends CommandBase {
     /**
      * Resolve an automation instance from a user-supplied name. Tries exact match first,
      * then falls back to case-insensitive comparison so mistyped casing still works.
+     * @private
      * @param {Object} container - AutomationContainer instance
      * @param {string} rawName - Name typed by the user (may be empty)
      * @returns {Object|null} Automation instance or null when not found
@@ -312,6 +345,7 @@ class AutomationsCmd extends CommandBase {
 
     /**
      * Collect all registered automation names in sorted order.
+     * @private
      * @param {Object} container - AutomationContainer instance
      * @returns {string[]} Sorted list of automation names
      */
@@ -321,6 +355,7 @@ class AutomationsCmd extends CommandBase {
 
     /**
      * Print a one-line listing of all registered automation names (or a note when none).
+     * @private
      * @param {Object} container - AutomationContainer instance
      */
     #printAvailableNames(container) {
@@ -333,4 +368,4 @@ class AutomationsCmd extends CommandBase {
     }
 }
 
-export default AutomationsCmd
+export default AutomationCmd

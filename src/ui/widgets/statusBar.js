@@ -344,6 +344,7 @@ class StatusBar {
     /**
      * Render all right groups merged into a single bracket with pipe separators.
      * Format: [[o]MQTT | [o]Redis]
+     * @private
      * @param {Array} widgets - Flat array of widget configs from all groups
      */
     #renderMergedRightBrackets(widgets) {
@@ -391,6 +392,7 @@ class StatusBar {
     /**
      * Measure the character width of a merged right bracket line.
      * Format: [icon_label | icon_label | ...]
+     * @private
      * @param {Array} widgets - Flat array of widget configs
      * @returns {number} Total character width including brackets and separators
      */
@@ -475,6 +477,7 @@ class StatusBar {
      * The parsed line structure is cached after the first call because the config
      * does not change at runtime -- high-frequency refreshes must not re-resolve
      * and copy it on every paint.
+     * @private
      * @returns {{lines: Array}} Parsed configuration with normalized line structure
      */
     #loadConfig() {

@@ -72,10 +72,17 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     /** @type {Record<string, unknown>|null} Cached weatherman i18n bundle */
     #bundle = null
 
+    /**
+     * Fixed identity constructor -- name and config path are constants of this automation.
+     */
     constructor() {
         super({ name: 'TtsWeatherManAutomation', configPath: CONFIG_PATH })
     }
 
+    /**
+     * Lifecycle hook -- loads the weatherman i18n bundle once on top of the base init;
+     * execute() re-reads it fresh per run so interpolation always sees current values.
+     */
     async init() {
         await super.init()
         this.#bundle = this.#loadWeathermanBundle()
@@ -88,19 +95,25 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * Overrides the parent's device-targeting flow entirely since this
      * automation has no device targets -- only TTS output.
      *
-     * @param {{trigger?: string}|null} [triggerData]
+     * @param {{trigger?: string, force?: boolean}|null} [triggerData] - Trigger info;
+     *   force:true bypasses the silent-period suppression below
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
-        // Suppress execution during configured silent period (before any work begins)
+        // Suppress execution during configured silent period (before any work begins),
+        // unless explicitly forced from outside (e.g., "/automation force")
         if (this.isInSilentPeriod()) {
-            this.log(
-                `Suppressed during silent period (${triggerSource})`,
-                'debug'
-            )
-            return
+            if (triggerData?.force === true) {
+                this.log(`Forced run -- silent period bypassed (${triggerSource})`, 'info')
+            } else {
+                this.log(
+                    `Suppressed during silent period (${triggerSource})`,
+                    'debug'
+                )
+                return
+            }
         }
 
         // Reload bundle fresh each run (interpolation is runtime, not cached)
@@ -216,6 +229,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /**
      * Not used by ttsWeatherman (no device commands). Required abstract method.
+     * @param {Object|null} _device - Unused in this override (kept for signature parity)
+     * @param {string} _targetKey - Unused in this override
+     * @param {Array<Object>} _matchingRules - Unused in this override
      * @returns {null}
      */
     resolveCommand(_device, _targetKey, _matchingRules) {
@@ -429,6 +445,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * -- reserved hooks for future i18n templates, none shipped yet); otherwise fall back
      * to the generic default entry. Returns '' when nothing usable is present so callers
      * can skip the opening line gracefully.
+     * @private
      * @param {Record<string, unknown>} variants - Style subtree under bundle.time_sentence
      * @param {Date} now - Moment to evaluate
      * @returns {string} Chosen raw (uninterpolated) template, or ''
@@ -448,6 +465,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     /**
      * Load the weatherman i18n bundle from etc/i18n/{locale}/weatherman.yaml.
      * Falls back to pl_PL if not found.
+     * @private
      * @returns {Record<string, unknown>|null}
      */
     #loadWeathermanBundle() {
@@ -476,6 +494,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * Resolve a dotted i18n key against the loaded weatherman bundle.
      * Example: 'weatherman.warning_apocalypse' -> bundle['warning_apocalypse']
      * The first segment ('weatherman') is stripped as the namespace prefix.
+     * @private
      * @param {string} key - Dot-separated key (e.g., "weatherman.base")
      * @param {*} fallback - Default value if key not found
      * @returns {*|null}
@@ -499,6 +518,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * and {% keyword %} placeholders with locale-aware values (e.g., {% time %},
      * or {% next_interval %} when a pre-resolved value is supplied via specialValues).
      * If device or property not found, replaces with INTERPOLATION_MISSING.
+     * @private
      * @param {string} text - Template string with placeholders
      * @param {Object} [_context] - Unused context param (kept for signature compat)
      * @param {Record<string, string>} [specialValues] - Pre-resolved values for extra
@@ -543,6 +563,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * Send the built message to TTS, optionally routing through AI first. When the AI
      * handles it, day-position markers frame the core content via buildAiPrompt().
      * Configured tts_options extras travel along in every 'tts:speak' payload -- both paths.
+     * @private
      * @param {string} message - Final interpolated speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
      *   Day position computed by {@link computeDayPosition}
@@ -635,6 +656,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * assistant did not deliver (localized via the weatherman bundle key
      * `weatherman.ai_fallback_notice`), then speak the raw message directly so the report
      * is never lost. Jingle params still apply on the fallback path.
+     * @private
      * @param {string} trimmedMessage - Plain core text to speak
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
      * @param {string} reason - Failure description kept in the log trail
@@ -656,6 +678,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * window like "0230-1030" at 15:00 this is today's 10:30; at 01:45 it is yesterday's.
      * Note: local-midnight arithmetic assumes a 24 h day (DST transitions shift results
      * by an hour for runs near midnight on those days -- acceptable for speech markers).
+     * @private
      * @param {{startMin: number, endMin: number}} win - Parsed silence window
      * @param {Date} now - Reference moment (assumed outside the silent window)
      * @returns {number} Epoch milliseconds
@@ -672,6 +695,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * i.e., the moment the current announcement session will end ("sleep"). For a normal
      * window like "0230-1030" this is tonight's/tomorrow's 02:30 depending on the clock.
      * Same DST caveat as {@link #sessionBeganAt}.
+     * @private
      * @param {{startMin: number, endMin: number}} win - Parsed silence window
      * @param {Date} now - Reference moment (assumed outside the silent window)
      * @returns {number} Epoch milliseconds

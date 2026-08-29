@@ -29,6 +29,13 @@ import DeviceBase from '../base/deviceBase.js'
  *    - Unmatched changes or motion contradicting/stalling an active command -> human
  */
 export default class Mechanism extends DeviceBase {
+    /**
+     * Thin identity constructor -- mechanisms layer origin classification on top of
+     * DeviceBase without changing how instances are built or what they store.
+     * @param {string} name - Display name used in log context
+     * @param {string} id - Zigbee2MQTT friendly-name or device ID
+     * @param {Record<string, unknown>} [data] - Raw device configuration object
+     */
     constructor(name, id, data) {
         super(name, id, data)
     }

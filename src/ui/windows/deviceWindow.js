@@ -208,6 +208,8 @@ class DeviceWindow extends BaseWindow {
      * Render the Sensors section.
      * Columns: Name  Temp  Humid  Light  Batt
      * @private
+     * @param {Array<Object>} sensors - Sensor device instances collected by the caller
+     * @param {Array<string>} lines - Row buffer that receives the rendered section
      */
     #renderSensors(sensors, lines) {
         const header = AnsiColors.bold + AnsiColors.cyan +
@@ -285,6 +287,8 @@ class DeviceWindow extends BaseWindow {
      * Render the Mechanisms section.
      * Columns: Name  State  Origin  Batt
      * @private
+     * @param {Array<Object>} mechanisms - Mechanism device instances collected by the caller
+     * @param {Array<string>} lines - Row buffer that receives the rendered section
      */
     #renderMechanisms(mechanisms, lines) {
         let totalOn = 0, totalOff = 0, totalUnknown = 0
@@ -354,6 +358,8 @@ class DeviceWindow extends BaseWindow {
      * Render the Remotes section.
      * Columns: Name  Last Action  Batt
      * @private
+     * @param {Array<Object>} remotes - Remote device instances collected by the caller
+     * @param {Array<string>} lines - Row buffer that receives the rendered section
      */
     #renderRemotes(remotes, lines) {
         const header = AnsiColors.bold + AnsiColors.cyan +

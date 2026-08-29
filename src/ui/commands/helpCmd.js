@@ -19,6 +19,11 @@ class HelpCmd extends CommandBase {
     static description = 'Show available commands'
     static takesArgs = false
 
+    /**
+     * List every registered slash command with aliases and descriptions, skipping
+     * /help itself in its own output to avoid confusion.
+     * @param {string} args - Raw argument string after the verb (unused)
+     */
     async execute(args) {
         const lines = []
 

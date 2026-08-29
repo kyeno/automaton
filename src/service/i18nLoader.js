@@ -71,15 +71,32 @@ class SI18nLoader {
     }
 
     /**
+     * Resolve which locale directory a raw config language value maps to: the named
+     * subdirectory when one exists under etc/i18n/, otherwise DEFAULT_LOCALE. Mirrors
+     * exactly what init()/reload() apply so callers (/config reload) can predict the
+     * active directory without touching cached state.
+     * @param {*} languageValue - Raw locale.language value from a (candidate) config snapshot
+     * @returns {string} Directory name under etc/i18n/
+     */
+    resolveLocaleDir(languageValue) {
+        const candidate = String(languageValue ?? '').trim()
+        if (candidate && fs.existsSync(path.join(I18N_ROOT, candidate))) return candidate
+        return DEFAULT_LOCALE
+    }
+
+    /**
      * Re-read locale settings from (reloaded) config and swap in the matching
      * language bundle. Used by `/config reload` after a successful config swap so a
      * changed locale.language / locale.time_format takes effect without a restart.
      * Safe to call repeatedly; reports what actually changed for caller output.
+     * `bundleChanged` flags content movement in ai.yaml itself -- relevant even when
+     * neither locale nor time format moved.
      * @async
-     * @returns {Promise<{locale:string, timeFormat:string, changed:boolean}>} Post-reload state
+     * @returns {Promise<{locale:string, timeFormat:string, changed:boolean, bundleChanged:boolean}>} Post-reload state
      */
     async reload() {
         const before = { locale: this.#locale, timeFormat: this.#timeFormat }
+        const bundleBefore = JSON.stringify(this.#bundle ?? null)
 
         this.#loadConfig()
         await this.#loadBundle()
@@ -91,7 +108,11 @@ class SI18nLoader {
                 'I18nLoader'
             )
         }
-        return { ...after, changed: before.locale !== after.locale || before.timeFormat !== after.timeFormat }
+        return {
+            ...after,
+            changed: before.locale !== after.locale || before.timeFormat !== after.timeFormat,
+            bundleChanged: JSON.stringify(this.#bundle ?? null) !== bundleBefore,
+        }
     }
 
     /**

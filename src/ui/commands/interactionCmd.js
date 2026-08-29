@@ -1,13 +1,13 @@
 /**
- * Interactions Command -- lists, inspects, and manually triggers loaded interactions.
+ * Interaction Command -- lists, inspects, and manually triggers loaded interactions.
  *
  * Subcommands:
- *   /interactions             Show GNU-style usage help with available subcommands
- *   /interactions list        List all loaded interactions in a tree-like format
+ *   /interaction              Show GNU-style usage help with available subcommands
+ *   /interaction list        List all loaded interactions in a tree-like format
  *                             (name, type yaml/custom, action count)
- *   /interactions debug <n>   Render one interaction like list, plus per-action detail
+ *   /interaction debug <n>   Render one interaction like list, plus per-action detail
  *                             (action type, device targets, chained calls) or config keys
- *   /interactions run <n> [actionType]
+ *   /interaction run <n> [actionType]
  *                             Call that interaction's execute() now; when two or more words
  *                             are given and only the leading part is a registered name, the
  *                             trailing word selects which YAML-defined action fires
@@ -28,8 +28,8 @@ import CommandBase from './base/commandBase.js'
 // Command
 // ---------------------------------------------------------------------------
 
-class InteractionsCmd extends CommandBase {
-    static name = 'interactions'
+class InteractionCmd extends CommandBase {
+    static name = 'interaction'
     static description = 'Manage interactions: list, inspect, manually trigger'
     static takesArgs = true
 
@@ -100,7 +100,7 @@ class InteractionsCmd extends CommandBase {
         }
 
         // First token is the subcommand; everything after it stays intact as the payload
-        // so multi-word interaction names keep working (same convention as /automations).
+        // so multi-word interaction names keep working (same convention as /automation).
         const spaceIdx = trimmed.indexOf(' ')
         const sub = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase()
         const rest = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1).trim()
@@ -122,9 +122,9 @@ class InteractionsCmd extends CommandBase {
     }
 
     /**
-     * Tab-completion candidates for /interactions arguments. The first token offers the known
+     * Tab-completion candidates for /interaction arguments. The first token offers the known
      * subcommands; once "run" or "debug" has been typed, registered interaction names are offered
-     * so "/interactions run bedroom<Tab>" completes without consulting the list view first.
+     * so "/interaction run bedroom<Tab>" completes without consulting the list view first.
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
      * @returns {Array<string>|null} Candidates for the next token, or null when none apply
      */
@@ -141,11 +141,12 @@ class InteractionsCmd extends CommandBase {
 
     /**
      * Print GNU-style usage help with all subcommands and the registered interactions.
+     * @private
      * @param {Object} container - InteractionContainer instance
      */
     #printUsage(container) {
         const lines = [
-            'Usage: /interactions <subcommand> [args]',
+            'Usage: /interaction <subcommand> [args]',
             '',
             '  list                    List all loaded interactions',
             '  debug <name>            Show detailed info for one interaction',
@@ -164,6 +165,7 @@ class InteractionsCmd extends CommandBase {
     /**
      * Render all loaded interactions in a tree-like format (the "list" view).
      * Shows name, kind (yaml/custom), and action count per interaction.
+     * @private
      * @param {Object} container - InteractionContainer instance
      */
     #renderList(container) {
@@ -182,7 +184,7 @@ class InteractionsCmd extends CommandBase {
             entries.push({
                 name: key,
                 props: [
-                    ['type', InteractionsCmd.getType(instance)],
+                    ['type', InteractionCmd.getType(instance)],
                     ['actions', String(actionsCount)],
                 ],
             })
@@ -194,6 +196,7 @@ class InteractionsCmd extends CommandBase {
      * Render one interaction like the list view but with extra detail: every configured
      * action as its own row (action type, device targets, chained calls), or top-level
      * config keys when the interaction carries no actions at all.
+     * @private
      * @param {Object} container - InteractionContainer instance
      * @param {string} rawName - Name argument after "debug" (may be empty)
      */
@@ -207,7 +210,7 @@ class InteractionsCmd extends CommandBase {
 
         // Container-provided metadata is authoritative for kind/config; fall back to the
         // instance itself so minimal containers (and tests) still render fully.
-        let kind = InteractionsCmd.getType(found.instance)
+        let kind = InteractionCmd.getType(found.instance)
         let config = found.instance?.config ?? null
         if (typeof container.getSourceInfo === 'function') {
             const info = container.getSourceInfo(found.key)
@@ -217,7 +220,7 @@ class InteractionsCmd extends CommandBase {
             }
         }
         const cfg = (config && typeof config === 'object') ? config : null
-        const actions = InteractionsCmd.normalizeActions(cfg?.actions)
+        const actions = InteractionCmd.normalizeActions(cfg?.actions)
 
         const props = [
             ['type', kind],
@@ -247,6 +250,7 @@ class InteractionsCmd extends CommandBase {
      * argument first (so multi-word names work); only when that misses does it treat
      * the trailing word as the YAML action type to select. Dispatch goes through the
      * container's callInteraction() with the canonical registered key.
+     * @private
      * @param {Object} container - InteractionContainer instance
      * @param {string} rawName - Argument string after "run" (may be empty)
      */
@@ -299,6 +303,7 @@ class InteractionsCmd extends CommandBase {
      * then falls back to case-insensitive comparison so mistyped casing still works.
      * Returns the canonical registered key plus its instance (container entries may wrap
      * instances as {instance} or hold them directly -- both shapes are unwrapped).
+     * @private
      * @param {Object} container - InteractionContainer instance
      * @param {string} rawName - Name typed by the user (may be empty)
      * @returns {{key: string, instance: Object}|null} Resolved entry or null when not found
@@ -318,6 +323,7 @@ class InteractionsCmd extends CommandBase {
 
     /**
      * Collect all registered interaction names in sorted order.
+     * @private
      * @param {Object} container - InteractionContainer instance
      * @returns {string[]} Sorted list of interaction names
      */
@@ -327,6 +333,7 @@ class InteractionsCmd extends CommandBase {
 
     /**
      * Print a one-line listing of all registered interaction names (or a note when none).
+     * @private
      * @param {Object} container - InteractionContainer instance
      */
     #printAvailableNames(container) {
@@ -339,4 +346,4 @@ class InteractionsCmd extends CommandBase {
     }
 }
 
-export default InteractionsCmd
+export default InteractionCmd

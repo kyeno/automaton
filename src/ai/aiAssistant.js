@@ -267,6 +267,7 @@ class SAiAssistant {
      * standalone against a fresh [systemPrompt] array (default, no chat history sent) or
      * trimming their own messages off afterwards in context-aware mode. The FIFO queue
      * serializes turns, so swapping #messages mid-slot cannot interleave with another caller.
+     * @private
      * @param {string} userInput - The user's input message.
      * @param {Object} [options] - Optional processing options (see processMessage()).
      * @returns {Promise<string>} The assistant's textual reply.
@@ -303,6 +304,7 @@ class SAiAssistant {
      * Execute one full AI turn against the shared conversation -- the actual
      * push/tool-loop/return machinery behind processMessage(). Assumes availability
      * (checked by the entry point); thrown errors propagate to that caller's queue slot.
+     * @private
      * @param {string} userInput - The user's input message.
      * @param {Object} [options] - Optional processing options (see processMessage()).
      * @returns {Promise<string>} The assistant's textual reply.

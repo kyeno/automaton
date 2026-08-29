@@ -148,6 +148,7 @@ class InputComponent {
 
     /**
      * Key event handler. Processes keystrokes for input editing, navigation, and submission.
+     * @private
      * @param {string} name - Key name from terminal-kit
      * @param {object} data - Raw key data from terminal-kit
      */
@@ -408,6 +409,7 @@ class InputComponent {
 
     /**
      * Submit the current buffer as a command: push to history, fire callbacks, then clear.
+     * @private
      */
     #submitCommand() {
         const cmd = this.#currentBuffer.trim()
@@ -430,6 +432,7 @@ class InputComponent {
     /**
      * Build the prompt string from the current channel name.
      * Format: "[!log] " or "> " when no channel is set.
+     * @private
      * @returns {string}
      */
     get #promptText() {
@@ -441,6 +444,7 @@ class InputComponent {
      * Implements a sliding window so long commands scroll properly; window
      * edges are kept on code point borders so astral characters are never
      * split across renders into lone surrogates.
+     * @private
      */
     #renderPrompt() {
         if (!this.#term || !this.#layout) return

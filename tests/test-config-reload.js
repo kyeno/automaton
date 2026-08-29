@@ -5,7 +5,8 @@
  * validation leaving everything untouched (two-phase safe swap), .dist template fallback
  * re-evaluation on reload, section add/drop driven by paths.configs, runtime-override
  * ledger reporting, relevance gating of i18n/TTS/AI refreshes (skipped when uninitialized,
- * refreshed with correct state when initialized), window-buffer clearing through ctx, and
+ * refreshed with correct state when initialized -- including per-locale tts.yaml / ai.yaml
+ * content edits under an UNCHANGED language), window-buffer clearing through ctx, and
  * channel-cache reset so ui.windows changes are picked up without a restart.
  *
  * Also unit-tests ConfigBase.refresh() directly (value pickup, error propagation,
@@ -332,7 +333,12 @@ console.log('\n\u2500\u2500 reload: full subsystem refresh after initialization 
         assertEqual(I18nLoader.getLocale(), 'en_US', 'getLocale() reflects the live switch')
         assertEqual(I18nLoader.getTimeFormat(), '12h', 'unchanged time_format preserved through the swap')
 
-        assert(out.includes('TTS now enabled, model=en_GB-alan-medium'), 'TTS template followed the new locale directory')
+        // Data-driven expectation: read whichever voice the en_US bundle currently ships so the
+        // suite survives voice swaps in etc/i18n/en_US/tts.yaml without test churn.
+        const enModel = String(/^model:\s*"?([^"\r\n]+)"?\s*$/m.exec(
+            fs.readFileSync(path.join(I18N_ROOT, 'en_US', 'tts.yaml'), 'utf8'))?.[1] ?? '')
+        assert(Boolean(enModel), 'en_US tts.yaml exposes an active model for the switch assertion')
+        assert(out.includes(`TTS now enabled, model=${enModel}`), 'TTS template followed the new locale directory')
         assert(TtsService.isEnabled() === true, 'TTS stays enabled after refreshConfig()')
 
         assert(out.includes('AI conversation cleared ('), 'AI conversation reset reported with message count')
@@ -346,6 +352,76 @@ console.log('\n\u2500\u2500 reload: full subsystem refresh after initialization 
         assert(Boolean(channels.getById('scratchwin')), 'newly defined window resolvable via the channel manager')
     } finally {
         await restoreConfig()
+    }
+}
+
+console.log('\n\u2500\u2500 reload: per-locale i18n file edits take effect without a language change \u2500\u2500\n')
+
+{
+    // Services are all initialized by this point (previous block). Each sub-case mutates shared
+    // singletons, so every one starts and ends with caches reconciled against disk state --
+    // otherwise a later case would legitimately detect the previous case's leftover drift.
+    /** Re-sync i18n/TTS/AI caches against live config + on-disk bundles; no-op before init(). */
+    async function reconcileAll() {
+        if (I18nLoader.isReady) await I18nLoader.reload()
+        if (TtsService.isReady()) await TtsService.refreshConfig()
+        if (AiAssistant.isReady()) await AiAssistant.resetConversation()
+    }
+    await reconcileAll()
+
+    const dir = I18nLoader.getLocale()
+    assertEqual(I18nLoader.resolveLocaleDir(String(ConfigService.get('locale.language'))), dir,
+        'config-resolved directory matches the cached active locale')
+
+    // -- tts.yaml model edit under an UNCHANGED locale must refresh the live template --
+    {
+        const ttsPath  = path.join(I18N_ROOT, dir, 'tts.yaml')
+        const original = fs.readFileSync(ttsPath, 'utf8')
+        try {
+            fs.writeFileSync(ttsPath, original.replace(/^model:\s*.*/m, 'model: "test-model-reload-sentinel"'))
+            const h = createHarness()
+            await h.cmd.execute('reload')
+            const out = allOutput(h)
+            assert(out.includes('TTS now enabled, model=test-model-reload-sentinel'),
+                'edited tts.yaml model picked up by /config reload without a language change')
+            assert(TtsService.isEnabled() === true, 'TTS stays enabled after in-place template swap')
+            assert(!out.includes('AI conversation cleared'), 'a pure tts.yaml edit does not reset the AI conversation')
+        } finally {
+            fs.writeFileSync(ttsPath, original)
+            await restoreConfig()
+            await reconcileAll()
+        }
+    }
+
+    // -- ai.yaml bundle edit under an UNCHANGED locale must re-prompt + reset the conversation --
+    {
+        const aiPath   = path.join(I18N_ROOT, dir, 'ai.yaml')
+        const original = fs.readFileSync(aiPath, 'utf8')
+        try {
+            fs.writeFileSync(aiPath, original.replace(/devices_header:\s*"[^"]*"/, 'devices_header: "RELOAD-SENTINEL HEADER"'))
+            const h = createHarness()
+            await h.cmd.execute('reload')
+            const out = allOutput(h)
+            assert(out.includes('i18n bundle reloaded from disk'), 'bundle-only movement reported distinctly from a locale switch')
+            assert(out.includes('AI conversation cleared ('), 'edited ai.yaml triggers the AI conversation reset without a language change')
+            assert(AiAssistant.getMessages()[0]?.content?.includes('RELOAD-SENTINEL HEADER') === true,
+                'fresh system prompt reflects the edited bundle header')
+            assert(!out.includes('TTS now'), 'a pure ai.yaml edit does not touch the TTS template')
+        } finally {
+            fs.writeFileSync(aiPath, original)
+            await restoreConfig()
+            await reconcileAll()
+        }
+    }
+
+    // -- no-op reload with everything initialized stays silent about subsystems --
+    {
+        const h = createHarness()
+        await h.cmd.execute('reload')
+        const out = allOutput(h)
+        assert(out.includes('no i18n/TTS/AI-relevant settings changed'), 'pristine reload reports nothing relevant moved')
+        assert(!out.includes('TTS now') && !out.includes('AI conversation cleared'),
+            'initialized subsystems untouched by a no-op reload')
     }
 }
 

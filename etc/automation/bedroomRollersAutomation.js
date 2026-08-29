@@ -29,16 +29,25 @@ const CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'bed
 // ---------------------------------------------------------------------------
 
 export default class BedroomRollersAutomation extends RuleBasedAutomationBase {
+    /**
+     * Fixed identity constructor -- name and config path are constants of this automation.
+     */
     constructor() {
         super({ name: 'BedroomRollersAutomation', configPath: CONFIG_PATH })
     }
 
+    /**
+     * Lifecycle hook -- blind rules need nothing beyond the rule-based base class.
+     */
     async init() {
         await super.init()
     }
 
     /**
-     * Delegate to blinds-specific resolve command in base class.
+     * Delegate to the blinds-specific resolver in the base class ("most-closed-wins" merge).
+     * @param {DeviceBase} device - Target device
+     * @param {string} targetId - Identifier of the target (from config.targets[].id)
+     * @param {{}[]} matchingRules - Rules whose conditions matched
      */
     resolveCommand(device, targetId, matchingRules) {
         return this.blindsResolveCommand(device, targetId, matchingRules)

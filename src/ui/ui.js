@@ -38,7 +38,7 @@ import AutomationContainer from '../automation/container/automationContainer.js'
 // Interactions
 import InteractionContainer from '../interaction/container/interactionContainer.js'
 
-// Devices & network presence (consumed by the /devices command via ctx)
+// Devices & network presence (consumed by the /device command via ctx)
 import DeviceContainer from '../device/container/deviceContainer.js'
 import NetworkPresence from '../monitor/networkPresence.js'
 
@@ -395,6 +395,7 @@ class Ui {
       * follows normal routing based on inputMode:
       *   - 'chat'    -> send directly to AI (no log)
       *   - 'command' -> log + delegate entirely to CommandContainer
+      * @private
       * @param {string} cmd - Raw command string from the input component
       */
     #handleCommand(cmd) {
@@ -480,6 +481,7 @@ class Ui {
      * Over SSH xterm-256color, Alt+N arrives as TWO key events:
      *   ESCAPE  then  "N"
      * We detect ESCAPE and wait for the next key within a short timeout.
+     * @private
      */
     #setupKeyBindings() {
         if (!this.#term) return

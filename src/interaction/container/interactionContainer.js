@@ -286,7 +286,7 @@ class SInteractionContainer {
 
     /**
      * Source metadata for one registered interaction -- an additive read-only view used by
-     * /interactions debug. Reports the authoritative kind ("yaml" or "custom") straight
+     * /interaction debug. Reports the authoritative kind ("yaml" or "custom") straight
      * from the registry entry instead of inferring it from the prototype chain, plus the
      * raw config object when available so action detail can be rendered without relying on
      * instance internals. Returns null for unknown names or entries that never

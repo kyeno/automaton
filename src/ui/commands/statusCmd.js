@@ -16,6 +16,11 @@ class StatusCmd extends CommandBase {
     static description = 'Show system status dump'
     static takesArgs = false
 
+    /**
+     * Dump StateService contents into the active window as indented key = value rows.
+     * Null and empty entries are filtered out so only live state is shown.
+     * @param {string} args - Raw argument string after the verb (unused)
+     */
     async execute(args) {
         const dump = this.ctx.stateService.dump()
         const entries = Object.entries(dump)

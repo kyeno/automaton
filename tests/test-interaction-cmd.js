@@ -1,6 +1,6 @@
 /**
  * Interactions command tests.
- * Behavioral coverage for the /interactions subcommand dispatcher: GNU-style usage help on
+ * Behavioral coverage for the /interaction subcommand dispatcher: GNU-style usage help on
  * bare invocation, tree listing via "list", single-item detail view via "debug" (per-action
  * type/targets/calls rows, config-keys fallback, YAML-shape tolerance), and manual triggering
  * via "run <name> [actionType]" asserting callInteraction() receives the right action payload.
@@ -18,7 +18,7 @@
  */
 'use strict'
 
-import InteractionsCmd from '../src/ui/commands/interactionsCmd.js'
+import InteractionCmd from '../src/ui/commands/interactionCmd.js'
 
 let passed = 0
 let failed = 0
@@ -115,7 +115,7 @@ function makeMinimalContainer(interactions) {
 }
 
 /**
- * Instantiate an InteractionsCmd wired to a recording print context.
+ * Instantiate an InteractionCmd wired to a recording print context.
  * @param {Object|null} container - Stub container; null simulates a missing service
  * @returns {{cmd: Object, printed: string[]}} Command instance plus captured output lines
  */
@@ -123,7 +123,7 @@ function createHarness(container) {
     const printed = []
     const ctx = { print: (text) => printed.push(String(text)) }
     if (container) ctx.interactionContainer = container
-    return { cmd: new InteractionsCmd(ctx), printed }
+    return { cmd: new InteractionCmd(ctx), printed }
 }
 
 // -- Fixtures ------------------------------------------------------------------
@@ -162,7 +162,7 @@ console.log('\n\u2500\u2500 Usage help \u2500\u2500\n')
     // Bare invocation renders GNU-style usage with the registered names listed last
     const bare = createHarness(makeContainer(fixtures))
     await bare.cmd.execute('')
-    assertEqual(bare.printed[0].split('\n')[0], 'Usage: /interactions <subcommand> [args]', 'usage header line')
+    assertEqual(bare.printed[0].split('\n')[0], 'Usage: /interaction <subcommand> [args]', 'usage header line')
     assertEqual(bare.printed[0].includes('list'), true, 'usage lists "list" subcommand')
     assertEqual(bare.printed[0].includes('debug <name>'), true, 'usage lists "debug" subcommand')
     assertEqual(bare.printed[0].includes('run <name> [actionType]'), true, 'usage lists "run" with optional action type')
@@ -176,7 +176,7 @@ console.log('\n\u2500\u2500 Usage help \u2500\u2500\n')
     // Empty registry still prints usage but notes there is nothing loaded
     const empty = createHarness(makeContainer([]))
     await empty.cmd.execute('   ')
-    assertEqual(empty.printed[0].startsWith('Usage: /interactions'), true, 'whitespace-only args also show usage')
+    assertEqual(empty.printed[0].startsWith('Usage: /interaction'), true, 'whitespace-only args also show usage')
     assertEqual(empty.printed[0].endsWith('(no interactions loaded)'), true, 'usage notes empty registry')
 }
 {
@@ -184,7 +184,7 @@ console.log('\n\u2500\u2500 Usage help \u2500\u2500\n')
     const unknown = createHarness(makeContainer(fixtures))
     await unknown.cmd.execute('frobnicate x')
     assertEqual(unknown.printed[0], 'Unknown subcommand "frobnicate"', 'unknown subcommand error line')
-    assertEqual(unknown.printed[1].startsWith('Usage: /interactions'), true, 'unknown subcommand shows usage after error')
+    assertEqual(unknown.printed[1].startsWith('Usage: /interaction'), true, 'unknown subcommand shows usage after error')
 }
 {
     // Missing service entirely -- graceful note instead of a crash

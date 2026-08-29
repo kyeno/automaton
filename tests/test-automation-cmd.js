@@ -1,6 +1,6 @@
 /**
  * Automations command tests.
- * Behavioral coverage for the /automations subcommand dispatcher: GNU-style usage help on
+ * Behavioral coverage for the /automation subcommand dispatcher: GNU-style usage help on
  * bare invocation, tree listing via "list", single-item detail view via "debug" (silence
  * window, per-rule condition summaries, config keys fallback), and manual triggering via
  * "run" asserting execute() receives the "manual" trigger reason. Name resolution covers
@@ -17,7 +17,7 @@
  */
 'use strict'
 
-import AutomationsCmd from '../src/ui/commands/automationsCmd.js'
+import AutomationCmd from '../src/ui/commands/automationCmd.js'
 
 let passed = 0
 let failed = 0
@@ -76,7 +76,7 @@ function makeContainer(automations) {
 }
 
 /**
- * Instantiate an AutomationsCmd wired to a recording print context.
+ * Instantiate an AutomationCmd wired to a recording print context.
  * @param {Object|null} container - Stub container; null simulates a missing service
  * @returns {{cmd: Object, printed: string[]}} Command instance plus captured output lines
  */
@@ -84,7 +84,7 @@ function createHarness(container) {
     const printed = []
     const ctx = { print: (text) => printed.push(String(text)) }
     if (container) ctx.automationContainer = container
-    return { cmd: new AutomationsCmd(ctx), printed }
+    return { cmd: new AutomationCmd(ctx), printed }
 }
 
 // -- Fixtures ------------------------------------------------------------------
@@ -117,10 +117,11 @@ console.log('\n\u2500\u2500 Usage help \u2500\u2500\n')
     // Bare invocation renders GNU-style usage with the registered names listed last
     const bare = createHarness(makeContainer([ambient, weatherman]))
     await bare.cmd.execute('')
-    assertEqual(bare.printed[0].split('\n')[0], 'Usage: /automations <subcommand> [args]', 'usage header line')
+    assertEqual(bare.printed[0].split('\n')[0], 'Usage: /automation <subcommand> [args]', 'usage header line')
     assertEqual(bare.printed[0].includes('list'), true, 'usage lists "list" subcommand')
     assertEqual(bare.printed[0].includes('debug <name>'), true, 'usage lists "debug" subcommand')
     assertEqual(bare.printed[0].includes('run <name>'), true, 'usage lists "run" subcommand')
+    assertEqual(bare.printed[0].includes('force <name>'), true, 'usage lists "force" subcommand')
     assertEqual(
         bare.printed[0].endsWith('Available: AmbientLightsAutomation, TtsWeatherManAutomation'),
         true,
@@ -132,7 +133,7 @@ console.log('\n\u2500\u2500 Usage help \u2500\u2500\n')
     // Empty registry still prints usage but notes there is nothing loaded
     const empty = createHarness(makeContainer([]))
     await empty.cmd.execute('   ')
-    assertEqual(empty.printed[0].startsWith('Usage: /automations'), true, 'whitespace-only args also show usage')
+    assertEqual(empty.printed[0].startsWith('Usage: /automation'), true, 'whitespace-only args also show usage')
     assertEqual(empty.printed[0].endsWith('(no automations loaded)'), true, 'usage notes empty registry')
 }
 
@@ -141,7 +142,7 @@ console.log('\n\u2500\u2500 Usage help \u2500\u2500\n')
     const unknown = createHarness(makeContainer([ambient, weatherman]))
     await unknown.cmd.execute('frobnicate x')
     assertEqual(unknown.printed[0], 'Unknown subcommand "frobnicate"', 'unknown subcommand error line')
-    assertEqual(unknown.printed[1].startsWith('Usage: /automations'), true, 'unknown subcommand shows usage after error')
+    assertEqual(unknown.printed[1].startsWith('Usage: /automation'), true, 'unknown subcommand shows usage after error')
 }
 
 {
@@ -277,20 +278,54 @@ assertEqual(ambient.lastTriggerData.trigger, 'manual', 'instance saw the manual 
     assertEqual(runHarness.printed[pBefore], 'Missing automation name', 'missing run name hint')
 }
 
+// -- Force (manual trigger with guards bypassed) ------------------------------------
+
+console.log('\n\u2500\u2500 Force (bypass silent period & once/day markers) \u2500\u2500\n')
+
+const forceContainer = makeContainer([ambient, weatherman])
+const forceHarness = createHarness(forceContainer)
+
+await forceHarness.cmd.execute('force AmbientLightsAutomation')
+assertEqual(forceHarness.printed[0], 'Running "AmbientLightsAutomation" (trigger: manual, forced)...', 'force announces target and reason')
+assertEqual(forceHarness.printed[1], 'Done -- see log window for "Auto:AmbientLightsAutomation" details.', 'force completion hint points to logs')
+assertEqual(forceContainer.calls.length, 1, 'exactly one dispatch recorded')
+assertEqual(JSON.stringify(forceContainer.calls[0].data), JSON.stringify({ trigger: 'manual', force: true }), 'execute() receives { trigger: "manual", force: true }')
+assertEqual(ambient.lastTriggerData.force === true, true, 'instance saw the force flag alongside the manual trigger reason')
+
+{
+    // Case-insensitive lookup still resolves to the canonical registered name
+    await forceHarness.cmd.execute('force ttsweathermanautomation')
+    assertEqual(forceContainer.calls.length, 2, 'lowercase input still dispatches under force')
+    assertEqual(forceContainer.calls[1].name, 'TtsWeatherManAutomation', 'canonical name used for dispatch')
+}
+
+{
+    // Unknown or missing names never reach the engine
+    const before = forceContainer.calls.length
+    let pBefore = forceHarness.printed.length
+    await forceHarness.cmd.execute('force NopeAutomation')
+    assertEqual(forceContainer.calls.length, before, 'unknown automation is not dispatched by force')
+    assertEqual(forceHarness.printed[pBefore], 'Unknown automation "NopeAutomation"', 'unknown force target error line')
+    pBefore = forceHarness.printed.length
+    await forceHarness.cmd.execute('force')
+    assertEqual(forceContainer.calls.length, before, 'missing name does not dispatch under force')
+    assertEqual(forceHarness.printed[pBefore], 'Missing automation name', 'missing force name hint')
+}
+
 // -- Condition summary formatting ---------------------------------------------------
 
 console.log('\n\u2500\u2500 Condition summary formatting \u2500\u2500\n')
 
-assertEqual(AutomationsCmd.formatConditionSummary(null), '', 'null conditions yield empty summary')
-assertEqual(AutomationsCmd.formatConditionSummary(undefined), '', 'undefined conditions yield empty summary')
-assertEqual(AutomationsCmd.formatConditionSummary({ illuminance: { gte: 400 } }), 'illuminance>=400', 'gte bound renders as >=')
-assertEqual(AutomationsCmd.formatConditionSummary({ temperature: { lt: 5, lte: 9 } }), 'temperature<5 | temperature<=9', 'multiple bounds join with pipe separator')
+assertEqual(AutomationCmd.formatConditionSummary(null), '', 'null conditions yield empty summary')
+assertEqual(AutomationCmd.formatConditionSummary(undefined), '', 'undefined conditions yield empty summary')
+assertEqual(AutomationCmd.formatConditionSummary({ illuminance: { gte: 400 } }), 'illuminance>=400', 'gte bound renders as >=')
+assertEqual(AutomationCmd.formatConditionSummary({ temperature: { lt: 5, lte: 9 } }), 'temperature<5 | temperature<=9', 'multiple bounds join with pipe separator')
 assertEqual(
-    AutomationsCmd.formatConditionSummary({ 'time-of-day': ['morning', 'evening'], season: 'winter' }),
+    AutomationCmd.formatConditionSummary({ 'time-of-day': ['morning', 'evening'], season: 'winter' }),
     'time-of-day=[morning|evening] | season=winter',
     'arrays and scalars mix in one summary'
 )
-assertEqual(AutomationsCmd.formatConditionSummary({ presence: { kyeno: true } }), 'presence={"kyeno":true}', 'non-range objects fall back to JSON')
+assertEqual(AutomationCmd.formatConditionSummary({ presence: { kyeno: true } }), 'presence={"kyeno":true}', 'non-range objects fall back to JSON')
 
 // -- Summary -----------------------------------------------------------------------
 

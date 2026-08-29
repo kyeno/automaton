@@ -16,6 +16,10 @@ class PgDnCmd extends CommandBase {
     static description = 'Scroll page down'
     static takesArgs = false
 
+    /**
+     * Scroll the active window down one page via ctx.scrollPageDown().
+     * @param {string} args - Raw argument string after the verb (unused)
+     */
     async execute(args) {
         this.ctx.scrollPageDown?.()
     }

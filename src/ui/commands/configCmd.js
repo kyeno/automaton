@@ -63,7 +63,7 @@ class ConfigCmd extends CommandBase {
         }
 
         // First token is the subcommand, everything after it stays intact so values
-        // with spaces keep working (same convention as /automations).
+        // with spaces keep working (same convention as /automation).
         const spaceIdx = trimmed.indexOf(' ')
         const sub = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase()
         const rest = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1).trim()
@@ -116,6 +116,7 @@ class ConfigCmd extends CommandBase {
      * Print GNU-style usage help with all subcommands. Both "debug" and "set" operate on
      * the main config file only -- its resolved path is shown so there is never any
      * ambiguity about which document is being inspected or overridden.
+     * @private
      * @param {Object} service - ConfigService instance
      */
     #printUsage(service) {
@@ -149,6 +150,7 @@ class ConfigCmd extends CommandBase {
      * (resolved path, validator status, top-level key count) followed by every live
      * value rendered as indented YAML-ish text. /config deliberately operates on the
      * main config only; other files stay reachable through their own services.
+     * @private
      * @param {Object} service - ConfigService instance
      */
     #handleDebug(service) {
@@ -158,7 +160,7 @@ class ConfigCmd extends CommandBase {
             return
         }
 
-        // Metadata header in the shared tree style (/automations debug looks like this too)
+        // Metadata header in the shared tree style (/automation debug looks like this too)
         this.printTree([{
             name: 'main',
             props: [
@@ -178,6 +180,7 @@ class ConfigCmd extends CommandBase {
      * validation startup uses against the MAIN config section, then commit it when clean.
      * Problems are printed one per line with an explicit NOT-applied note; the app never
      * crashes here. Paths address the main config only (e.g., ai.max_tokens).
+     * @private
      * @param {Object} service - ConfigService instance
      * @param {string} rest - Argument string after "set" (may be empty)
      */
@@ -238,11 +241,15 @@ class ConfigCmd extends CommandBase {
     /**
      * "reload" subcommand -- re-read every config file from disk through ConfigService.reload()
      * (two-phase safe swap), then refresh ONLY the initialized subsystems actually affected by
-     * the change: i18n bundle + TTS template when locale.* moved, AI conversation/provider when
-     * ai.* or locale.* moved. Stale rendered output in existing windows is cleared whenever any
-     * relevant setting changed, and the channel-definition cache resets when ui.windows did.
-     * A failed validation reports its problems verbatim and leaves the running configuration
-     * completely untouched.
+     * the change. Relevance is detected at two levels: automaton.yaml subtrees via report.changed
+     * (ai.*, locale.*, ui.windows) AND content movement inside each service's own cache-vs-disk
+     * comparison -- the per-locale bundles under etc/i18n/{dir}/ (tts.yaml + ai.yaml) belong to no
+     * config section, so only their owners can tell whether an edit landed since last load.
+     * Stale rendered output in existing windows is cleared whenever any relevant setting moved,
+     * and the channel-definition cache resets when ui.windows did. A failed validation reports its
+     * problems verbatim and leaves the running configuration completely untouched.
+     * @private
+     * @param {Object} service - ConfigService instance
      */
     async #handleReload(service) {
         const report = await service.reload()
@@ -258,25 +265,39 @@ class ConfigCmd extends CommandBase {
         /** @type {string[]} */
         const refreshed = []
 
-        if (changed.has('locale')) {
-            if (I18nLoader.isReady) {
-                const r = await I18nLoader.reload()
+        const localeChanged   = changed.has('locale')
+        let i18nBundleMoved   = false
+        let ttsTemplateMoved  = false
+
+        // Probe first: both services are idempotent and cheap; each one's own cache-vs-disk
+        // comparison is what detects edits under an UNCHANGED language (files outside sections).
+        if (I18nLoader.isReady) {
+            const r = await I18nLoader.reload()
+            i18nBundleMoved = Boolean(r.bundleChanged)
+            if (r.changed || r.bundleChanged) {
                 refreshed.push(r.changed
                     ? `i18n switched to locale=${r.locale} time_format=${r.timeFormat}`
-                    : 'i18n re-checked (no effective change)')
-            } else {
-                refreshed.push('i18n skipped (not initialized yet)')
+                    : 'i18n bundle reloaded from disk')
+            } else if (localeChanged) {
+                refreshed.push('i18n re-checked (no effective change)')
             }
-
-            if (TtsService.isReady()) {
-                const r = await TtsService.refreshConfig()
-                refreshed.push(`TTS now ${r.enabled ? `enabled, model=${r.model}` : 'disabled'}`)
-            } else {
-                refreshed.push('TTS skipped (not initialized / disabled by env)')
-            }
+        } else if (localeChanged) {
+            refreshed.push('i18n skipped (not initialized yet)')
         }
 
-        if ((changed.has('ai') || changed.has('locale')) && AiAssistant.isReady()) {
+        // TTS template follows the active locale directory -- runs after i18n so getLocale()
+        // reflects any switch before its tts.yaml path resolves.
+        if (TtsService.isReady()) {
+            const t = await TtsService.refreshConfig()
+            ttsTemplateMoved = Boolean(t.changed)
+            if (t.changed || localeChanged) {
+                refreshed.push(`TTS now ${t.enabled ? `enabled, model=${t.model}` : 'disabled'}`)
+            }
+        } else if (localeChanged) {
+            refreshed.push('TTS skipped (not initialized / disabled by env)')
+        }
+
+        if ((changed.has('ai') || localeChanged || i18nBundleMoved) && AiAssistant.isReady()) {
             const r = await AiAssistant.resetConversation()
             if (r.reset) refreshed.push(`AI conversation cleared (${r.dropped} message(s))`)
         }
@@ -284,7 +305,7 @@ class ConfigCmd extends CommandBase {
         // ---- Housekeeping for the UI ------------------------------------------
         /** @type {string[]} */
         let clearedWindows = []
-        if (changed.size > 0 && typeof this.ctx.clearWindows === 'function') {
+        if ((changed.size > 0 || localeChanged || i18nBundleMoved || ttsTemplateMoved) && typeof this.ctx.clearWindows === 'function') {
             try { clearedWindows = this.ctx.clearWindows(['ai', 'tts']) ?? [] } catch {}
         }
 
@@ -299,23 +320,31 @@ class ConfigCmd extends CommandBase {
         if (report.discardedOverrides.length > 0) {
             this.ctx.print(`  runtime overrides discarded (file is source of truth): ${report.discardedOverrides.join(', ')}`)
         }
-        if (report.changed.length === 0) {
-            this.ctx.print('  no i18n/TTS/AI-relevant settings changed')
-        } else {
+        if (refreshed.length > 0) {
             for (const line of refreshed) this.ctx.print(`  ${line}`)
+        } else if (report.changed.length === 0 && !localeChanged) {
+            this.ctx.print('  no i18n/TTS/AI-relevant settings changed')
         }
         if (clearedWindows.length > 0) this.ctx.print(`  windows cleared: ${clearedWindows.join(', ')}`)
     }
 
     // -- Shared helpers -------------------------------------------------------
 
-    /** Short usage reminder for malformed "set" invocations. */
+    /**
+     * Short usage reminder for malformed "set" invocations.
+     * @private
+     */
     #printSetHint() {
         this.ctx.print('Usage: /config set <parameter.path> <value...>')
         this.ctx.print('Tip: paths address the main config; values parse as YAML -- quote multi-word strings ("some text")')
     }
 
-    /** Format an old value for confirmation lines; undefined renders as "(unset)". */
+    /**
+     * Format an old value for confirmation lines; undefined renders as "(unset)".
+     * @private
+     * @param {*} value - Previous parameter value (any JSON type or undefined)
+     * @returns {string} Quoted rendering safe to embed in a status line
+     */
     #fmt(value) {
         return value === undefined ? '(unset)' : JSON.stringify(value)
     }

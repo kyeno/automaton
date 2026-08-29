@@ -8,7 +8,7 @@
 ├── bin/                        # Executable scripts
 │   ├── automaton               # Main entry script (loads .env, starts app)
 │   ├── automaton-test          # Test runner (syntax + instantiation tests)
-│   ├── automaton-lint-check    # Lint check bundle (JSDoc coverage, etc.)
+│   ├── automaton-lint-check    # Lint check bundle (JSDoc coverage & completeness, unicode, conventions)
 │   └── automaton-generate-docs # JSDoc API documentation generator
 ├── doc/                        # Documentation
 │   ├── index.md                # Documentation hub linking every document
@@ -68,6 +68,7 @@
 │   ├── test-origin-classification.js
 │   ├── test-dist-sync.js
 │   ├── test-jsdoc-coverage.js
+│   ├── test-jsdoc-completeness.js
 │   ├── test-sound.js
 │   └── test-sound-mario.js
 └── var/log/                    # Runtime log files (gitignored)

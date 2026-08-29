@@ -14,17 +14,17 @@ The Automaton terminal UI supports slash commands typed into the input bar at th
 | `/pgdn` | Scroll page down (forward to live tail) |
 | `/status` | Dump StateService contents |
 | `/config [arg]` | Inspect the main config & apply live overrides: `debug` dumps it in full, `set <path> <value...>` targets the main section, `reload` re-reads files from disk (bare invocation shows usage) |
-| `/automations [arg]` | Manage automations: `list`, `debug <name>`, `run <name>` (bare invocation shows usage) |
-| `/interactions [arg]` | Manage interactions: `list`, `debug <name>`, `run <name> [actionType]` (bare invocation shows usage) |
-| `/devices [arg]` (`/device`) | List & inspect Zigbee + network devices: bare counts/help, `list [zigbee\|network]`, `debug <name>` cross-registry lookup |
+| `/automation [arg]` | Manage automations: `list`, `debug <name>`, `run <name>`, `force <name>` (bare invocation shows usage) |
+| `/interaction [arg]` | Manage interactions: `list`, `debug <name>`, `run <name> [actionType]` (bare invocation shows usage) |
+| `/device [arg]` | List & inspect Zigbee + network devices: bare counts/help, `list [zigbee\|network]`, `debug <name>` cross-registry lookup |
 | `/quit` (`/exit`, `/q`) | Exit Automaton |
 | `/win [arg]` | Switch window by shortcut number or id |
 
-> **Note:** `/automations run <name>` calls that automation's `execute()` immediately with trigger reason `manual` (visible as "Triggered by: manual" under its `Auto:<name>` log context). Normal guards still apply -- silent periods, per-rule daily `once:` markers, and human-interaction cooldowns are respected exactly as for timer or event triggers.
+> **Note:** `/automation run <name>` calls that automation's `execute()` immediately with trigger reason `manual` (visible as "Triggered by: manual" under its `Auto:<name>` log context). Normal guards still apply -- silent periods, per-rule daily `once:` markers, and human-interaction cooldowns are respected exactly as for timer or event triggers. `/automation force <name>` dispatches the same way but carries `force: true`: the silent period and any already-consumed per-rule `once:` marker no longer block execution (a forced run that acts refreshes that day's marker), while human-interaction cooldowns are intentionally kept so a manual poke never fights a device someone just touched.
 
 > **Note:** `/config set <parameter.path> <value...>` validates the value exactly like startup loading (`ensureValidated()` + unknown-parameter guard), but reports problems instead of crashing -- a rejected change is never applied. Values are parsed as YAML just like `-c/--config-override`, so numbers, booleans and quoted strings keep their natural types. Changes are runtime-only: the YAML file on disk stays untouched until you edit it by hand or restart. Both `debug` and `set` operate on the main config file only -- its resolved path is shown in the usage output, so there is no per-file selection to get wrong.
 
-> **Note:** `/config reload` re-reads every config file from disk and swaps the result into the running process -- no restart needed for edited values to take effect. It works in two phases: first all candidate files are loaded and validated strictly, and only if everything is clean does anything change; a schema violation anywhere aborts the whole reload with every problem listed verbatim while the live configuration stays byte-for-byte intact (nginx-style). The YAML file is treated as the source of truth, so any memory-only `/config set` overrides are discarded and reported explicitly. After a successful swap, only subsystems that were actually affected get refreshed: i18n bundle and TTS template when `locale.*` changed, the AI conversation (+ provider snapshot) when `ai.*` or `locale.*` changed -- each one gated behind an "is initialized" check so half-built services are never touched. Stale rendered output in existing windows is cleared whenever any relevant setting moved, and the channel-definition cache resets when `ui.windows` did; adding or removing window definitions still requires a restart because window instances are built eagerly at startup.
+> **Note:** `/config reload` re-reads every config file from disk and swaps the result into the running process -- no restart needed for edited values to take effect. It works in two phases: first all candidate files are loaded and validated strictly, and only if everything is clean does anything change; a schema violation anywhere aborts the whole reload with every problem listed verbatim while the live configuration stays byte-for-byte intact (nginx-style). The YAML file is treated as the source of truth, so any memory-only `/config set` overrides are discarded and reported explicitly. After a successful swap, only subsystems that were actually affected get refreshed. Relevance is detected both from automaton.yaml subtrees AND from content movement in the active locale's per-locale bundles (`etc/i18n/{dir}/tts.yaml` + `ai.yaml`), which live outside any config section and are fingerprinted before/after the swap: the i18n bundle refreshes when `locale.*` or the locale's ai.yaml moved, the TTS template (model + params) when `locale.*` or the locale's tts.yaml moved, and the AI conversation (+ provider snapshot) resets when `ai.*`, `locale.*` or the locale's ai.yaml moved -- each one gated behind an "is initialized" check so half-built services are never touched. Stale rendered output in existing windows is cleared whenever any relevant setting moved, and the channel-definition cache resets when `ui.windows` did; adding or removing window definitions still requires a restart because window instances are built eagerly at startup.
 
 ### Keyboard Shortcuts
 
@@ -40,12 +40,12 @@ Commands use a pluggable container pattern that auto-discovers implementations a
 src/ui/commands/
 ├── base/commandBase.js           # Abstract base class
 ├── container/commandContainer.js # Singleton registry + autoloader
-├── automationsCmd.js             # /automations list|debug|run
+├── automationCmd.js              # /automation list|debug|run
 ├── clearCmd.js                   # /clear command
 ├── configCmd.js                  # /config debug|set|reload (main config only)
-├── devicesCmd.js                 # /devices list|debug (+ /device alias)
+├── deviceCmd.js                  # /device list|debug
 ├── helpCmd.js                    # /help command
-├── interactionsCmd.js            # /interactions list|debug|run
+├── interactionCmd.js             # /interaction list|debug|run
 ├── pgdnCmd.js                    # /pgdn command
 ├── pgupCmd.js                    # /pgup command
 ├── quitCmd.js                    # /quit, /exit, /q
@@ -236,26 +236,26 @@ Operates on the **main config file only** — both `debug` and `set` target it d
 
 Stray arguments after `debug`, missing values for `set`, schema violations, type mismatches and unknown parameters are all reported line-by-line without crashing -- see the notes above for exact semantics.
 
-### `/interactions [arg]`
+### `/interaction [arg]`
 
-Full parity with `/automations`: bare invocation shows usage help with the registered interaction names listed last.
+Full parity with `/automation`: bare invocation shows usage help with the registered interaction names listed last.
 
 | Invocation | Behaviour |
 |------------|-----------|
-| `/interactions list` | Tree listing: name, kind (`yaml`/`custom`), action count per interaction |
-| `/interactions debug <name>` | One interaction in detail: per-action rows (`type=… targets=device:COMMAND … calls=…`), or top-level config keys when no actions exist. Name resolution is case-insensitive; odd YAML shapes (null entries, scalar targets) never break rendering |
-| `/interactions run <name> [actionType]` | Calls that interaction's `execute()` now. When two or more words are given and only the leading part is a registered name, the trailing word selects which YAML-defined action fires (`{action: "<type>"}` payload); otherwise the whole string is treated as the name |
+| `/interaction list` | Tree listing: name, kind (`yaml`/`custom`), action count per interaction |
+| `/interaction debug <name>` | One interaction in detail: per-action rows (`type=… targets=device:COMMAND … calls=…`), or top-level config keys when no actions exist. Name resolution is case-insensitive; odd YAML shapes (null entries, scalar targets) never break rendering |
+| `/interaction run <name> [actionType]` | Calls that interaction's `execute()` now. When two or more words are given and only the leading part is a registered name, the trailing word selects which YAML-defined action fires (`{action: "<type>"}` payload); otherwise the whole string is treated as the name |
 
 Kind metadata comes from `InteractionContainer.getSourceInfo(name)` (authoritative registry view) with an instance-prototype fallback so minimal containers still render fully.
 
-### `/devices [arg]` (`/device`)
+### `/device [arg]`
 
 Lists and inspects devices across **both** registries — Zigbee devices from DeviceContainer (bridge/coordinator excluded) and network-presence devices from NetworkPresence' configured-device view. Bare invocation prints per-registry counts plus usage help and the de-duplicated union of known names.
 
 | Invocation | Behaviour |
 |------------|-----------|
-| `/devices list` | Both sections under labelled headers (`-- Zigbee devices (N) --`, `-- Network devices (N) --`) |
-| `/devices list zigbee` / `list network` | One section only (filter token is case-insensitive; unknown filters report the valid options) |
-| `/devices debug <name>` | Cross-registry lookup, case-insensitive. A single hit renders its full detail view (Zigbee: type/id/last-state JSON/origin/active kind; network: category/IP/presence). Names present in BOTH registries are reported as ambiguous and each side renders under a labelled block |
+| `/device list` | Both sections under labelled headers (`-- Zigbee devices (N) --`, `-- Network devices (N) --`) |
+| `/device list zigbee` / `list network` | One section only (filter token is case-insensitive; unknown filters report the valid options) |
+| `/device debug <name>` | Cross-registry lookup, case-insensitive. A single hit renders its full detail view (Zigbee: type/id/last-state JSON/origin/active kind; network: category/IP/presence). Names present in BOTH registries are reported as ambiguous and each side renders under a labelled block |
 
 Network presence states come from `NetworkPresence.getPresence(name)`: warm cache renders `online`/`offline`; cold or expired caches (or a missing Redis) degrade to `unknown` instead of failing the command. Missing services on either side print explicit "(none registered/configured)" notes rather than crashing.

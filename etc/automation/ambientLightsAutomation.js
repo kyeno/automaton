@@ -36,6 +36,10 @@ export default class AmbientLightsAutomation extends RuleBasedAutomationBase {
         super({ name: 'AmbientLightsAutomation', configPath })
     }
 
+    /**
+     * Lifecycle hook -- ambient lights need nothing beyond the rule-based base class;
+     * kept explicit so future per-automation initialization has an obvious home.
+     */
     async init() {
         await super.init()
     }

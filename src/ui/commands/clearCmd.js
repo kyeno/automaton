@@ -16,6 +16,11 @@ class ClearCmd extends CommandBase {
     static description = 'Clear current window buffer'
     static takesArgs = false
 
+    /**
+     * Clear the active window buffer so its scrollback starts fresh again.
+     * No-op when there is no active window or it lacks a clear() implementation.
+     * @param {string} args - Raw argument string after the verb (unused)
+     */
     async execute(args) {
         const win = this.ctx.activeWindow
         if (win && typeof win.clear === 'function') {

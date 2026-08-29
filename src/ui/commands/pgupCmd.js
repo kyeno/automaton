@@ -16,6 +16,10 @@ class PgUpCmd extends CommandBase {
     static description = 'Scroll page up'
     static takesArgs = false
 
+    /**
+     * Scroll the active window up one page via ctx.scrollPageUp().
+     * @param {string} args - Raw argument string after the verb (unused)
+     */
     async execute(args) {
         this.ctx.scrollPageUp?.()
     }

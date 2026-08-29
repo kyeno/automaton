@@ -90,7 +90,7 @@ class CommandBase {
 
     /**
      * Render entries as an aligned tree using box-drawing characters via ctx.print().
-     * Shared by listing commands (/automations list|debug, /config debug ...) so every
+     * Shared by listing commands (/automation list|debug, /config debug ...) so every
      * command renders its trees identically. Each entry is
      * { name, props: [[label, value], ...] }.
      * @param {Array<{name: string, props?: Array<[string, string]>}>} entries - Entries to draw
@@ -133,7 +133,7 @@ class CommandBase {
      * Optional tab-completion provider for arguments following this command's verb.
      * Receives the fully-typed tokens AFTER the verb, excluding the partial token currently
      * being completed (e.g., [] when completing "/config <TAB>", ['run'] when completing
-     * "/automations run TtsWea<TAB>") and returns an array of candidate strings for the next
+     * "/automation run TtsWea<TAB>") and returns an array of candidate strings for the next
      * token, or null when nothing can be offered at that position. Candidate lists are matched
      * with terminal-kit's autoComplete() helper by the UI completer, so plain string arrays are
      * all that is required here; data should come from the ctx containers' getNames()-style

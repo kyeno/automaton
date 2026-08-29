@@ -21,6 +21,11 @@ class WinCmd extends CommandBase {
     static description = 'Switch window by shortcut number or id'
     static takesArgs = true
 
+    /**
+     * Switch to a window by shortcut number or id; resolution of both forms happens
+     * inside ctx.switchWindow(). Bare invocation prints usage instead.
+     * @param {string} args - Shortcut number or window id
+     */
     async execute(args) {
         const target = args.trim()
         if (!target) {

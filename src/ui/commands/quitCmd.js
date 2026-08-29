@@ -19,6 +19,10 @@ class QuitCmd extends CommandBase {
     static description = 'Exit automaton gracefully'
     static aliases = ['exit', 'q']
 
+    /**
+     * Trigger graceful shutdown; all three verbs (/quit, /exit, /q) land here.
+     * @param {string} args - Raw argument string after the verb (ignored -- just shut down)
+     */
     async execute(args) {
         // Ignore any arguments -- just shut down
         this.ctx.shutdown()

@@ -99,6 +99,15 @@ class SStateService {
 
     // -- Internal ---------------------------------------------------------
 
+    /**
+     * Notify every listener registered for a key about a state change. Listener
+     * exceptions are caught and routed through LoggerService so one broken callback
+     * can never take down the emitter or its siblings.
+     * @private
+     * @param {string} key - State key that changed
+     * @param {*} newValue - Value after the update
+     * @param {*} oldValue - Value before the update
+     */
     #emit(key, newValue, oldValue) {
         const callbacks = this.#listeners.get(key)
         if (!callbacks) return

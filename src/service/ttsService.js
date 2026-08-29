@@ -137,19 +137,22 @@ class STtsService {
     /**
      * Re-read locale-dependent TTS settings after a successful /config reload. The payload
      * template lives under etc/i18n/{active locale}/tts.yaml, so switching locale.language
-     * changes which one applies; the speak-channel subscription is reconciled to match.
-     * Environment-driven enablement (TTS_API_URL) still wins over everything here.
+     * changes which one applies; editing that file in place is detected by comparing the newly
+     * loaded template against the cached one (`changed`). The speak-channel subscription is
+     * reconciled to match. Environment-driven enablement (TTS_API_URL) still wins over everything here.
      * @async
-     * @returns {Promise<{enabled:boolean, model:string|null}>} Post-refresh state for caller reporting
+     * @returns {Promise<{enabled:boolean, model:string|null, changed:boolean}>} Post-refresh state for caller reporting
      */
     async refreshConfig() {
         const apiUrl = process.env.TTS_API_URL
         if (!apiUrl || !String(apiUrl).trim()) {
+            const hadState = Boolean(this.#enabled && this.#template)
             this.#enabled = false
-            return { enabled: false, model: null }
+            return { enabled: false, model: null, changed: hadState }
         }
 
         // Force full re-resolution -- the locale directory may have changed since init().
+        const before = JSON.stringify(this.#template ?? null)
         this.#template = null
         await this.#loadTemplate()
 
@@ -170,7 +173,11 @@ class STtsService {
             `TTS config refreshed -- enabled=${this.#enabled}, model=${this.#template?.model ?? '(none)'}`,
             'TtsService'
         )
-        return { enabled: this.#enabled, model: this.#template?.model ?? null }
+        return {
+            enabled: this.#enabled,
+            model:   this.#template?.model ?? null,
+            changed: JSON.stringify(this.#template ?? null) !== before,
+        }
     }
 
     /**
