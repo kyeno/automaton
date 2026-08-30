@@ -1,6 +1,8 @@
 /**
  * Config file validation tests.
- * Recursively discovers all .yaml files under etc/ and verifies valid YAML syntax.
+ * Recursively discovers all .yaml/.yml files -- including *.dist templates --
+ * under etc/ and verifies valid YAML syntax plus basic formatting conventions
+ * (no tabs, no trailing whitespace, single final newline).
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -38,7 +40,8 @@ function collectYaml(dir, list = []) {
         const stat = statSync(full)
         if (stat.isDirectory()) {
             collectYaml(full, list)
-        } else if (entry.endsWith('.yaml') || entry.endsWith('.yml')) {
+        } else if (entry.endsWith('.yaml') || entry.endsWith('.yml') ||
+                   entry.endsWith('.yaml.dist') || entry.endsWith('.yml.dist')) {
             list.push(full.replace(ROOT + '/', ''))
         }
     }
@@ -59,15 +62,36 @@ for (const f of yamlFiles) {
 }
 
 /* ------------------------------------------------------------------ */
- /* 2. Validate YAML syntax                                            */
+ /* 2. Validate YAML syntax & formatting                               */
 /* ------------------------------------------------------------------ */
-console.log('\n── YAML syntax validation ──\n')
+console.log('\n── YAML syntax & formatting validation ──\n')
 
 for (const file of yamlFiles) {
     const fullPath = join(ROOT, file)
+    let content
     try {
-        const content = readFileSync(fullPath, 'utf-8')
-        const parsed = parse(content)
+        content = readFileSync(fullPath, 'utf-8')
+    } catch (e) {
+        assert(false, `${file} - unreadable: ${e.message}`)
+        continue
+    }
+
+    // Formatting conventions (house style): no tabs, no trailing whitespace,
+    // and exactly one final newline at EOF.
+    const lines = content.split('\n')
+    const badTabs = []
+    const badTrail = []
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes('\t')) badTabs.push(i + 1)
+        if (/[ \t]+$/.test(lines[i])) badTrail.push(i + 1)
+    }
+    const fmtNote = list => list.slice(0, 5).join(', ') + (list.length > 5 ? ` (+${list.length - 5})` : '')
+    assert(badTabs.length === 0, `${file} - no tab characters${badTabs.length ? ` (line ${fmtNote(badTabs)})` : ''}`)
+    assert(badTrail.length === 0, `${file} - no trailing whitespace${badTrail.length ? ` (line ${fmtNote(badTrail)})` : ''}`)
+    assert(content.endsWith('\n') && !content.endsWith('\n\n'), `${file} - ends with a single final newline`)
+
+    try {
+        parse(content)
         assert(true, `${file} - valid YAML`)
     } catch (e) {
         assert(false, `${file} - ${e.message}`)

@@ -17,9 +17,9 @@ time_sentence:
   explicit:
     # Generic frame ("It is 32 minutes past 9 in the morning"); the small model only
     # inflects forms into natural speech during its rewrite.
-    default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}'
+    default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}.'
     # Exact hour (:00) -- no minutes at all.
-    exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}"
+    exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}."
     # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
 
 # Localized day-period words for {% time_of_day %}; same pattern as duration_units below.
@@ -31,7 +31,7 @@ period_words:
   night: 'at night'
 
 base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
-ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour and minutes in words. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Here is the information: '
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Finally - before announcing when the next update comes - toss in a short anecdote about what you once pulled off in such weather while completely drunk. Here is the information: '
 
 # AI prompt markers -- injected around the message when routing through AI.
 # first/last mark the opening/closing update of each daily session (the stretch between
@@ -58,5 +58,6 @@ warning_hot_stay_at_home: 'WARNING: It is so hot that breathing is difficult! Ma
 warning_apocalypse: 'WARNING: Thermal apocalypse outside! Close blinds, seal windows, crank up the AC, and do not leave the house under any circumstances!'
 warning_humid_night: 'WARNING: Humidity levels are too high for comfortable breathing outdoors.'
 warning_chill_night: 'Grab a sweater or light jacket before heading out.'
+
 soothing_warm_day: 'The weather is perfect! Ideal for a walk or working outside!'
 soothing_warm_night: 'Beautiful night out there. You could step outside in shorts and a t-shirt to enjoy the stars.'

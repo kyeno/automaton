@@ -21,12 +21,13 @@ locale:
 # ----------------------------------------------------------------
 ai:
   model: gemma-4-E2B-it      # required for chat requests
+  #model: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_P   # recommended for more interesting interaction
   max_tokens: -1            # -1 = omit from request, let the provider default apply
   temperature: 1.0          # sampling 0.0-1.0 (lower=deterministic, higher=creative)
   fetch_timeout_ms: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models
   conversation_ttl_sec: "15m"   # how long idle conversations linger in Redis before purge
-  max_conversation_turns: 15    # message turns retained in context window
-  strip_ai_formatting: false    # strip markdown/emoji before UI/TTS
+  max_conversation_turns: 10    # message turns retained in context window
+  strip_ai_formatting: true     # strip markdown/emoji before UI/TTS
   stupid_ai_engine: true        # simplify prompts for weak models; set false only with a capable model
   include_chat_history_in_system_calls: false  # system-origin announcements receive prior chat context; default false keeps them standalone (faster inference)
 
@@ -61,7 +62,7 @@ logger:
 # ----------------------------------------------------------------
 automation:
   # Skip a device this long after a human changes it manually ("90s","15m", or ms; 0 = off)
-  human_interaction_cooldown_ms: "15m"
+  human_interaction_cooldown_ms: "25m"
   # Optional origin-classification tuning (uncomment to override built-in defaults):
   # echo_window_instant_ms: "15s"    # token TTL for ON/OFF/TOGGLE commands
   # echo_window_travel_ms: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
