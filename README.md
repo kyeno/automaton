@@ -28,6 +28,33 @@ Automaton is a pure JavaScript Zigbee2MQTT sidekick that provides rule-based aut
 
 ---
 
+## Screenshots
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <b>Interactive Terminal UI</b><br><br>
+      <img src="doc/assets/screenshots/automations.png" alt="Automations View">
+    </td>
+    <td align="center" width="50%">
+      <b>AI Chat & Interactions</b><br><br>
+      <img src="doc/assets/screenshots/ai.png" alt="AI View">
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <b>Interactive TTS Monitor</b><br><br>
+      <img src="doc/assets/screenshots/tts.png" alt="TTS View">
+    </td>
+    <td align="center" width="50%">
+      <b>Background Service (Non-UI Mode)</b><br><br>
+      <img src="doc/assets/screenshots/service.png" alt="Background Service">
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Quick start
 
 ```bash
