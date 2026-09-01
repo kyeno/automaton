@@ -3,6 +3,8 @@
  * Regression coverage for wrapAnsi hard-breaking: any single unbroken token
  * longer than the wrap width used to spin forever in the splice-back loop,
  * freezing the whole UI (e.g., long TTS input or log lines with huge tokens).
+ * Also covers wrapPreformatted, the whitespace-preserving hard-break path used
+ * for box-drawing trees (/config debug) where indentation must survive wrapping.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -12,7 +14,7 @@
  */
 'use strict'
 
-import { wrapAnsi, visibleLen } from '../src/lib/terminal.js'
+import { wrapAnsi, wrapPreformatted, visibleLen } from '../src/lib/terminal.js'
 
 let passed = 0
 let failed = 0
@@ -95,6 +97,75 @@ console.log('\n\u2500\u2500 Regression guards \u2500\u2500\n')
     assertEqual(totalVisible(r), 165, 'all visible characters preserved with leading ANSI')
     assertEqual(Math.max(...r.map(l => visibleLen(l))) <= 80, true, 'ANSI codes do not consume the width budget')
     assertEqual(visibleLen(r[0]) > 0, true, 'no empty first line when input starts with an over-long word')
+}
+
+// -- wrapPreformatted: whitespace-preserving hard wrap -------------------------
+
+console.log('\n\u2500\u2500 wrapPreformatted: short lines pass through untouched \u2500\u2500\n')
+
+{
+    const tree = [
+        '\u251c\u2500 ui',
+        '\u2502   \u251c\u2500 status_bar',
+        '\u2502   \u2502   \u2514\u2500 lines[2]',
+        '\u2502   \u2514\u2500 windows[4]',
+        '\u2514\u2500 logger',
+    ]
+    for (const line of tree) {
+        const out = wrapPreformatted(line, 120)
+        assertEqual(out.length === 1 && out[0] === line, true, `fits byte-identical: ${line}`)
+    }
+    const spaced = '    xxxx  double  spaces  kept'
+    const outSpaced = wrapPreformatted(spaced, 120)
+    assertEqual(outSpaced.length === 1 && outSpaced[0] === spaced, true, 'internal multiple spaces preserved')
+    const outEmpty = wrapPreformatted('', 80)
+    assertEqual(outEmpty.length === 1 && outEmpty[0] === '', true, 'empty string yields one empty line')
+}
+
+console.log('\n\u2500\u2500 wrapPreformatted: long lines hard-break with indent carried \u2500\u2500\n')
+
+{
+    // 4-space indent + 100 visible chars, width 50:
+    //   line 1 = 4 spaces + 46 chars (50 visible)
+    //   line 2 = 4 spaces + 46 chars (50 visible)
+    //   line 3 = 4 spaces + 8 chars (12 visible)
+    const line = '    ' + 'A'.repeat(100)
+    const out = wrapPreformatted(line, 50)
+    assertEqual(out.length, 3, 'breaks into three lines')
+    assertEqual(out[0], '    ' + 'A'.repeat(46), 'first line fills the width including indent')
+    assertEqual(out[1], '    ' + 'A'.repeat(46), 'continuation re-indented to the original indent')
+    assertEqual(out[2], '    ' + 'A'.repeat(8), 'final partial line keeps the indent')
+    // No character loss: 104 original visible chars + 2 continuation indents (4 each)
+    assertEqual(out.reduce((sum, l) => sum + visibleLen(l), 0), 112, 'no visible characters lost')
+}
+
+{
+    // A line exactly at the width stays one line; one char over breaks
+    const at = wrapPreformatted('B'.repeat(50), 50)
+    assertEqual(at.length === 1 && at[0] === 'B'.repeat(50), true, 'exactly at width stays one line')
+    const over = wrapPreformatted('B'.repeat(51), 50)
+    assertEqual(over.length === 2 && over[0] === 'B'.repeat(50) && over[1] === 'B', true, 'one char over breaks with no indent')
+}
+
+{
+    // ANSI codes: dim-prefixed long line; codes must survive and not count toward width
+    const line = '\x1b[2m  ' + 'C'.repeat(90) + '\x1b[0m'
+    const out = wrapPreformatted(line, 50)
+    assertEqual(out.length, 2, 'ANSI line breaks by visible width only')
+    assertEqual(out[0], '\x1b[2m  ' + 'C'.repeat(48), 'first line keeps leading ANSI + spaces')
+    assertEqual(out[1], '\x1b[2m  ' + 'C'.repeat(42) + '\x1b[0m', 'continuation re-indented, dim code and reset carried')
+    assertEqual(out.reduce((sum, l) => sum + visibleLen(l), 0), 94, 'no visible characters lost (92 + one re-indented pair)')
+}
+
+{
+    // Termination + performance: a very long indented line must complete quickly
+    const line = '        ' + 'D'.repeat(5000)
+    const t0 = Date.now()
+    const out = wrapPreformatted(line, 80)
+    const ms = Date.now() - t0
+    assertEqual(ms < 2000, true, `5000-char line wraps in ${ms}ms (< 2000ms)`)
+    assertEqual(out.length, 70, 'line count matches the budget arithmetic')
+    assertEqual(out.every(l => visibleLen(l) <= 80), true, 'no line exceeds the width budget')
 }
 
 // -- Summary -----------------------------------------------------------------------

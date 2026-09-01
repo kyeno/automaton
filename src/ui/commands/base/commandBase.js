@@ -89,10 +89,13 @@ class CommandBase {
     // -- Shared rendering helpers ------------------------------------------
 
     /**
-     * Render entries as an aligned tree using box-drawing characters via ctx.print().
+     * Render entries as an aligned tree using box-drawing characters.
      * Shared by listing commands (/automation list|debug, /config debug ...) so every
      * command renders its trees identically. Each entry is
      * { name, props: [[label, value], ...] }.
+     * The tree is whitespace-significant, so it goes through the UI's preformatted
+     * path (ctx.printPreformatted) when available -- plain print() would collapse
+     * the indentation through prose wrapping.
      * @param {Array<{name: string, props?: Array<[string, string]>}>} entries - Entries to draw
      */
     printTree(entries) {
@@ -124,7 +127,21 @@ class CommandBase {
             if (!isLast) lines.push('')
         }
 
-        this.ctx.print(lines.join('\n'))
+        this.printPreformatted(lines.join('\n'))
+    }
+
+    /**
+     * Print whitespace-significant output (box-drawing trees, aligned tables) through
+     * the UI's preformatted path when the context provides one, falling back to
+     * plain print() for contexts that don't (test harnesses, non-UI entry points).
+     * @param {string} text
+     */
+    printPreformatted(text) {
+        if (typeof this.ctx.printPreformatted === 'function') {
+            this.ctx.printPreformatted(text)
+        } else {
+            this.ctx.print(text)
+        }
     }
 
     // -- Public API -------------------------------------------------------

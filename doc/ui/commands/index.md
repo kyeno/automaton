@@ -230,7 +230,7 @@ Operates on the **main config file only** — both `debug` and `set` target it d
 | Invocation | Behaviour |
 |------------|-----------|
 | `/config` | GNU-style usage help + loaded section names + main config path |
-| `/config debug` | Metadata header (file, validator status, top-level key count) followed by a full dump of every live parameter rendered as indented text |
+| `/config debug` | Metadata header (file, validator status, top-level key count) followed by a full dump of every live parameter rendered as a box-drawing tree -- containers expand under branch glyphs, small records collapse to one line; the tree is printed through the whitespace-preserving preformatted path so indentation survives window wrapping |
 | `/config set <path> <value...>` | Dry-runs one override through startup validation against the main section; clean changes commit via the same mutation path startup uses (`Applied [main] <path>: old -> new`) |
 | `/config reload` | Two-phase safe re-read from disk plus targeted subsystem refreshes (see note above) |
 

@@ -115,6 +115,7 @@ const testScripts = [
   'test-command-completer.js',
   'test-terminal-wrap.js',
   'test-log-window-buffer.js',
+  'test-window-preformatted.js',
   'test-ui-min-width.js',
   // Note: JSDoc coverage + completeness checks live in npm run lint:check
   'test-sound.js',

@@ -16,7 +16,7 @@
 'use strict'
 
 import StateService from '../../service/stateService.js'
-import { wrapAnsi, visibleLen } from '../../lib/terminal.js'
+import { wrapAnsi, wrapPreformatted, visibleLen } from '../../lib/terminal.js'
 import AnsiColors from '../../enum/ansiColors.js'
 
 // ---------------------------------------------------------------------------
@@ -51,6 +51,7 @@ class BaseWindow {
     #layout
     // Buffer stores either plain strings or structured objects:
     //   { text: string, prefix: string } -- IRC-style message with prefix on first wrapped line
+    //   { text: string, preformatted: true } -- whitespace-significant line, hard-wrapped only
     #buffer = []
     #title = 'Window'
     #visible = false
@@ -178,6 +179,35 @@ class BaseWindow {
             body = body.slice(0, MAX_CHARS) + '\n... [output truncated]'
         }
         this.#buffer.push({ text: body, prefix })
+        this.#trimBuffer()
+        if (this.#visible) {
+            this.render()
+        }
+    }
+
+    /**
+     * Append whitespace-significant text (box-drawing trees, aligned tables) to the
+     * buffer. Unlike print(), lines are NOT word-reflowed: each line is kept
+     * byte-identical when it fits the slot width and hard-broken otherwise, with
+     * continuation lines re-indented to the original leading whitespace. Use for
+     * output whose spacing carries meaning (e.g., /config debug's tree).
+     * Extremely large payloads are truncated before buffering, mirroring print().
+     * @param {string} text
+     */
+    printPreformatted(text) {
+        // Guard against massive single prints (e.g., huge config dumps)
+        const MAX_CHARS = 50_000
+        let body = String(text ?? '')
+        let truncated = false
+        if (body.length > MAX_CHARS) {
+            body = body.slice(0, MAX_CHARS) + '\n... [output truncated]'
+            truncated = true
+        }
+        for (const line of body.split('\n')) {
+            this.#buffer.push({ text: line, preformatted: true })
+            // If truncating, check budget after each line to avoid overshooting
+            if (truncated && this.#buffer.length >= this.#maxBufferLines) break
+        }
         this.#trimBuffer()
         if (this.#visible) {
             this.render()
@@ -324,6 +354,8 @@ class BaseWindow {
         this.#buffer.forEach(entry => {
             if (typeof entry === 'string') {
                 count += wrapAnsi(entry, wrapWidth).length
+            } else if (entry.preformatted) {
+                count += wrapPreformatted(entry.text, wrapWidth).length
             } else {
                 const { text, prefix } = entry
                 const prefixVisibleLen = visibleLen(prefix)
@@ -343,7 +375,7 @@ class BaseWindow {
     /**
      * Wrap a single buffer entry into visual lines.
      * Extracted so it can be reused for both full and incremental rendering.
-     * @param {*} entry - Buffer entry (string or {text, prefix})
+     * @param {*} entry - Buffer entry (string, {text, prefix}, or {text, preformatted})
      * @param {number} wrapWidth - Wrapping width
      * @returns {string[]} Wrapped visual lines
      * @private
@@ -351,6 +383,9 @@ class BaseWindow {
     #wrapEntry(entry, wrapWidth) {
         if (typeof entry === 'string') {
             return wrapAnsi(entry, wrapWidth)
+        }
+        if (entry.preformatted) {
+            return wrapPreformatted(entry.text, wrapWidth)
         }
         const { text, prefix } = entry
         const prefixVisibleLen = visibleLen(prefix)

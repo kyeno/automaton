@@ -4,7 +4,7 @@
  * Subcommands:
  *   /config                     Show GNU-style usage help with available subcommands
  *   /config debug               Dump the main config file in full -- metadata header plus
- *                               every live parameter rendered as indented text
+ *                               every live parameter rendered as a box-drawing tree
  *   /config set <path> <value...>
  *                               Apply a runtime override to the main config, validated
  *                               exactly like startup loading; problems are reported
@@ -17,7 +17,8 @@
  * as YAML so numbers, booleans and quoted strings keep their natural types. Changes
  * apply to the running process only -- the YAML file on disk stays untouched.
  *
- * Uses plain text via ctx.print() so it plays nicely with buffer-based UI windows.
+ * The tree dump is printed through the UI's whitespace-preserving preformatted path
+ * (plain print() fallback) so indentation survives the window's line wrapping.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -32,6 +33,16 @@ import I18nLoader from '../../service/i18nLoader.js'
 import TtsService from '../../service/ttsService.js'
 import AiAssistant from '../../ai/aiAssistant.js'
 import channels from '../channels.js'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Max serialized length for collapsing a leaf record onto a single line -- keeps
+ * one-line renderings inside a typical terminal width; longer records expand.
+ */
+const INLINE_LIMIT = 100
 
 // ---------------------------------------------------------------------------
 // ConfigCmd
@@ -148,7 +159,7 @@ class ConfigCmd extends CommandBase {
     /**
      * "debug" subcommand -- dumps the main config file in full: metadata header
      * (resolved path, validator status, top-level key count) followed by every live
-     * value rendered as indented YAML-ish text. /config deliberately operates on the
+     * value rendered as a box-drawing tree. /config deliberately operates on the
      * main config only; other files stay reachable through their own services.
      * @private
      * @param {Object} service - ConfigService instance
@@ -170,9 +181,9 @@ class ConfigCmd extends CommandBase {
             ],
         }])
 
-        // Full live contents as indented YAML-ish text
+        // Full live contents as a box-drawing tree (same glyphs as the header above)
         this.ctx.print('')
-        this.ctx.print(ConfigCmd.dumpConfig(base.toJSON()).join('\n'))
+        this.printPreformatted(ConfigCmd.dumpConfig(base.toJSON()).join('\n'))
     }
 
     /**
@@ -352,67 +363,80 @@ class ConfigCmd extends CommandBase {
     // -- Data rendering -------------------------------------------------------
 
     /**
-     * Render a full config document as indented YAML-ish text (read-only view). Scalars
-     * use JSON quoting so strings and numbers stay unambiguous; empty containers collapse
-     * to {} / []; arrays of objects hang their first key off the "- " marker.
+     * Render a full config document as a box-drawing tree (read-only view) using the
+     * same glyphs as printTree(). Scalars use JSON quoting so strings and numbers stay
+     * unambiguous; empty containers collapse to {} / []; arrays of scalars stay on one
+     * line; arrays of containers expand under [i] element nodes; records whose values
+     * are all scalars collapse to one JSON line while longer ones expand into branches.
      * @param {Record<string, unknown>} data - Parsed config tree
      * @returns {string[]} Lines of rendered text
      */
     static dumpConfig(data) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) return [JSON.stringify(data)]
-        return ConfigCmd.#renderPairs(Object.entries(data), 0, false)
+        return ConfigCmd.#renderEntries(Object.entries(data), '')
     }
 
     /**
-     * Core renderer for [key, value] pairs at a given depth. When dashFirst is true the
-     * very first emitted line carries a "- " prefix -- used for array elements that are
-     * objects, mirroring how YAML lays them out.
+     * Core recursive renderer for [name, value] pairs under a shared prefix column.
+     * Each pair becomes one branch: a leaf line (scalar, empty container, scalar array,
+     * or a small record collapsed to JSON) or a node line whose children recurse with
+     * the branch's continuation column, so nesting depth is always visually explicit.
      * @private
-     * @param {Array<[string, unknown]>} pairs - Key/value pairs to render
-     * @param {number} depth - Current indentation level
-     * @param {boolean} dashFirst - Whether the first line starts with "- "
+     * @param {Array<[string, unknown]>} entries - Name/value pairs to render
+     * @param {string} prefix - Continuation column carried from all ancestor branches
      * @returns {string[]} Rendered lines
      */
-    static #renderPairs(pairs, depth, dashFirst) {
-        const pad = '  '.repeat(depth)
-        const childPad = '  '.repeat(depth + 1)
+    static #renderEntries(entries, prefix) {
         /** @type {string[]} */
         const lines = []
-        let first = true
-
-        for (const [key, value] of pairs) {
-            const prefix = first && dashFirst ? '- ' : ''
-            // Blank separator between top-level blocks keeps long dumps scannable
-            if (depth === 0 && !first) lines.push('')
-            first = false
+        entries.forEach(([name, value], i) => {
+            const last = i === entries.length - 1
+            const branch = `${prefix}${last ? '\u2514\u2500 ' : '\u251c\u2500 '}`
+            const cont = `${prefix}${last ? '    ' : '\u2502   '}`
 
             if (value === null || typeof value !== 'object') {
-                lines.push(`${pad}${prefix}${key}: ${JSON.stringify(value)}`)
+                lines.push(`${branch}${name}: ${JSON.stringify(value)}`)
             } else if (Array.isArray(value)) {
                 if (value.length === 0) {
-                    lines.push(`${pad}${prefix}${key}: []`)
+                    lines.push(`${branch}${name}: []`)
+                } else if (value.every((v) => ConfigCmd.#isScalar(v))) {
+                    lines.push(`${branch}${name}: ${JSON.stringify(value)}`)
                 } else {
-                    lines.push(`${pad}${prefix}${key}:`)
-                    for (const item of value) {
-                        if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
-                            lines.push(...ConfigCmd.#renderPairs(Object.entries(item), depth + 1, true))
-                        } else {
-                            lines.push(`${childPad}- ${JSON.stringify(item)}`)
-                        }
-                    }
+                    // Synthetic element names ([i]) already identify the item; only named keys
+                    // get the [n] count suffix (windows[4]), so nested arrays read [0] not [0][1]
+                    lines.push(`${branch}${name.startsWith('[') ? name : `${name}[${value.length}]`}`)
+                    lines.push(...ConfigCmd.#renderEntries(value.map((item, j) => [`[${j}]`, item]), cont))
                 }
+            } else if (ConfigCmd.#isLeafRecord(value) && JSON.stringify(value).length <= INLINE_LIMIT) {
+                lines.push(`${branch}${name}: ${JSON.stringify(value)}`)
             } else {
-                const entries = Object.entries(value)
-                if (entries.length === 0) {
-                    lines.push(`${pad}${prefix}${key}: {}`)
-                } else {
-                    lines.push(`${pad}${prefix}${key}:`)
-                    lines.push(...ConfigCmd.#renderPairs(entries, depth + 1, false))
-                }
+                lines.push(`${branch}${name}`)
+                lines.push(...ConfigCmd.#renderEntries(Object.entries(value), cont))
             }
-        }
-
+        })
         return lines
+    }
+
+    /**
+     * Whether a value is a scalar (null or primitive) rather than a container.
+     * @private
+     * @param {*} value - Value to classify
+     * @returns {boolean} True for null, string, number, boolean, symbol, bigint
+     */
+    static #isScalar(value) {
+        return value === null || typeof value !== 'object'
+    }
+
+    /**
+     * Whether an object is a "leaf record": every value is a scalar or an array of
+     * scalars, so the whole record can be shown on one line without losing structure.
+     * @private
+     * @param {*} value - Value to classify
+     * @returns {boolean} True for plain records with no nested containers
+     */
+    static #isLeafRecord(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value)
+            && Object.values(value).every((v) => ConfigCmd.#isScalar(v) || (Array.isArray(v) && v.every((x) => ConfigCmd.#isScalar(x))))
     }
 }
 

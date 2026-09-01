@@ -137,7 +137,12 @@ console.log('\n\u2500\u2500 debug: main config dump \u2500\u2500\n')
     assert(out.includes('validator: yes'), 'metadata reports validator presence for main')
     assert(out.includes('etc/automaton.yaml'), 'metadata shows the resolved main file path')
     assert(out.includes('locale:'), 'dump contains the locale block')
-    assert(out.includes('time_format:'), 'nested keys rendered in the dump')
+    assert(/"time_format":"1[24]h"/.test(out), 'nested keys visible inside collapsed records')
+    assert(out.includes('windows[4]'), 'container arrays expand with an element count')
+    assert(out.includes('lines[2]'), 'deeply nested arrays keep explicit branch columns')
+    assert(out.includes('right: []'), 'empty arrays collapse inline')
+    assert(out.includes('"console_warn_levels":["warn"]'), 'scalar arrays stay on one line')
+    assert(out.includes('\u2514\u2500 ui'), 'last top-level section carries the terminal branch glyph')
     assert(/"1[24]h"/.test(out), 'scalar values visible as JSON-quoted text')
 }
 {
@@ -145,6 +150,46 @@ console.log('\n\u2500\u2500 debug: main config dump \u2500\u2500\n')
     const stray = createHarness()
     await stray.cmd.execute('debug automaton.yaml')
     assertEqual(stray.printed[0], 'Usage: /config debug   -- no arguments needed; dumps the main config in full', 'stray args show argument-less usage')
+}
+
+console.log('\n\u2500\u2500 dumpConfig: tree renderer \u2500\u2500\n')
+
+{
+    // Synthetic document exercising every rendering rule of the tree renderer
+    const lines = ConfigCmd.dumpConfig({
+        empty_obj: {},
+        empty_arr: [],
+        nothing: null,
+        scalar_arr: ['warn', 'error'],
+        mixed_arr: ['plain', 42, { a: 1 }, [5, 6]],
+        deep: { l1: { l2: { l3: [{ x: true }, { y: false }] } } },
+        nested_arr: [[{ a: 1 }], [{ b: 2 }]],
+        num_vs_str: { n: 1, s: '1' },
+    })
+    const out = lines.join('\n')
+    assert(out.includes('empty_obj: {}'), 'empty objects collapse to {}')
+    assert(out.includes('empty_arr: []'), 'empty arrays collapse to []')
+    assert(out.includes('nothing: null'), 'null renders as null')
+    assert(out.includes('scalar_arr: ["warn","error"]'), 'scalar arrays stay on one line')
+    assert(out.includes('mixed_arr[4]'), 'container arrays expand with an element count')
+    assert(out.includes('[0]: "plain"'), 'scalar array elements get index nodes')
+    assert(out.includes('[2]: {"a":1}'), 'small records inside arrays collapse to one line')
+    assert(out.includes('[3]: [5,6]'), 'nested scalar arrays inside arrays stay inline')
+    assert(out.includes('l3[2]'), 'deep nesting keeps explicit branch columns')
+    assert(out.includes('num_vs_str: {"n":1,"s":"1"}'), 'numbers and strings stay unambiguous when collapsed')
+    assert(out.includes('nested_arr[2]'), 'named array keeps its [n] count suffix')
+    assert(!/\[\d+\]\[\d+\]/.test(out), 'no redundant [n][m] labels for nested arrays')
+    assert(lines.some((l) => l.includes('\u251c\u2500 [0]') || l.includes('\u2514\u2500 [0]')), 'synthetic element names stay bare [0]')
+    assert(lines[0].startsWith('\u251c\u2500 '), 'first entry carries the intermediate branch glyph')
+    assert(lines[lines.length - 1].startsWith('\u2514\u2500 '), 'last entry carries the terminal branch glyph')
+}
+{
+    // Records above the inline limit must expand into branches instead of collapsing
+    const big = {}
+    for (let i = 0; i < 20; i++) big[`k${i}`] = `v${i}`
+    const out = ConfigCmd.dumpConfig({ big }).join('\n')
+    assert(out.includes('\u2514\u2500 big'), 'oversized record expands to a node line')
+    assert(out.includes('k0: "v0"'), 'expanded record children render as branch leaves')
 }
 
 console.log('\n\u2500\u2500 set: validated live overrides \u2500\u2500\n')

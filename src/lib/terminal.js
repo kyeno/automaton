@@ -257,6 +257,100 @@ function dropVisibleN(str, n) {
 }
 
 /**
+ * Whitespace-preserving wrap for preformatted content (box-drawing trees,
+ * aligned tables, code blocks).
+ *
+ * Unlike {@link wrapAnsi}, which reflows prose word by word, this treats the
+ * input as already laid out: a line that fits within `maxWidth` is returned
+ * byte-identical, and an over-long line is hard-broken at the width boundary.
+ * Continuation lines are re-indented with the original line's leading
+ * whitespace (and leading ANSI codes) so wrapped segments stay inside the
+ * tree's column. Callers must split multi-line text on '\n' first -- this
+ * function handles a single line only.
+ *
+ * @param {string} str - Preformatted line, may contain ANSI codes (no newlines)
+ * @param {number} maxWidth - Maximum visible characters per line
+ * @returns {string[]} Wrapped lines
+ */
+export function wrapPreformatted(str, maxWidth) {
+    if (!str) return ['']
+
+    // Fast path: the line fits -- return it untouched so every space is preserved
+    if (visibleLen(str) <= maxWidth) return [str]
+
+    // Leading whitespace + ANSI codes: carried onto every continuation line so
+    // wrapped segments stay aligned under the original indent
+    let leading = ''
+    {
+        let idx = 0
+        while (idx < str.length) {
+            if (str[idx] === '\x1b' && str[idx + 1] === '[') {
+                let j = idx + 2
+                while (j < str.length && str[j] !== 'm') j++
+                leading += str.slice(idx, j + 1)
+                idx = j + 1
+            } else if (str[idx] === ' ') {
+                leading += str[idx]
+                idx++
+            } else {
+                break
+            }
+        }
+    }
+
+    // Hard-break `remaining` at `budget` visible chars, guaranteeing forward
+    // progress (force-consume one visible char if the slice made none)
+    const hardBreak = (remaining, budget) => {
+        let segment = takeVisibleN(remaining, budget)
+        let rest = dropVisibleN(remaining, budget)
+        if (!visibleLen(segment) || rest === remaining) {
+            let consumed = 0
+            let cut = 0
+            for (let ci = 0; ci < remaining.length && consumed < 1; ci++) {
+                if (remaining[ci] === '\x1b' && remaining[ci + 1] === '[') {
+                    let ej = ci + 2
+                    while (ej < remaining.length && remaining[ej] !== 'm') ej++
+                    ci = ej
+                    continue
+                }
+                cut = ci + 1
+                consumed++
+            }
+            segment = remaining.slice(0, cut)
+            rest = remaining.slice(cut)
+        }
+        return [segment, rest]
+    }
+
+    // Continuation lines are re-indented, so they must fit the width left after
+    // the re-applied leading whitespace
+    const contBudget = Math.max(0, maxWidth - visibleLen(leading))
+    const lines = []
+    let remaining = str
+
+    // First line gets the full budget (the leading whitespace is part of it)
+    if (visibleLen(remaining) > maxWidth) {
+        const [segment, rest] = hardBreak(remaining, maxWidth)
+        lines.push(segment)
+        remaining = rest
+    }
+
+    // Every subsequent line is re-indented, so it must fit the smaller budget
+    while (visibleLen(remaining) > contBudget) {
+        const [segment, rest] = hardBreak(remaining, contBudget)
+        lines.push(leading + segment)
+        remaining = rest
+    }
+
+    // Final segment is already within the continuation budget, so re-applying the
+    // indent keeps the whole line within maxWidth
+    if (remaining || lines.length === 0) {
+        lines.push(leading + remaining)
+    }
+    return lines
+}
+
+/**
  * Simple word-wrap that respects a max visible width. Does NOT handle ANSI codes --
  * use {@link wrapAnsi} for colored text. Suitable for plain-text chat messages.
  *

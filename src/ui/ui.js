@@ -174,6 +174,10 @@ class Ui {
                 const win = getActiveInstance()
                 if (win && typeof win.print === 'function') win.print(args.join(' '))
             },
+            printPreformatted(...args) {
+                const win = getActiveInstance()
+                if (win && typeof win.printPreformatted === 'function') win.printPreformatted(args.join(' '))
+            },
             switchWindow: self.switchWindow.bind(self),
             // Clear buffer contents of specific windows (only those that exist and expose clear()).
             // Used by /config reload to drop stale rendered output from AI/TTS windows after a swap.
