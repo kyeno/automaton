@@ -162,6 +162,7 @@ console.log('\n\u2500\u2500 Real command overrides \u2500\u2500\n')
     assertArrayEqual(cmd.completeNextToken(['run']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation run <TAB> offers automation names from the container hook')
     assertArrayEqual(cmd.completeNextToken(['debug']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation debug <TAB> offers the same name pool')
     assertArrayEqual(cmd.completeNextToken(['force']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation force <TAB> offers the same name pool as run')
+    assertArrayEqual(cmd.completeNextToken(['force', 'ttsWeatherManAutomation']), ['first'], '/automation force <name> <TAB> offers the "first" modifier once a name is typed')
     assertEqual(cmd.completeNextToken(['bogus']), null, 'unknown subcommand position offers nothing')
     assertEqual(new AutomationCmd({ print() {} }).completeNextToken(['run']), null, 'missing container degrades to no completion instead of throwing')
 }

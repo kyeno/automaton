@@ -2,10 +2,9 @@
  * Tests for TtsWeatherMan opening time-of-day line rendering (buildTimeSentence()).
  *
  * Covers: explicit digit-frame templates (generic + exact hour), midnight/noon
- * disambiguation via localized period words, smart-style fallback to model-spelled
- * hours, stupid_ai_engine style selection (false / true / absent), variant picker
- * hooks (:00 -> exact_hour; :30/:45 reserved fractions), and i18n degradation paths
- * (missing time_sentence subtree, missing period_words). Pure clock + config only --
+ * disambiguation via localized period words, variant picker hooks
+ * (:00 -> exact_hour; :30/:45 reserved fractions), and i18n degradation paths
+ * (missing time_sentence subtree, missing period_words). Pure clock only --
  * no Redis/MQTT/AI needed; dates are passed explicitly so no global Date stubbing is
  * required.
  *
@@ -74,23 +73,21 @@ function hoursToken(now) {
     return String(I18nLoader.is12HourFormat() ? ((h24 + 11) % 12) + 1 : h24)
 }
 
-/** Localized period word for a moment against the real bundle's period_words map. */
+/** Localized period word for a moment against the date bundle's period_words map. */
 function periodWord(now) {
     const period = temporal.getCurrentTimePeriod(now)
-    return (period && bundle.period_words?.[period]) || period || ''
+    return (period && temporal.getPeriodWords()[period]) || period || ''
 }
 
 // ---------------------------------------------------------------------------
-// A. explicit style -- generic frame
+// A. generic frame
 // ---------------------------------------------------------------------------
-console.log('\n── buildTimeSentence(): explicit default frame ──\n')
+console.log('\n── buildTimeSentence(): default frame ──\n')
 {
-    wm.isStupidAiEngine = () => true      // pin the style under test regardless of global config
-
     const now = D(21, 32)
     assert(temporal.getCurrentTimePeriod(now) === 'evening', 'sanity: 21:00 in August is evening')
     const out = wm.buildTimeSentence(now)
-    let expected = String(bundle.time_sentence.explicit.default)
+    let expected = String(bundle.time_sentence.default)
         .replace('{% hours %}', hoursToken(now))
         .replace('{% minutes %}', '32')
         .replace('{% time_of_day %}', periodWord(now))
@@ -99,14 +96,14 @@ console.log('\n── buildTimeSentence(): explicit default frame ──\n')
 }
 
 // ---------------------------------------------------------------------------
-// B. explicit style -- exact hour (:00)
+// B. exact hour (:00)
 // ---------------------------------------------------------------------------
 console.log('\n── buildTimeSentence(): exact hour ──\n')
 {
     const now = D(9, 0)
     assert(temporal.getCurrentTimePeriod(now) === 'morning', 'sanity: 09:00 in August is morning')
     const out = wm.buildTimeSentence(now)
-    let expected = String(bundle.time_sentence.explicit.exact_hour)
+    let expected = String(bundle.time_sentence.exact_hour)
         .replace('{% hours %}', hoursToken(now))
         .replace('{% time_of_day %}', periodWord(now))
     assert(out === expected, `exact-hour template selected at :00 → "${out}"`)
@@ -127,7 +124,7 @@ console.log('\n── buildTimeSentence(): midnight / noon ambiguity ──\n')
     } else {
         assert(hoursToken(midnight) === '0', '24h format keeps midnight as hour 0')
     }
-    let expectedMid = String(bundle.time_sentence.explicit.exact_hour)
+    let expectedMid = String(bundle.time_sentence.exact_hour)
         .replace('{% hours %}', hoursToken(midnight))
         .replace('{% time_of_day %}', periodWord(midnight))
     const outMid = wm.buildTimeSentence(midnight)
@@ -140,34 +137,6 @@ console.log('\n── buildTimeSentence(): midnight / noon ambiguity ──\n')
 }
 
 // ---------------------------------------------------------------------------
-// D. smart style (stupid_ai_engine: false) + absent-flag default
-// ---------------------------------------------------------------------------
-console.log('\n── buildTimeSentence(): smart style & flag defaults ──\n')
-{
-    wm.isStupidAiEngine = () => false
-    // {% time %} resolves from the live clock -- tolerate a minute rollover between calls.
-    const before = I18nLoader.formatTime()
-    const out = wm.buildTimeSentence(new Date())
-    const after = I18nLoader.formatTime()
-    const tpl = String(bundle.time_sentence.smart.default)
-    assert(
-        out === tpl.replace('{% time %}', before) || out === tpl.replace('{% time %}', after),
-        `smart template leaves {% time %} for the model → "${out}"`
-    )
-    assert(!out.includes('{%'), 'no unresolved placeholders leak into output')
-
-    // Global switch wiring -- resolved through real ConfigService state loaded from automaton.yaml.
-    delete wm.isStupidAiEngine
-    assert(wm.isStupidAiEngine() === true, 'shipped automaton.yaml enables the global weak-model switch')
-    const now = D(21, 32)
-    let expected = String(bundle.time_sentence.explicit.default)
-        .replace('{% hours %}', hoursToken(now))
-        .replace('{% minutes %}', '32')
-        .replace('{% time_of_day %}', periodWord(now))
-    assert(wm.buildTimeSentence(now) === expected, 'enabled switch selects the explicit frame (also the default when the key is absent)')
-}
-
-// ---------------------------------------------------------------------------
 // E. degradation & fail-open paths (synthetic bundles via optional param)
 // ---------------------------------------------------------------------------
 console.log('\n── buildTimeSentence(): degradation & fail-open ──\n')
@@ -176,29 +145,31 @@ console.log('\n── buildTimeSentence(): degradation & fail-open ──\n')
     assert(wm.buildTimeSentence(D(9, 0), { base: 'x', ai_prefix: 'y' }) === '', 'bundle without time_sentence → empty string')
     assert(wm.buildTimeSentence(D(9, 0), null) === '', 'null bundle → empty string')
 
-    // Requested style subtree missing in the bundle -> skip gracefully.
-    const onlyExplicit = { time_sentence: { explicit: { default: 'X{% hours %}' } } }
-    wm.isStupidAiEngine = () => false
-    assert(wm.buildTimeSentence(D(9, 32), onlyExplicit) === '', 'smart requested but only explicit present → empty string')
-    delete wm.isStupidAiEngine   // restore real ConfigService resolution for remaining cases
-    assert(wm.buildTimeSentence(D(9, 32), onlyExplicit) === `X${hoursToken(D(9, 32))}`, 'explicit template rendered from injected bundle')
+    // Bundle with a time_sentence that has a default entry -> rendered.
+    const onlyDefault = { time_sentence: { default: 'X{% hours %}' } }
+    assert(wm.buildTimeSentence(D(9, 32), onlyDefault) === `X${hoursToken(D(9, 32))}`, 'default template rendered from injected bundle')
 
-    // Missing period_words -> raw English period name as fallback.
-    const noWords = { time_sentence: { explicit: { default: '[{% time_of_day %}]h{% hours %}m{% minutes %}' } } }
+    // Missing period words in the date bundle -> raw English period name as fallback.
+    // Period words now live in date.yaml, so we stub the date helper to simulate absence.
+    const noWords = { time_sentence: { default: '[{% time_of_day %}]h{% hours %}m{% minutes %}' } }
     const now = D(21, 32)
+    const temporalProto = Object.getPrototypeOf(temporal)
+    const originalGetPeriodWords = temporalProto.getPeriodWords
+    temporalProto.getPeriodWords = () => ({})
     const outNoWords = wm.buildTimeSentence(now, noWords)
+    temporalProto.getPeriodWords = originalGetPeriodWords
     assert(outNoWords === `[${temporal.getCurrentTimePeriod(now)}]h${hoursToken(now)}m32`, `missing period words fall back to raw name → "${outNoWords}"`)
 
     // exact_hour absent at :00 -> generic default still applies.
-    const noExact = { time_sentence: { explicit: { default: 'D h{% hours %} m{% minutes %}' } } }
+    const noExact = { time_sentence: { default: 'D h{% hours %} m{% minutes %}' } }
     assert(wm.buildTimeSentence(D(9, 0), noExact) === `D h${hoursToken(D(9, 0))} m0`, ':00 without exact_hour falls back to default template')
 
     // Reserved fraction hooks route when a locale defines them...
-    const withHalf = { time_sentence: { explicit: { default: 'DEF', half_past: 'HALF' } } }
+    const withHalf = { time_sentence: { default: 'DEF', half_past: 'HALF' } }
     assert(wm.buildTimeSentence(D(9, 30), withHalf) === 'HALF', ':30 picks up half_past template when present')
     assert(wm.buildTimeSentence(D(9, 45), withHalf) === 'DEF', ':45 without quarter_to stays on default')
     // ...but shipped bundles keep the generic frame (no translations yet).
-    let expectedShipped = String(bundle.time_sentence.explicit.default)
+    let expectedShipped = String(bundle.time_sentence.default)
         .replace('{% hours %}', hoursToken(D(9, 30)))
         .replace('{% minutes %}', '30')
         .replace('{% time_of_day %}', periodWord(D(9, 30)))

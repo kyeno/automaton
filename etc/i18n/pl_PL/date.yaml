@@ -1,0 +1,65 @@
+# Date/Time i18n bundle -- owned by src/lib/date.js
+# ---------------------------------------------------------------------------
+# Localized vocabulary for date and time phrases. This is a SYSTEM file (not a
+# user-customizable speech template): it is force-tracked in git (no .dist) and
+# loaded by the date helper, which exposes the words to automations such as the
+# TTS weatherman.
+#
+# DECLINATION (Polish):
+#   - month_names are in the GENITIVE case, because Polish dates read
+#     "1 września 2026 roku" (day + genitive month + year + genitive "year").
+#   - day_names are in the NOMINATIVE case ("wtorek").
+#   - year_word ("roku") is the genitive of "rok" (year).
+#   English has no such declension, so its month names are plain and year_word
+#   is empty.
+#
+# day_names / month_names are indexed by Date.getDay() (0 = Sunday) and
+# Date.getMonth() (0 = January) respectively.
+
+# Day-of-week names (nominative), indexed by getDay().
+day_names:
+  - 'niedziela'      # 0 Sunday
+  - 'poniedziałek'   # 1 Monday
+  - 'wtorek'         # 2 Tuesday
+  - 'środa'          # 3 Wednesday
+  - 'czwartek'       # 4 Thursday
+  - 'piątek'         # 5 Friday
+  - 'sobota'         # 6 Saturday
+
+# Month names (GENITIVE), indexed by getMonth().
+month_names:
+  - 'stycznia'       # 0 January
+  - 'lutego'         # 1 February
+  - 'marca'          # 2 March
+  - 'kwietnia'       # 3 April
+  - 'maja'           # 4 May
+  - 'czerwca'        # 5 June
+  - 'lipca'          # 6 July
+  - 'sierpnia'       # 7 August
+  - 'września'       # 8 September
+  - 'października'   # 9 October
+  - 'listopada'      # 10 November
+  - 'grudnia'        # 11 December
+
+# The "year" word (genitive), appended after the year number.
+year_word: 'roku'
+
+# Date fragment -- no "Jest", no trailing period. Fused into the weatherman's
+# opening time sentence via the {% date %} token on first-run / midnight runs.
+date_sentence: '{% day_name %}, {% day %} {% month_name %} {% year %} {% year_word %}'
+
+# Localized day-period words for {% time_of_day %} (moved from weatherman.yaml).
+period_words:
+  morning: 'rano'
+  noon: 'w południe'
+  afternoon: 'po południu'
+  evening: 'wieczorem'
+  night: 'w nocy'
+
+# Localized unit words for {% next_interval %} (moved from weatherman.yaml);
+# the model inflects them to fit the number.
+duration_units:
+  day: 'dni'
+  hour: 'godzin'
+  minute: 'minut'
+  second: 'sekund'

@@ -10,6 +10,8 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 4. If an AI assistant is available, the built message is framed with day-position markers (see below), prefixed with a creative instruction key (`sentence_ai_prefix`) and sent through `AiAssistant.processMessage()` for natural-language rewriting before being spoken aloud. Otherwise, the raw interpolated text goes straight to TTS -- no markers are added on that path. A runtime AI failure (e.g., LLM request timing out) or an empty reply degrades the same way: a visible `<system>` notice (`ai_fallback_notice` bundle key) explains why no rewritten report appears, then the raw message is spoken directly so the announcement never silently vanishes.
 5. System-originated messages appear in the UI with a yellow `<system>` prefix and are fully isolated from the shared conversation history -- they neither accumulate between ticks nor survive a failed tick as orphan prompts (see [AI Conversation Caching](../architecture/ai-conversation-caching.md)). By default each rewrite also runs standalone: the model sees only the fresh system prompt plus the built message, never prior chat context (`ai.include_chat_history_in_system_calls`, default `false`; set it to `true` under the AI section of `etc/automaton.yaml` if announcements should be aware of earlier conversation). The LLM HTTP budget behind these calls is configurable via `ai.fetch_timeout_ms` in the AI section of `etc/automaton.yaml` (default 300 s).
 
+If **neither** the AI pipeline nor the TTS server is available, the run is skipped entirely before any context build or device reads (there is no output channel for the report). A run with exactly one of the two available still proceeds: AI-only runs are rewritten and voiced by the assistant, TTS-only runs speak the raw message directly.
+
 ## Daily Cycle Markers
 
 When routing through AI, each announcement is positioned within its **daily session** — the continuous stretch of active ticks between two `silence_between` windows (with `"0230-1030"` one session runs ~10:30 → ~02:30). The position is computed purely from wall clock + config at run time; nothing is stored, so behaviour is deterministic per moment:
@@ -25,16 +27,9 @@ Because timer ticks are spaced at least one interval apart even across process r
 
 ## Time Phrase Rendering
 
-Very small models -- including the recommended gemma-4-E2B-it -- reliably fail at converting clock strings like `9:32 PM` into natural spoken words; that was the source of garbled announcements such as *"godzina sióknasta dziesiąta jedna trzydzieści po wieczór"*. Instead of asking the model to do that conversion, the automation renders an **opening time-of-day line** itself and prepends it to the base sentence on both output paths (AI rewrite *and* direct TTS fallback). The line comes from the bundle's `time_sentence` templates; the global `ai.stupid_ai_engine` switch in the AI section of `etc/automaton.yaml` picks which subtree is used:
+Very small models -- including the recommended gemma-4-E2B-it -- reliably fail at converting clock strings like `9:32 PM` into natural spoken words; that was the source of garbled announcements such as *"godzina sióknasta dziesiąta jedna trzydzieści po wieczór"*. Instead of asking the model to do that conversion, the automation renders an **opening time-of-day line** itself and prepends it to the base sentence on both output paths (AI rewrite *and* direct TTS fallback). The line comes from the bundle's `time_sentence` templates, whose clock parts are pre-rendered as plain digits inside a fixed frame (*"Jest 32 minut po godzinie 9 rano"*); the model only inflects unit/ordinal forms during its rewrite. Digits stay unambiguous even when read verbatim by Piper TTS because the "N minutes past H + period word" frame can never be misread as bare H:M.
 
-| `ai.stupid_ai_engine` | Subtree | Behaviour |
-|--------------------|---------|-----------|
-| `true` / absent (default) | `explicit` | Clock parts are pre-rendered as plain digits inside a fixed frame (*"Jest 32 minut po godzinie 9 rano"*); the model only inflects unit/ordinal forms during its rewrite. Digits stay unambiguous even when read verbatim by Piper TTS because the "N minutes past H + period word" frame can never be misread as bare H:M. |
-| `false` | `smart` | Legacy behaviour: `{% time %}` is left for the model to spell out in words (needs a capable model). |
-
-The switch itself lives in the main config because it describes the *model*, not the automation -- any component that talks to the engine can consult it and simplify what it sends (pre-rendered digits instead of raw times, fixed sentence frames instead of open-ended phrasing). The weatherman time line above is the first consumer; more small-model accommodations are expected to hook into the same flag over time.
-
-Within a style, the clock fraction selects a variant template with fallback to its `default` entry:
+The clock fraction selects a variant template with fallback to the `default` entry:
 
 | Minutes | Template key tried first | Status |
 |---------|--------------------------|--------|
@@ -42,7 +37,7 @@ Within a style, the clock fraction selects a variant template with fallback to i
 | any other | `default` | Shipped ("Jest 32 minut po godzinie 9 rano") |
 | `30` / `45` / `15` | `half_past` / `quarter_to` / `quarter_past` | Reserved hooks -- auto-selected if a locale bundle defines them; no translations shipped yet |
 
-The explicit templates use three interpolation tokens pre-resolved from the run's shared clock instant:
+The templates use three interpolation tokens pre-resolved from the run's shared clock instant:
 
 | Token | Resolves To | Example (pl, 12h) |
 |-------|-------------|--------------------|
@@ -51,6 +46,14 @@ The explicit templates use three interpolation tokens pre-resolved from the run'
 | `{% time_of_day %}` | Localized day-period word from `period_words`, keyed by the same five periods used in rule conditions (`morning/noon/afternoon/evening/night`) | `rano` |
 
 Missing period words degrade to the raw English period name. Because the frame always states "minutes past H" plus a period word, midnight and noon stay unambiguous even with bare digits (*"godzina 12 w nocy"* vs *"w południe"*).
+
+## Calendar Date on First Runs
+
+On the **first run of the day** (within one timer interval of local midnight) and on the **first run of each daily session** (after a `silence_between` window), the opening line fuses the calendar date into the clock sentence via the `{% date %}` token -- e.g. *"Jest wtorek, 1 września 2026 roku, 32 minut po godzinie 9 w nocy."* The date is part of the same sentence (not a separate *"Jest wtorek… Jest godzina…"* pair), so it reads naturally when spoken.
+
+- Dated runs fuse the pre-rendered calendar date into the clock sentence, so a weak model never has to convert it.
+- `time_sentence` carries two extra templates for dated runs: `dated` (generic) and `dated_exact_hour` (:00). The picker tries `dated_<fraction>` → `dated` → `<fraction>` → `default`, so a bundle that ships only the `dated` default still renders.
+- The date vocabulary (day-of-week names, genitive month names, the year word, the `date_sentence` fragment, plus the `period_words` and `duration_units` used by `{% time_of_day %}` / `{% next_interval %}`) lives in the per-locale **`date.yaml`** bundle owned by the date helper (`src/lib/date.js`), not in `weatherman.yaml`. This is a one-time migration: any custom `period_words` / `duration_units` you had in `weatherman.yaml` should move to `date.yaml`.
 
 ## Dynamic Sensor System
 
@@ -188,7 +191,7 @@ Two placeholder types are supported inside i18n strings:
 |-------------|---------|-------------|
 | `{{ DeviceName.property }}` | `{{ Outdoor Temperature.temperature }}` | Live sensor value from Zigbee2MQTT (locale-formatted numbers) |
 | `{% time %}` | `{% time %}` | Current local time using the configured `time_format` |
-| `{% hours %}` / `{% minutes %}` / `{% time_of_day %}` | resolved inside `time_sentence` templates | Pre-resolved clock parts for the explicit time line: hour number per `time_format`, minute integer, localized period word from `period_words`; see Time Phrase Rendering |
+| `{% hours %}` / `{% minutes %}` / `{% time_of_day %}` | resolved inside `time_sentence` templates | Pre-resolved clock parts for the opening time line: hour number per `time_format`, minute integer, localized period word from `period_words`; see Time Phrase Rendering |
 | `{% next_interval %}` | resolved inside `ai_message_next` | Localized duration phrase until the next non-silent announcement (e.g., "1 godzin"); pre-resolved by the automation, not a user-facing template keyword |
 
 If a device or property isn't found during interpolation, it resolves to `"N/A"`.
@@ -200,33 +203,24 @@ Weather speech templates live in per-locale files at `etc/i18n/{locale}/weatherm
 **English (`en_US/weatherman.yaml`):**
 ```yaml
 # Opening time-of-day line -- rendered BEFORE the base sentence on both output paths.
-# Style picked by ai.stupid_ai_engine: explicit = pre-rendered digit frame [default], smart = model spells out the hour.
+# Clock parts are pre-rendered as plain digits so tiny models never convert a clock string into words.
 time_sentence:
-  smart:
-    default: 'It is currently {% time %}.'
-  explicit:
-    default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}'
-    exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}"
+  default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}'
+  exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}"
+  # Dated runs (first of day / first of session) fuse the calendar date via {% date %}.
+  dated: 'It is {% date %}, {% minutes %} minutes past {% hours %} {% time_of_day %}'
+  dated_exact_hour: "It is {% date %}, exactly {% hours %} o'clock {% time_of_day %}"
 
-period_words:
-  morning: 'in the morning'
-  noon: 'at noon'
-  afternoon: 'in the afternoon'
-  evening: 'in the evening'
-  night: 'at night'
+# NOTE: period_words ({% time_of_day %}) and duration_units ({% next_interval %}) now
+# live in the per-locale date.yaml bundle (owned by the date helper), not here.
 
 base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words. Do not use tools -- base your answer only on the provided information: '
-# Day-position markers + unit words for {% next_interval %} (see Daily Cycle Markers)
+# Day-position markers (see Daily Cycle Markers)
 ai_message_first: 'This is the first update of today.'
 ai_message_last: 'This is the last update of tonight.'
 ai_message_only: 'This is the only update of today.'
 ai_message_next: 'Next update in {% next_interval %}.'
-duration_units:
-  day: 'days'
-  hour: 'hours'
-  minute: 'minutes'
-  second: 'seconds'
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 warning_humid_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'
 warning_hot_stay_at_home: 'WARNING: It is so hot that breathing is difficult! Make sure to stay indoors!'
@@ -240,33 +234,24 @@ soothing_warm_night: 'Beautiful night out there. You could step outside in short
 **Polish (`pl_PL/weatherman.yaml`):**
 ```yaml
 # Opening time-of-day line -- rendered BEFORE the base sentence on both output paths.
-# Style picked by ai.stupid_ai_engine: explicit = pre-rendered digit frame [default], smart = model spells out the hour.
+# Clock parts are pre-rendered as plain digits so tiny models never convert a clock string into words.
 time_sentence:
-  smart:
-    default: 'Jest godzina {% time %}.'
-  explicit:
-    default: 'Jest {% minutes %} minut po godzinie {% hours %} {% time_of_day %}'
-    exact_hour: 'Jest dokładnie godzina {% hours %} {% time_of_day %}'
+  default: 'Jest {% minutes %} minut po godzinie {% hours %} {% time_of_day %}'
+  exact_hour: 'Jest dokładnie godzina {% hours %} {% time_of_day %}'
+  # Dated runs (first of day / first of session) fuse the calendar date via {% date %}.
+  dated: 'Jest {% date %}, {% minutes %} minut po godzinie {% hours %} {% time_of_day %}'
+  dated_exact_hour: 'Jest {% date %}, dokładnie godzina {% hours %} {% time_of_day %}'
 
-period_words:
-  morning: 'rano'
-  noon: 'w południe'
-  afternoon: 'po południu'
-  evening: 'wieczorem'
-  night: 'w nocy'
+# NOTE: period_words ({% time_of_day %}) and duration_units ({% next_interval %}) now
+# live in the per-locale date.yaml bundle (owned by the date helper), not here.
 
 base: 'Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
 ai_prefix: 'Jesteś prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób, a godzinę napisz słownie. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach: '
-# Markery pozycji w dobie + słowa jednostek dla {% next_interval %} (patrz Daily Cycle Markers)
+# Markery pozycji w dobie (patrz Daily Cycle Markers)
 ai_message_first: 'To jest pierwsza wiadomość dzisiejszego dnia.'
 ai_message_last: 'To jest ostatnia wiadomość dzisiejszej nocy.'
 ai_message_only: 'To jest jedyna wiadomość tej doby.'
 ai_message_next: 'Następna wiadomość za {% next_interval %}.'
-duration_units:
-  day: 'dni'
-  hour: 'godzin'
-  minute: 'minut'
-  second: 'sekund'
 warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
 warning_humid_stay_at_home: 'UWAGA: Powietrze jest tak gęste, że nie da się nim oddychać! Pozostań w domu!'
 warning_hot_stay_at_home: 'UWAGA: Jest tak gorąco, że ciężko się oddycha! Koniecznie pozostań w domu!'
@@ -287,6 +272,9 @@ To add support for another language, create a new `weatherman.yaml` in your loca
 | Configuration template | `etc/automation/tts-weatherman.yaml.dist` |
 | English i18n bundle | `etc/i18n/en_US/weatherman.yaml` |
 | Polish i18n bundle | `etc/i18n/pl_PL/weatherman.yaml` |
+| English date bundle (day/month names, period words, duration units) | `etc/i18n/en_US/date.yaml` |
+| Polish date bundle | `etc/i18n/pl_PL/date.yaml` |
+| Date helper (owns the date bundles) | `src/lib/date.js` |
 
 ---
 

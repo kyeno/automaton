@@ -97,7 +97,6 @@ ai:
   conversation_ttl_sec: "15m" # Conversation history TTL ("45s"/"15m"/... or legacy seconds)
   max_conversation_turns: 15  # Max message turns retained in context
   strip_ai_formatting: false  # Strip markdown/emoji from responses before UI/TTS
-  stupid_ai_engine: true      # Treat the model as weak -- components pre-render linguistic content instead of relying on it
   include_chat_history_in_system_calls: false  # Announcements (system-origin turns) receive prior chat context; false = standalone [default]
 ```
 
@@ -110,7 +109,6 @@ ai:
 | `ai.conversation_ttl_sec` | After this period of inactivity, conversation history is purged from Redis (accepts human-readable durations like `"15m"` or plain seconds) |
 | `ai.max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
 | `ai.strip_ai_formatting` | Strip markdown formatting and emoji from responses before displaying in UI / passing to TTS |
-| `ai.stupid_ai_engine` | Weak-model accommodation switch (default `true`): when enabled, components simplify prompts by pre-rendering linguistic content up front -- e.g., TtsWeatherMan ships its opening time line with clock parts as plain digits (*"Jest 32 minut po godzinie 9 rano"*) instead of asking the model to spell out `{% time %}`. Set `false` only with a capable model; further small-model accommodations will hook into this flag |
 | `ai.include_chat_history_in_system_calls` | Controls whether system-origin turns (rule-based automation announcements such as TtsWeatherMan) include accumulated chat history in their LLM request. Default `false`: each announcement runs standalone against a fresh system prompt + its own message -- faster inference and deterministic rewrites for small models. Set `true` when an announcement should be aware of prior conversation context |
 
 **Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (e.g., TtsWeatherManAutomation announces on its own timer with silence windows and day-position markers; system-originated messages still appear with a yellow `<system>` prefix and stay out of conversation caching). See [Example Automations](./examples/index.md).
@@ -430,7 +428,7 @@ Create `<Name>Interaction.js` in `etc/interaction/`. Extend `InteractionBase` an
 
 ## 6. i18n Bundles
 
-Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains two files:
+Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains an AI bundle, a TTS bundle, and (for the weatherman automation) a speech bundle plus a date bundle:
 
 ### AI Bundle (`ai.yaml`)
 
@@ -477,6 +475,10 @@ ui:
 
 Defines voice model settings and audio effects per locale. Referenced by the TTS service when generating speech output.
 
+### Date Bundle (`date.yaml`)
+
+Owned by the date helper (`src/lib/date.js`). Holds the localized date/time vocabulary used by speech automations such as the weatherman: day-of-week names, (genitive) month names, the year word, the `date_sentence` fragment (fused into the weatherman's opening line via `{% date %}` on first-of-day / first-of-session runs), the `period_words` for `{% time_of_day %}`, and the `duration_units` for `{% next_interval %}`. This is a system file (force-tracked in git, no `.dist` template) -- it is not a user-customizable speech template.
+
 ---
 
 ## Adding a New Language
@@ -484,7 +486,8 @@ Defines voice model settings and audio effects per locale. Referenced by the TTS
 1. Create a new directory: `etc/i18n/{locale}/`
 2. Copy and translate `ai.yaml` from an existing bundle
 3. Create `tts.yaml` with appropriate voice model settings
-4. Set `locale.language` in `etc/automaton.yaml` to your full locale code (e.g., `de_DE` for German)
+4. If you use the weatherman automation, copy and translate `weatherman.yaml` and `date.yaml` (the date bundle holds day/month names, period words, and duration units)
+5. Set `locale.language` in `etc/automaton.yaml` to your full locale code (e.g., `de_DE` for German)
 
 ---
 

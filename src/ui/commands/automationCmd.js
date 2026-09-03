@@ -13,6 +13,9 @@
  *                             once-per-day rule markers; human-interaction cooldowns
  *                             still apply so a manual poke never fights a device
  *                             someone just touched
+ *   /automation force <n> first
+ *                             As force, but also forces the first-of-day day-position
+ *                             so the dated opening time line renders (debug poke)
  *
  * Uses plain text via ctx.print() so it plays nicely with buffer-based UI windows.
  *
@@ -163,6 +166,9 @@ class AutomationCmd extends CommandBase {
             '  run <name>       Manually trigger an automation now',
             '  force <name>     Trigger now even during its silent period or after a',
             '                   once/day marker fired (human-interaction cooldowns kept)',
+            '  force <name> first',
+            '                   As force, but also force the first-of-day day-position so',
+            '                   the dated opening time line renders (debug poke)',
             '',
         ]
         const names = this.#availableNames(container)
@@ -250,8 +256,10 @@ class AutomationCmd extends CommandBase {
      * @param {string} rawName - Name argument after "run" or "force" (may be empty)
      * @param {boolean} [force=false] - When true, dispatch carries force:true so automations
      *   bypass their silent-period and once-per-day guards; human-interaction cooldowns apply either way
+     * @param {boolean} [forceFirst=false] - When true, dispatch carries forceFirst:true so
+     *   automations force the first-of-day day-position (dated opening time line)
      */
-    async #handleRun(container, rawName, force = false) {
+    async #handleRun(container, rawName, force = false, forceFirst = false) {
         const automation = this.#findAutomation(container, rawName)
         if (!automation) {
             this.ctx.print(rawName ? `Unknown automation "${rawName}"` : 'Missing automation name')
@@ -263,9 +271,10 @@ class AutomationCmd extends CommandBase {
         const suffix = force ? ', forced' : ''
         this.ctx.print(`Running "${name}" (trigger: ${MANUAL_TRIGGER_REASON}${suffix})...`)
         try {
-            await container.callAutomation(name, force
-                ? { trigger: MANUAL_TRIGGER_REASON, force: true }
-                : { trigger: MANUAL_TRIGGER_REASON })
+            const data = { trigger: MANUAL_TRIGGER_REASON }
+            if (force) data.force = true
+            if (forceFirst) data.forceFirst = true
+            await container.callAutomation(name, data)
         } catch (error) {
             this.ctx.print(`Execution failed: ${error.message}`)
             return
@@ -277,13 +286,35 @@ class AutomationCmd extends CommandBase {
      * Force-run an automation: identical to run except the dispatch carries force:true,
      * which lets automations skip their silent period and per-rule once-per-day markers.
      * Human-interaction cooldowns are intentionally NOT bypassed so a manual poke never
-     * fights a device someone just physically touched.
+     * fights a device someone just physically touched. An optional trailing "first"
+     * token (e.g. "force <name> first") additionally carries forceFirst:true so the
+     * automation forces its first-of-day day-position -- a debug poke for the dated
+     * opening time line.
      * @private
      * @param {Object} container - AutomationContainer instance
-     * @param {string} rawName - Name argument after "force" (may be empty)
+     * @param {string} rawName - Name argument after "force" (may be empty; a trailing
+     *   "first" token is parsed as the forceFirst modifier, not part of the name)
      */
     async #handleForce(container, rawName) {
-        await this.#handleRun(container, rawName, true)
+        const { name, forceFirst } = this.#parseForceArgs(rawName)
+        await this.#handleRun(container, name, true, forceFirst)
+    }
+
+    /**
+     * Split a force subcommand payload into the automation name and the optional
+     * trailing "first" modifier. The name may be multi-word; only a final token that
+     * is exactly "first" (case-insensitive) is treated as the modifier, so names that
+     * merely contain the word elsewhere are preserved intact.
+     * @private
+     * @param {string} rawName - Raw payload after "force" (may be empty)
+     * @returns {{name: string, forceFirst: boolean}}
+     */
+    #parseForceArgs(rawName) {
+        const tokens = rawName.trim().split(/\s+/).filter(Boolean)
+        if (tokens.length > 0 && tokens[tokens.length - 1].toLowerCase() === 'first') {
+            return { name: tokens.slice(0, -1).join(' '), forceFirst: true }
+        }
+        return { name: rawName.trim(), forceFirst: false }
     }
 
     // -- Tab completion -----------------------------------------------------
@@ -291,7 +322,8 @@ class AutomationCmd extends CommandBase {
     /**
      * Tab-completion candidates for /automation arguments. The first token offers the known
      * subcommands; once "run", "debug" or "force" has been typed, registered automation names are offered
-     * so "/automation run TtsWea<Tab>" completes without consulting the list view first.
+     * so "/automation run TtsWea<Tab>" completes without consulting the list view first. For
+     * "force", once a name token is present the next token offers the optional "first" modifier.
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
      * @returns {Array<string>|null} Candidates for the next token, or null when none apply
      */
@@ -299,6 +331,8 @@ class AutomationCmd extends CommandBase {
         if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'run', 'force']
         const sub = String(typedTokens[0]).toLowerCase()
         if (sub !== 'run' && sub !== 'debug' && sub !== 'force') return null
+        // "force <name> <Tab>" -> the name is already typed, so offer the optional "first" modifier.
+        if (sub === 'force' && typedTokens.length >= 2) return ['first']
         const container = this.ctx.automationContainer
         if (container && typeof container.getNames === 'function') return container.getNames()
         return null

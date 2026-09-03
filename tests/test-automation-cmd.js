@@ -312,6 +312,38 @@ assertEqual(ambient.lastTriggerData.force === true, true, 'instance saw the forc
     assertEqual(forceHarness.printed[pBefore], 'Missing automation name', 'missing force name hint')
 }
 
+{
+    // The trailing "first" modifier is parsed out of the name and carried as forceFirst:true.
+    const before = forceContainer.calls.length
+    await forceHarness.cmd.execute('force AmbientLightsAutomation first')
+    assertEqual(forceContainer.calls.length, before + 1, 'force <name> first dispatches once')
+    assertEqual(
+        JSON.stringify(forceContainer.calls[forceContainer.calls.length - 1].data),
+        JSON.stringify({ trigger: 'manual', force: true, forceFirst: true }),
+        'force <name> first carries { trigger: "manual", force: true, forceFirst: true }'
+    )
+    assertEqual(ambient.lastTriggerData.forceFirst === true, true, 'instance saw the forceFirst flag')
+    assertEqual(ambient.lastTriggerData.force === true, true, 'force flag is still set alongside forceFirst')
+}
+
+{
+    // A bare "first" (no name) is the modifier with an empty name -> missing-name error.
+    const before = forceContainer.calls.length
+    let pBefore = forceHarness.printed.length
+    await forceHarness.cmd.execute('force first')
+    assertEqual(forceContainer.calls.length, before, 'bare "first" does not dispatch (empty name)')
+    assertEqual(forceHarness.printed[pBefore], 'Missing automation name', 'bare "first" yields missing-name hint')
+}
+
+{
+    // An unknown name with the modifier still reports unknown (modifier stripped first).
+    const before = forceContainer.calls.length
+    let pBefore = forceHarness.printed.length
+    await forceHarness.cmd.execute('force NopeAutomation first')
+    assertEqual(forceContainer.calls.length, before, 'unknown name with modifier is not dispatched')
+    assertEqual(forceHarness.printed[pBefore], 'Unknown automation "NopeAutomation"', 'unknown name with modifier reports the bare name')
+}
+
 // -- Condition summary formatting ---------------------------------------------------
 
 console.log('\n\u2500\u2500 Condition summary formatting \u2500\u2500\n')

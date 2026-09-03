@@ -14,8 +14,19 @@
  * while "next update in {% next_interval %}" closes middle-of-session runs.
  *
  * An opening time-of-day line is rendered before the base sentence on both output
- * paths; with stupid_ai_engine enabled its clock parts are pre-rendered as plain
- * digits so tiny models never have to convert a clock string into words.
+ * paths; its clock parts are pre-rendered as plain digits so tiny models never have
+ * to convert a clock string into words.
+ *
+ * On the first run of the day (within one interval of local midnight) and on the
+ * first run of each daily session (after a silence window), the calendar date is
+ * fused into that opening line via the {% date %} token -- e.g. "Jest wtorek,
+ * 1 września 2026 roku, 32 minut po godzinie 9 w nocy." The date is pre-rendered,
+ * so a weak model never has to convert it. The date vocabulary (day/month names,
+ * period words, duration units) lives in the per-locale date.yaml bundle owned by
+ * the date helper, not in this bundle.
+ *
+ * If neither the AI pipeline nor the TTS server is available the run is skipped
+ * entirely (no output channel); a run with exactly one of the two still proceeds.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -32,9 +43,9 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 
 import RuleBasedAutomationBase from '../../src/automation/base/ruleBasedAutomationBase.js'
 import DeviceContainer from '../../src/device/container/deviceContainer.js'
-import ConfigService from '../../src/service/configService.js'
 import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
+import TtsService from '../../src/service/ttsService.js'
 import AiAssistant from '../../src/ai/aiAssistant.js'
 import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
@@ -95,12 +106,23 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * Overrides the parent's device-targeting flow entirely since this
      * automation has no device targets -- only TTS output.
      *
-     * @param {{trigger?: string, force?: boolean}|null} [triggerData] - Trigger info;
-     *   force:true bypasses the silent-period suppression below
+     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} [triggerData] -
+     *   Trigger info; force:true bypasses the silent-period suppression below, and
+     *   forceFirst:true forces the first-of-day day-position (dated opening time line)
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
+
+        // Off-guard: if neither the AI pipeline nor the TTS server is available there is
+        // no output channel for the report -- skip the run entirely (no context build, no
+        // device reads, no log spam) rather than assembling a message that can only be
+        // dropped. A run with exactly one of the two available still proceeds: AI-only
+        // runs are rewritten and voiced by the assistant, TTS-only runs speak directly.
+        if (!AiAssistant.isAvailable() && !TtsService.isEnabled()) {
+            this.log('Both AI and TTS unavailable -- skipping weather run', 'debug')
+            return
+        }
 
         // Suppress execution during configured silent period (before any work begins),
         // unless explicitly forced from outside (e.g., "/automation force")
@@ -136,10 +158,31 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         // markers must never mix two different "now"s across a minute boundary.
         const now = new Date()
 
+        // Day position (first/last/only/next + first-of-day) computed once, before the
+        // message is assembled, so the opening time line can fuse the calendar date into
+        // the clock sentence on first-of-day / first-of-session runs.
+        const meta = this.computeDayPosition(now)
+        // Debug poke: a forced "first" run (e.g. "/automation force <name> first") pretends
+        // this is the first run of the session, so the dated opening time line renders even
+        // at a mid-session clock time.
+        if (triggerData?.forceFirst === true) {
+            meta.isFirst = true
+            this.log(`Forced first-of-day day-position (${triggerSource})`, 'info')
+        }
+        if (meta.isFirst || meta.isLast || meta.isFirstOfDay || meta.nextIntervalMs != null) {
+            this.log(
+                `Day position: first=${meta.isFirst}, last=${meta.isLast}, firstOfDay=${meta.isFirstOfDay}` +
+                (meta.nextIntervalMs != null ? `, next in ${temporal.millisecondsToHumanReadable(meta.nextIntervalMs)}` : ''),
+                'debug'
+            )
+        }
+
         // Opening time-of-day line rendered BEFORE the base sentence on both output paths
-        // (AI rewrite and direct TTS). Empty when the active bundle has no decoupled
-        // time_sentence templates; such bundles keep their inline {% time %} in the base.
-        const timeLine = this.buildTimeSentence(now)
+        // (AI rewrite and direct TTS). Dated runs (first of day/session) fuse the calendar
+        // date into the clock sentence via the {% date %} token. Empty when the active
+        // bundle has no decoupled time_sentence templates; such bundles keep their inline
+        // {% time %} in the base.
+        const timeLine = this.buildTimeSentence(now, this.#bundle, meta)
 
         // Start with base sentence + interpolate sensor data
         const baseKey = this.config.sentence_base
@@ -202,17 +245,6 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
-        // Determine where this announcement sits within its daily session so the AI
-        // prompt can frame the core content with first/last/only/next context.
-        const meta = this.computeDayPosition(now)
-        if (meta.isFirst || meta.isLast || meta.nextIntervalMs != null) {
-            this.log(
-                `Day position: first=${meta.isFirst}, last=${meta.isLast}` +
-                (meta.nextIntervalMs != null ? `, next in ${temporal.millisecondsToHumanReadable(meta.nextIntervalMs)}` : ''),
-                'debug'
-            )
-        }
-
         // Route output through AI->TTS or direct TTS
         await this.#speak(message, meta)
     }
@@ -254,16 +286,27 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * tests can verify the matrix without MQTT or AI providers.
      *
      * @param {Date} [now=new Date()] - Moment to evaluate
-     * @returns {{isFirst: boolean, isLast: boolean, nextIntervalMs: number|null}}
+     * @returns {{isFirst: boolean, isLast: boolean, isFirstOfDay: boolean, nextIntervalMs: number|null}}
      *   isFirst/isLast require both a positive timer interval and a valid silence window;
-     *   nextIntervalMs is milliseconds until the next non-silent tick, or null when the
-     *   timer is disabled or no such tick exists within the scan horizon.
+     *   isFirstOfDay (first run of the calendar day, within one interval of local midnight)
+     *   requires only a positive interval; nextIntervalMs is milliseconds until the next
+     *   non-silent tick, or null when the timer is disabled or no such tick exists within
+     *   the scan horizon.
      */
     computeDayPosition(now = new Date()) {
-        const result = { isFirst: false, isLast: false, nextIntervalMs: null }
+        const result = { isFirst: false, isLast: false, isFirstOfDay: false, nextIntervalMs: null }
 
         const intervalMs = this.getTimerIntervalMs()
         if (!(intervalMs > 0)) return result            // event-driven only -- nothing periodic to predict
+
+        // "First run of the day": within one interval of local midnight. Independent of
+        // the silence window (a midnight run is usually mid-session), so it is computed
+        // before the mid-silence early-return below. Drives the calendar date in the
+        // opening time line (see buildTimeSentence()).
+        const midnight = new Date(now)
+        midnight.setHours(0, 0, 0, 0)
+        result.isFirstOfDay = (now.getTime() - midnight.getTime()) < intervalMs
+
         if (this.isInSilentPeriodAt(now)) return result // defensive: markers are meaningless mid-silence
 
         // Next announcement = first upcoming tick outside the silent window. For pure
@@ -324,30 +367,16 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         parts.push(message)
 
         // Closing "next update" line -- middle-of-session runs only. Skipped gracefully
-        // when the bundle lacks the template or localized duration words.
+        // when the bundle lacks the template or the date bundle lacks duration words.
         if (!meta.isFirst && !meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
             const template = this.#resolveI18n('weatherman.ai_message_next', '')
-            const phrase = temporal.msToHumanPhrase(meta.nextIntervalMs, this.#bundle?.duration_units ?? {})
+            const phrase = temporal.msToHumanPhrase(meta.nextIntervalMs, temporal.getDurationUnits())
             if (template && phrase) {
                 parts.push(this.#interpolate(template, null, { next_interval: phrase }))
             }
         }
 
         return parts.length === 1 ? message : parts.join('\n')
-    }
-
-    /**
-     * Resolve the global "stupid AI engine" switch from the AI section of automaton.yaml.
-     * When enabled (the default), components simplify what they hand to the model by
-     * pre-rendering linguistic content up front so weak engines never have to convert raw
-     * data into words themselves; see the config comment there for current consumers and
-     * planned future hooks. Only an explicit `false` disables the accommodation. Exposed
-     * without the # prefix so unit tests can pin either behaviour per instance without
-     * mutating global config state.
-     * @returns {boolean} true when the configured model should be treated as weak [default]
-     */
-    isStupidAiEngine() {
-        return ConfigService.get('ai.stupid_ai_engine', true) !== false
     }
 
     /**
@@ -396,13 +425,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * strings into words and keeps Piper TTS away from ambiguous bare H:M digits -- the
      * "N minutes past H + period word" frame stays unambiguous either way.
      *
-     * Style selection comes from the global stupid_ai_engine switch (AI section of
-     * automaton.yaml, resolved via isStupidAiEngine()): only an explicit false selects
-     * the bundle's "smart" subtree ({% time %} left for the model to spell out in words);
-     * anything else -- true or absent -- keeps the pre-rendered digit frame ("explicit").
-     * Within a style, #pickTimeTemplate() chooses the variant matching the clock fraction
-     * with fallback to its default entry. Clock tokens are pre-resolved from `now` via
-     * the specialValues mechanism so rendering is deterministic per instant.
+     * #pickTimeTemplate() chooses the variant matching the clock fraction with fallback
+     * to the default entry. Clock tokens are pre-resolved from `now` via the
+     * specialValues mechanism so rendering is deterministic per instant.
      *
      * Exposed without the # prefix so unit tests can verify rendering and i18n degradation
      * without MQTT or AI providers; execute() is the sole production caller. The optional
@@ -410,56 +435,86 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      *
      * @param {Date} [now=new Date()] - Moment to render
      * @param {Record<string, unknown>|null} [bundle=this.#bundle] - Weatherman i18n bundle
+     * @param {{isFirst?: boolean, isFirstOfDay?: boolean}} [meta] - Day position from
+     *   {@link computeDayPosition}; when either flag is set the line is "dated" (see below)
      * @returns {string} Interpolated opening line, or '' when nothing applicable exists
      */
-    buildTimeSentence(now = new Date(), bundle = this.#bundle) {
+    buildTimeSentence(now = new Date(), bundle = this.#bundle, meta = {}) {
         const tree = bundle?.time_sentence
         if (!tree || typeof tree !== 'object') return ''
 
-        // Global weak-model switch: only an explicit false opts into legacy "model spells
-        // out the hour" behaviour; anything else keeps the digit frame -- fail-safe for tiny models.
-        const style = this.isStupidAiEngine() ? 'explicit' : 'smart'
-        const variants = tree[style]
-        if (!variants || typeof variants !== 'object') return ''
-
-        const tpl = this.#pickTimeTemplate(variants, now)
+        // Dated runs (first of the day / first of the session) fuse the calendar date
+        // into the clock sentence via the {% date %} token.
+        const dated = Boolean(meta?.isFirst || meta?.isFirstOfDay)
+        const tpl = this.#pickTimeTemplate(tree, now, dated)
         if (!tpl) return ''
 
         const period = temporal.getCurrentTimePeriod(now)
-        const words = bundle.period_words ?? {}
+        // Day-period words come from the date bundle (date.yaml) -- all date/time
+        // vocabulary now lives in one place owned by the date helper.
+        const words = temporal.getPeriodWords()
         const h24 = now.getHours()
         return this.#interpolate(tpl, null, {
+            date: dated ? this.#buildDateFragment(now) : '',
             hours: String(I18nLoader.is12HourFormat() ? ((h24 + 11) % 12) + 1 : h24),
             minutes: String(now.getMinutes()),
             time_of_day: (period && words[period]) || period || '',
         })
     }
 
+    /**
+     * Render the localized calendar-date fragment (e.g. "wtorek, 1 września 2026 roku")
+     * by interpolating the date bundle's `date_sentence` template with the resolved date
+     * parts. The fragment carries no leading "Jest"/"It is" and no trailing period -- it is
+     * fused into the opening time line via the `{% date %}` token so the date and the clock
+     * read as one grammatical sentence rather than two.
+     * @private
+     * @param {Date} now - Moment to render
+     * @returns {string} Interpolated date fragment, or '' when the bundle has no template
+     */
+    #buildDateFragment(now) {
+        const template = temporal.loadDateBundle()?.date_sentence
+        if (!template || typeof template !== 'string') return ''
+        return this.#interpolate(template, null, temporal.getDateParts(now))
+    }
+
 
     // -- Private Helpers ----------------------------------------------------
 
     /**
-     * Pick the variant template for a moment within one style subtree of
-     * bundle.time_sentence. Exact clock fractions win when their locale-specific
-     * template exists (:00 -> exact_hour; :30/:15/:45 -> half_past/quarter_to/quarter_past
-     * -- reserved hooks for future i18n templates, none shipped yet); otherwise fall back
-     * to the generic default entry. Returns '' when nothing usable is present so callers
-     * can skip the opening line gracefully.
+     * Pick the variant template for a moment within bundle.time_sentence. Exact clock
+     * fractions win when their locale-specific template exists (:00 -> exact_hour;
+     * :30/:15/:45 -> half_past/quarter_to/quarter_past -- reserved hooks for future i18n
+     * templates, none shipped yet); otherwise fall back to the generic default entry.
+     * Dated runs prefer their own dated_* variants (which fuse the {% date %} token) but
+     * fall back to the plain variants, then to the default, so a bundle that ships only
+     * the dated default still renders. Returns '' when nothing usable is present so
+     * callers can skip the opening line gracefully.
      * @private
-     * @param {Record<string, unknown>} variants - Style subtree under bundle.time_sentence
+     * @param {Record<string, unknown>} variants - The bundle.time_sentence object
      * @param {Date} now - Moment to evaluate
+     * @param {boolean} [dated=false] - Whether this is a dated run (first of day/session)
      * @returns {string} Chosen raw (uninterpolated) template, or ''
      */
-    #pickTimeTemplate(variants, now) {
+    #pickTimeTemplate(variants, now, dated = false) {
         const m = now.getMinutes()
-        let key = null
-        if (m === 0)          key = 'exact_hour'
-        else if (m === 30)    key = 'half_past'
-        else if (m === 15)    key = 'quarter_past'
-        else if (m === 45)    key = 'quarter_to'
-        return typeof variants[key] === 'string' ? variants[key]
-             : typeof variants.default === 'string' ? variants.default
-             : ''
+        let suffix = null
+        if (m === 0)          suffix = 'exact_hour'
+        else if (m === 30)    suffix = 'half_past'
+        else if (m === 15)    suffix = 'quarter_past'
+        else if (m === 45)    suffix = 'quarter_to'
+
+        // Priority: dated-specific -> dated default -> plain specific -> plain default.
+        const candidates = []
+        if (dated && suffix) candidates.push(`dated_${suffix}`)
+        if (dated)            candidates.push('dated')
+        if (suffix)           candidates.push(suffix)
+        candidates.push('default')
+
+        for (const key of candidates) {
+            if (typeof variants[key] === 'string') return variants[key]
+        }
+        return ''
     }
 
     /**

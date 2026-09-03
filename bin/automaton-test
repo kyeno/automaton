@@ -100,6 +100,7 @@ const testScripts = [
   'test-weatherman-day-position.js',
   'test-weatherman-time-phrase.js',
   'test-weatherman-ai-fallback.js',
+  'test-date-helper.js',
   'test-tts-options-passthrough.js',
   'test-ambient-lights-rules.js',
   'test-service-instantiation.js',

@@ -1,0 +1,59 @@
+# Date/Time i18n bundle -- owned by src/lib/date.js
+# ---------------------------------------------------------------------------
+# Localized vocabulary for date and time phrases. This is a SYSTEM file (not a
+# user-customizable speech template): it is force-tracked in git (no .dist) and
+# loaded by the date helper, which exposes the words to automations such as the
+# TTS weatherman.
+#
+# English has no grammatical declension, so month names are plain and the year
+# word is empty (dates read "September 1, 2026", not "September 1 2026 year").
+#
+# day_names / month_names are indexed by Date.getDay() (0 = Sunday) and
+# Date.getMonth() (0 = January) respectively.
+
+# Day-of-week names, indexed by getDay().
+day_names:
+  - 'Sunday'         # 0
+  - 'Monday'         # 1
+  - 'Tuesday'        # 2
+  - 'Wednesday'      # 3
+  - 'Thursday'       # 4
+  - 'Friday'         # 5
+  - 'Saturday'       # 6
+
+# Month names, indexed by getMonth().
+month_names:
+  - 'January'        # 0
+  - 'February'       # 1
+  - 'March'          # 2
+  - 'April'          # 3
+  - 'May'            # 4
+  - 'June'           # 5
+  - 'July'           # 6
+  - 'August'         # 7
+  - 'September'      # 8
+  - 'October'        # 9
+  - 'November'       # 10
+  - 'December'       # 11
+
+# The "year" word -- empty in English (no trailing word after the year number).
+year_word: ''
+
+# Date fragment -- no "It is", no trailing period. Fused into the weatherman's
+# opening time sentence via the {% date %} token on first-run / midnight runs.
+date_sentence: '{% day_name %}, {% month_name %} {% day %}, {% year %}'
+
+# Localized day-period words for {% time_of_day %} (moved from weatherman.yaml).
+period_words:
+  morning: 'in the morning'
+  noon: 'at noon'
+  afternoon: 'in the afternoon'
+  evening: 'in the evening'
+  night: 'at night'
+
+# Localized unit words for {% next_interval %} (moved from weatherman.yaml).
+duration_units:
+  day: 'days'
+  hour: 'hours'
+  minute: 'minutes'
+  second: 'seconds'

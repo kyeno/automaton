@@ -16,6 +16,10 @@
  * - **Duration parsing**: `humanToMs()`, `parseDurationMs()`
  * - **Convenience**: `getCurrentTimePeriod()`, `getCurrentSeason()`,
  *   `getLocalDayString()`
+ * - **Date i18n**: `loadDateBundle()`, `getDateParts()`, `getPeriodWords()`,
+ *   `getDurationUnits()` -- the module owns the per-locale `date.yaml` bundle
+ *   (day/month names, period words, duration units) that speech automations
+ *   such as the TTS weatherman interpolate into their opening lines.
  *
  * @module lib/date
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -26,6 +30,21 @@
  */
 
 'use strict'
+
+import fs from 'node:fs'
+import path from 'node:path'
+import { parseDocument as yamlParseDocument } from 'yaml'
+
+import I18nLoader from '../service/i18nLoader.js'
+import LoggerService from '../service/loggerService.js'
+import { PROJECT_ROOT } from './projectRoot.js'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Root directory containing per-locale i18n subdirectories (holds date.yaml). */
+const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
 
 // ---------------------------------------------------------------------------
 // Season configuration
@@ -134,6 +153,11 @@ const DURATION_UNIT_MS = Object.freeze({
  * {@link SUN_TIMES} data.
  */
 class STemporal {
+    /** @type {Record<string, unknown>|null} Cached date.yaml bundle (null = not loaded / failed). */
+    #dateBundle = null
+
+    /** @type {string|null} Locale the cached date bundle was loaded for. */
+    #dateBundleLocale = null
 
     // -- Private helpers ----------------------------------------------------
 
@@ -539,6 +563,84 @@ class STemporal {
         const m = String(date.getMonth() + 1).padStart(2, '0')
         const d = String(date.getDate()).padStart(2, '0')
         return `${y}-${m}-${d}`
+    }
+
+    // -- Date i18n ----------------------------------------------------------
+
+    /**
+     * Load (and cache) the per-locale date bundle from `etc/i18n/{locale}/date.yaml`.
+     *
+     * The bundle holds the localized vocabulary this module "owns": day-of-week
+     * names, (genitive) month names, the year word, day-period words, and
+     * duration-unit words. It is re-read whenever the active locale changes
+     * (e.g., after a `/config reload`) and retried on a previous load failure,
+     * so a bundle created after startup is picked up without a restart.
+     *
+     * @returns {Record<string, unknown>|null} The parsed bundle, or null when the
+     *   file is missing or cannot be parsed (callers degrade gracefully).
+     */
+    loadDateBundle() {
+        const locale = I18nLoader.getLocale()
+        if (this.#dateBundle !== null && this.#dateBundleLocale === locale) return this.#dateBundle
+
+        const filePath = path.join(I18N_ROOT, locale, 'date.yaml')
+        try {
+            const doc = yamlParseDocument(fs.readFileSync(filePath, 'utf8'))
+            this.#dateBundle = doc.contents?.toJSON() ?? null
+        } catch (error) {
+            LoggerService.warn(`Failed to load date bundle ${filePath}: ${error.message}`, 'DateHelper')
+            this.#dateBundle = null
+        }
+        this.#dateBundleLocale = locale
+        return this.#dateBundle
+    }
+
+    /**
+     * Resolve the localized date parts for a moment, ready for `{% %}` interpolation.
+     *
+     * Returns the day-of-week name (nominative), the day-of-month number, the
+     * month name (genitive in declension-aware locales such as Polish), the year
+     * number, and the trailing year word (empty in languages without one). Every
+     * field is always present; missing bundle entries degrade to empty strings so
+     * a partially translated bundle never leaks a raw `{% %}` placeholder.
+     *
+     * @param {Date} [date=new Date()] - Moment to format
+     * @returns {{day_name: string, day: string, month_name: string, year: string, year_word: string}}
+     */
+    getDateParts(date = new Date()) {
+        const bundle = this.loadDateBundle() ?? {}
+        const dayNames = Array.isArray(bundle.day_names) ? bundle.day_names : []
+        const monthNames = Array.isArray(bundle.month_names) ? bundle.month_names : []
+        return {
+            day_name: dayNames[date.getDay()] ?? '',
+            day: String(date.getDate()),
+            month_name: monthNames[date.getMonth()] ?? '',
+            year: String(date.getFullYear()),
+            year_word: typeof bundle.year_word === 'string' ? bundle.year_word : '',
+        }
+    }
+
+    /**
+     * Localized day-period words for `{% time_of_day %}`, keyed by the five
+     * period names returned by {@link getCurrentTimePeriod} (morning/noon/
+     * afternoon/evening/night). Moved here from the weatherman bundle so all
+     * date/time vocabulary lives in one place.
+     * @returns {Record<string, string>} Period name to localized word (empty object when unavailable).
+     */
+    getPeriodWords() {
+        const bundle = this.loadDateBundle() ?? {}
+        return (bundle.period_words && typeof bundle.period_words === 'object') ? bundle.period_words : {}
+    }
+
+    /**
+     * Localized duration-unit words for `{% next_interval %}` (day/hour/minute/
+     * second), moved here from the weatherman bundle. Pass the result to
+     * {@link msToHumanPhrase}.
+     * @returns {Record<string, string>} Unit key to localized word (empty object when unavailable).
+     */
+    getDurationUnits() {
+        const bundle = this.loadDateBundle() ?? {}
+        return (bundle.duration_units && typeof bundle.duration_units === 'object') ? bundle.duration_units : {}
     }
 }
 

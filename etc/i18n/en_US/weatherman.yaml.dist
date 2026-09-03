@@ -6,29 +6,23 @@
 # Copy this file to "weatherman.yaml" and customize sentences for your home.
 
 # Opening time-of-day line -- rendered BEFORE the base sentence by buildTimeSentence()
-# on both output paths (AI rewrite and direct TTS). Style is picked by the global
-# stupid_ai_engine switch (AI section of automaton.yaml): explicit (true/default)
-# pre-renders clock parts as plain digits
-# so even tiny models never convert a clock string into words; smart (false) leaves
-# {% time %} for the model to spell out itself.
+# on both output paths (AI rewrite and direct TTS). Clock parts are pre-rendered as
+# plain digits so even tiny models never convert a clock string into words.
 time_sentence:
-  smart:
-    default: 'It is currently {% time %}.'
-  explicit:
-    # Generic frame ("It is 32 minutes past 9 in the morning"); the small model only
-    # inflects forms into natural speech during its rewrite.
-    default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}.'
-    # Exact hour (:00) -- no minutes at all.
-    exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}."
-    # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
+  # Generic frame ("It is 32 minutes past 9 in the morning"); the small model only
+  # inflects forms into natural speech during its rewrite.
+  default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}.'
+  # Exact hour (:00) -- no minutes at all.
+  exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}."
+  # Dated frame -- first run of the day / first run of the session. The calendar date
+  # (from date.yaml) is fused into the clock sentence via {% date %} so the date and the
+  # time read as one grammatical line rather than two separate sentences.
+  dated: 'It is {% date %}, {% minutes %} minutes past {% hours %} {% time_of_day %}.'
+  dated_exact_hour: "It is {% date %}, exactly {% hours %} o'clock {% time_of_day %}."
+  # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
 
-# Localized day-period words for {% time_of_day %}; same pattern as duration_units below.
-period_words:
-  morning: 'in the morning'
-  noon: 'at noon'
-  afternoon: 'in the afternoon'
-  evening: 'in the evening'
-  night: 'at night'
+# NOTE: day-period words ({% time_of_day %}) and duration units ({% next_interval %}) now
+# live in the per-locale date.yaml bundle (owned by the date helper), not here.
 
 base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Finally - before announcing when the next update comes - toss in a short anecdote about what you once pulled off in such weather while completely drunk. Here is the information: '
@@ -44,13 +38,6 @@ ai_message_next: 'Next update in {% next_interval %}.'
 # Posted in the chat window when the AI leg fails or returns nothing -- explains why no
 # rewritten report appears before the raw message is spoken instead.
 ai_fallback_notice: 'The assistant did not answer in time -- reading the plain report instead.'
-
-# Localized unit words for {% next_interval %}.
-duration_units:
-  day: 'days'
-  hour: 'hours'
-  minute: 'minutes'
-  second: 'seconds'
 
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 warning_humid_stay_at_home: 'WARNING: The air is so thick you can barely breathe! Stay indoors!'

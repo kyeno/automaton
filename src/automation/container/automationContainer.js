@@ -190,9 +190,10 @@ class SAutomationContainer {
      * Trigger an automation's execute method by name.
      *
      * @param {string} name - Automation name
-     * @param {{trigger?: string, force?: boolean}} [data={}] - Data passed through to execute().
-     *   `force: true` is honored by automations as "bypass silent period and per-rule
-     *   once-per-day guards"; human-interaction cooldowns still apply either way.
+     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}} [data={}] - Data passed
+     *   through to execute(). `force: true` is honored by automations as "bypass silent period
+     *   and per-rule once-per-day guards"; `forceFirst: true` forces the first-of-day day-position
+     *   (dated opening time line); human-interaction cooldowns still apply either way.
      * @returns {Promise<void>}
      */
     async callAutomation(name, data = {}) {

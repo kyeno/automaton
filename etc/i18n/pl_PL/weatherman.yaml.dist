@@ -6,29 +6,23 @@
 # Copy this file to "weatherman.yaml" and customize sentences for your home.
 
 # Opening time-of-day line -- rendered BEFORE the base sentence by buildTimeSentence()
-# on both output paths (AI rewrite and direct TTS). Style is picked by the global
-# stupid_ai_engine switch (AI section of automaton.yaml): explicit (true/default)
-# pre-renders clock parts as plain digits
-# so even tiny models never convert a clock string into words; smart (false) leaves
-# {% time %} for the model to spell out itself.
+# on both output paths (AI rewrite and direct TTS). Clock parts are pre-rendered as
+# plain digits so even tiny models never convert a clock string into words.
 time_sentence:
-  smart:
-    default: 'Jest godzina {% time %}.'
-  explicit:
-    # Generic frame ("Jest 32 minut po godzinie 9 rano"); the small model only inflects
-    # unit/ordinal forms into natural speech during its rewrite.
-    default: 'Jest {% minutes %} minut po godzinie {% hours %} {% time_of_day %}.'
-    # Exact hour (:00) -- no minutes at all.
-    exact_hour: 'Jest dokładnie godzina {% hours %} {% time_of_day %}.'
-    # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
+  # Generic frame ("Jest 32 minut po godzinie 9 rano"); the small model only inflects
+  # unit/ordinal forms into natural speech during its rewrite.
+  default: 'Jest {% minutes %} minut po godzinie {% hours %} {% time_of_day %}.'
+  # Exact hour (:00) -- no minutes at all.
+  exact_hour: 'Jest dokładnie godzina {% hours %} {% time_of_day %}.'
+  # Dated frame -- first run of the day / first run of the session. The calendar date
+  # (from date.yaml) is fused into the clock sentence via {% date %} so the date and the
+  # time read as one grammatical line rather than two separate sentences.
+  dated: 'Jest {% date %}, {% minutes %} minut po godzinie {% hours %} {% time_of_day %}.'
+  dated_exact_hour: 'Jest {% date %}, dokładnie godzina {% hours %} {% time_of_day %}.'
+  # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
 
-# Localized day-period words for {% time_of_day %}; same pattern as duration_units below.
-period_words:
-  morning: 'rano'
-  noon: 'w południe'
-  afternoon: 'po południu'
-  evening: 'wieczorem'
-  night: 'w nocy'
+# NOTE: day-period words ({% time_of_day %}) and duration units ({% next_interval %}) now
+# live in the per-locale date.yaml bundle (owned by the date helper), not here.
 
 ai_prefix: 'Jesteś radiowym prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób. Godzinę i minuty napisz słownie. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Nie mów, że to ostatnia wiadomość, jeżeli dostajesz informację o następnej aktualizacji. Nie używaj słowa "prognoza" tylko "raport". Nie mów "widzowie" tylko "słuchacze". Na koniec - zanim ogłosisz, kiedy następna informacja - dorzuć krótką anegdotę o tym, co ja kiedyś, najebany w trzy pizdy, odpierdoliłem w taką pogodę. Oto informacje: '
 base: 'Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali.'
@@ -44,13 +38,6 @@ ai_message_next: 'Następna wiadomość za {% next_interval %}.'
 # Posted in the chat window when the AI leg fails or returns nothing -- explains why no
 # rewritten report appears before the raw message is spoken instead.
 ai_fallback_notice: 'Asystent nie zdążył odpowiedzieć -- odczytuję surowy raport.'
-
-# Localized unit words for {% next_interval %}; the model inflects them to fit the number.
-duration_units:
-  day: 'dni'
-  hour: 'godzin'
-  minute: 'minut'
-  second: 'sekund'
 
 # Summer
 warning_hot_day: 'UWAGA: Jest gorąco. Nie przebywaj zbyt długo na zewnątrz.'
