@@ -11,7 +11,7 @@
  */
 'use strict'
 
-import { exec } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 import CacheService from '../service/cacheService.js'
@@ -38,16 +38,19 @@ const ARPING_TIMEOUT_MS = 5_000
 const CACHE_TTL_SECONDS = 60
 
 /**
- * Arping count flag -- send exactly one packet.
- * @type {string}
+ * Arping arguments -- exactly one packet, 3 second wait. Passed as an array so
+ * config-sourced IP addresses can never be interpreted as shell syntax.
+ * @type {string[]}
  */
-const ARPING_COUNT = '-c 1'
+const ARPING_ARGS = ['-c', '1', '-w', '3']
 
 /**
- * Arping wait timeout flag -- 3 second wait.
- * @type {string}
+ * Validation pattern for ping targets: strict IPv4 (octets 0-255) or a
+ * hostname (RFC-1123-style labels). Anything else is rejected before it can
+ * reach a child process.
+ * @type {RegExp}
  */
-const ARPING_WAIT = '-w 3'
+const PING_TARGET_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*)$/i
 
 /**
  * Cache value representing an online device.
@@ -89,6 +92,13 @@ class SNetworkPresence {
      * @type {NodeJS.Timer|null}
      */
     #timer = null
+
+    /**
+     * Ping targets already warned about -- malformed addresses warn once
+     * instead of spamming on every sweep.
+     * @type {Set<string>}
+     */
+    #warnedAddresses = new Set()
 
     // -- Singleton --------------------------------------------------------
 
@@ -227,14 +237,28 @@ class SNetworkPresence {
         const cacheKey = `network:${category}:${deviceName}`
         const oldState = await CacheService.get(cacheKey)
 
+        // Reject anything that is not a plain IPv4 address or hostname before
+        // it can reach a child process (config-sourced value).
+        if (!PING_TARGET_RE.test(String(ipAddress).trim())) {
+            const warnKey = `${category}/${deviceName}`
+            if (!this.#warnedAddresses.has(warnKey)) {
+                this.#warnedAddresses.add(warnKey)
+                LoggerService.warn(
+                    `Skipping network device "${deviceName}" (${category}): "${ipAddress}" is not a valid IP address or hostname`,
+                    'NetworkPresence'
+                )
+            }
+            return
+        }
+
         try {
             // First arping attempt -- may fail due to ARP cache suppression.
-            await execPromise(`arping ${ARPING_COUNT} ${ARPING_WAIT} ${ipAddress}`, { timeout: ARPING_TIMEOUT_MS })
+            await execFilePromise('arping', [...ARPING_ARGS, ipAddress], { timeout: ARPING_TIMEOUT_MS })
             await this.#markDevice(cacheKey, deviceName, ipAddress, STATE_ONLINE, oldState)
         } catch {
             // Retry once -- second chance for devices that dropped the first packet.
             try {
-                await execPromise(`arping ${ARPING_COUNT} ${ARPING_WAIT} ${ipAddress}`, { timeout: ARPING_TIMEOUT_MS })
+                await execFilePromise('arping', [...ARPING_ARGS, ipAddress], { timeout: ARPING_TIMEOUT_MS })
                 await this.#markDevice(cacheKey, deviceName, ipAddress, STATE_ONLINE, oldState)
             } catch {
                 // Device did not respond after two attempts.
@@ -327,10 +351,12 @@ class SNetworkPresence {
 // ---------------------------------------------------------------------------
 
 /**
- * Promise-based wrapper around child_process.exec for arping commands.
+ * Promise-based wrapper around child_process.execFile for arping commands.
+ * execFile (unlike exec) never routes through a shell, so config-sourced
+ * values cannot be interpreted as shell syntax.
  * @type {Function}
  */
-const execPromise = promisify(exec)
+const execFilePromise = promisify(execFile)
 
 // Singletonize and export to Node.js.
 const NetworkPresence = new SNetworkPresence()

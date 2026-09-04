@@ -5,7 +5,9 @@
 - Add WiFi and WiFi devices support
 - Add crypto price monitor
 - CONSIDER: Add "hooks" - http endpoints (vs mqtt events?) to control certain devices?
-  F.e. support HTPC video player play/pause hooks to enable/disable ambient lights
+  DONE (via polling, not hooks): HTPC/bedroom video player state now drives ambient lights
+  through VideoPlayerMonitor + `videoPlayer` rule conditions (Home Theater Mode). LATER:
+  revisit push hooks as a lower-latency alternative to the 4s polling sweep
   LATER: Add timeseries database for state history (sensors, monitors)
 - LATER: Postpone automations so they don't fire all at once
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented

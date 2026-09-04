@@ -45,6 +45,14 @@ const MAX_SETTABLE_INTERVAL_MS = 0x7FFFFFFF
  */
 export default class AutomationBase {
 
+    /**
+     * When true, this automation bypasses the human-interaction cooldown check
+     * for all of its target devices. Default is false (cooldowns always apply).
+     * Set via the `override_human_interaction` config key or the setter.
+     * @type {boolean}
+     */
+    #overrideHumanInteraction = false
+
     // -- Constructor --------------------------------------------------------
 
     /**
@@ -60,6 +68,26 @@ export default class AutomationBase {
         this._initialized = false   // guard against double init() calls
         this._timer = null          // setInterval handle
         this._unsubscribes = []     // stored unsubscribe functions for cleanup
+        this.#overrideHumanInteraction = Boolean(config?.override_human_interaction)
+    }
+
+    /**
+     * Set whether this automation overrides the human-interaction cooldown.
+     * When enabled, the automation's commands are dispatched even if a target
+     * device has a recent human-interaction cooldown active.
+     *
+     * @param {boolean} value - true to bypass cooldowns, false to respect them
+     */
+    setOverrideHumanInteraction(value) {
+        this.#overrideHumanInteraction = Boolean(value)
+    }
+
+    /**
+     * Whether this automation overrides the human-interaction cooldown.
+     * @returns {boolean} true if cooldowns are bypassed for this automation's targets
+     */
+    getOverrideHumanInteraction() {
+        return this.#overrideHumanInteraction
     }
 
     // -- Lifecycle ----------------------------------------------------------
@@ -113,8 +141,8 @@ export default class AutomationBase {
 
     /**
      * Return a list of EventBus topics this automation wants to react to.
-     * Reads `triggers_zigbee` and `triggers_network` arrays from config.
-     * Subclasses with custom trigger logic can override.
+     * Reads `triggers_zigbee`, `triggers_network`, and `triggers_video` arrays
+     * from config. Subclasses with custom trigger logic can override.
      *
      * @return {string[]} Array of topic strings to subscribe to
      */
@@ -130,6 +158,12 @@ export default class AutomationBase {
         if (Array.isArray(this.config?.triggers_network)) {
             for (const name of this.config.triggers_network) {
                 topics.push(`network:${name}`)
+            }
+        }
+
+        if (Array.isArray(this.config?.triggers_video)) {
+            for (const name of this.config.triggers_video) {
+                topics.push(`videoPlayer:${name}`)
             }
         }
 

@@ -26,6 +26,7 @@ import { slugify } from '../../lib/string.js'
 
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import networkPresence from '../../monitor/networkPresence.js'
+import videoPlayerMonitor from '../../monitor/videoPlayerMonitor.js'
 
 import AutomationBase from './automationBase.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
@@ -43,6 +44,23 @@ const CONTEXT_FAILURE_ESCALATION_THRESHOLD = 5
  */
 const ONCE_MARKER_TTL_SECONDS = 172_800
 
+/**
+ * TTL for state-aware-restore snapshots in Redis (12 hours, seconds). A
+ * snapshot records that a device was on when this automation turned it off;
+ * the TTL only keeps forgotten entries self-cleaning.
+ * @type {number}
+ */
+const RESTORE_SNAPSHOT_TTL_SECONDS = 43_200
+
+/**
+ * Explicit condition token for an unknown player state (host offline, or the
+ * monitor has not determined a status yet). Unlike real statuses it must be
+ * listed explicitly: an unknown status matches ONLY condition lists that
+ * include this token, so rules decide whether an unknown state is "safe to
+ * act on" (ambient restore, ownership hand-back) or not (playback).
+ */
+const VIDEO_PLAYER_UNKNOWN = 'unknown'
+
 export default class RuleBasedAutomationBase extends AutomationBase {
     /**
      * Consecutive context-build failure count for log-level escalation.
@@ -50,6 +68,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @type {number}
      */
     #contextFailCount = 0
+
+    /**
+     * In-memory restore snapshots for state-aware restore, keyed by target id.
+     * Redis mirrors them so snapshots survive a restart; the map is the
+     * authoritative fast path.
+     * @type {Map<string, boolean>}
+     */
+    #restoreMemory = new Map()
 
     /**
      * Construct a rule-based automation.
@@ -177,11 +203,30 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
+        // video player status check
+        if (conditions.videoPlayer !== undefined) {
+            const expected = this.#normalizeVideoPlayerCondition(conditions.videoPlayer)
+            for (const [host, statuses] of Object.entries(expected)) {
+                const status = await videoPlayerMonitor.getStatus(host)
+                if (!status) {
+                    // Unknown host (offline / not yet swept): matches ONLY lists that
+                    // explicitly accept the 'unknown' token. Rules that must act on an
+                    // unknown state opt in (ambient restore, ownership hand-back);
+                    // everything else -- in particular playback requirements -- stays
+                    // inert so no dark-mode action can fire on a guess.
+                    return statuses.includes(VIDEO_PLAYER_UNKNOWN)
+                }
+                if (!statuses.includes(status)) {
+                    return false
+                }
+            }
+        }
+
         // Dynamic: any remaining condition key -> numeric range check against context.
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'season' || key === 'presence') continue // handled above
+            if (key === 'time-of-day' || key === 'season' || key === 'presence' || key === 'videoPlayer') continue // handled above
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -293,8 +338,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             const dev = device
 
             tasks.push(async () => {
-                // Skip recently touched devices (Redis-only check)
-                if (await this.checkAndLogHumanInteraction(dev)) {
+                // Skip recently touched devices (Redis-only check), unless this
+                // automation overrides the human-interaction cooldown (e.g., home theater mode).
+                if (!this.getOverrideHumanInteraction() && await this.checkAndLogHumanInteraction(dev)) {
                     humanSkippedCount++
                     return
                 }
@@ -333,7 +379,18 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 const result = this.resolveCommand(dev, tk, matchingRules)
                 if (!result || result.skip) return
 
-                const payload = result.payload
+                let payload = result.payload
+                // State-aware restore (opt-in via `restore_state_aware`): only
+                // re-assert ON for lights this automation turned off from an
+                // on-state; skip everything else it does not remember.
+                if (this.getRestoreStateAware()) {
+                    // The first matching rule that commands this target owns the
+                    // decision; its `force_restore` flag marks "always on" lights.
+                    const owner = matchingRules.find((rule) => rule.targets?.[tk] !== undefined)
+                    payload = await this.#applyRestoreAwareness(dev, tk, payload, owner?.force_restore === true)
+                    if (!payload) return
+                }
+
                 this.log(`${dev.getName()} -> ${JSON.stringify(payload)}`)
                 dev.receiveCommand(payload, DeviceCommandSource.AUTOMATION)
                 dispatchedCount++
@@ -493,9 +550,227 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         throw new NotImplementedError('resolveCommand() must be implemented by subclass')
     }
 
+    /**
+     * Switches-style resolveCommand implementation: the first matching rule
+     * that defines a command for the target wins. ON/OFF become `{state}`
+     * payloads, OPEN/CLOSE become bare state strings, and numeric values
+     * become `{position}` payloads.
+     *
+     * @param {DeviceBase} device - Target device (unused; present for
+     *   resolveCommand signature parity)
+     * @param {string} targetId - Identifier of the target (from config.targets[].id)
+     * @param {{}[]} matchingRules - Rules whose conditions matched
+     * @returns {{payload: object|string}|null} Object with payload, or null
+     *   when no matching rule defines a command for the target
+     */
+    simpleResolveCommand(device, targetId, matchingRules) {
+        let command = null
+        for (const rule of matchingRules) {
+            const cmd = rule.targets?.[targetId]
+            if (cmd !== undefined) {
+                command = cmd
+                break
+            }
+        }
+
+        if (command === null || command === undefined) return null
+
+        const upper = String(command).toUpperCase()
+        if (upper === 'ON' || upper === 'OFF') {
+            return { payload: { state: upper } }
+        }
+        if (upper === 'OPEN' || upper === 'CLOSE') {
+            return { payload: upper }
+        }
+        return { payload: { position: Number(command) } }
+    }
+
+    /**
+     * Whether this automation uses state-aware restore: lights are only
+     * re-asserted ON when this automation itself turned them off from an
+     * on-state. Read live from the `restore_state_aware` config key so the
+     * config can also be injected after construction (tests).
+     * @returns {boolean}
+     */
+    getRestoreStateAware() {
+        return Boolean(this.config?.restore_state_aware)
+    }
+
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * Read a device's last cached state in a normalized shape.
+     * @private
+     * @param {DeviceBase} device - Target device
+     * @returns {{state: string|null, position: number|null}|null} Normalized
+     *   state, or null when nothing is cached yet
+     */
+    #readDeviceState(device) {
+        const last = typeof device?.getStateLast === 'function' ? device.getStateLast() : null
+        if (!last || typeof last !== 'object') return null
+        if (typeof last.state === 'string') {
+            return {
+                state: last.state.toUpperCase(),
+                position: Number.isFinite(last.position) ? last.position : null
+            }
+        }
+        if (Number.isFinite(last.position)) return { state: null, position: last.position }
+        return null
+    }
+
+    /**
+     * Whether a switch-style device is currently on.
+     * @private
+     * @param {DeviceBase} device - Target device
+     * @returns {boolean}
+     */
+    #deviceIsOn(device) {
+        return this.#readDeviceState(device)?.state === 'ON'
+    }
+
+    /**
+     * Whether a roller device is currently (partially) open.
+     * @private
+     * @param {DeviceBase} device - Target device
+     * @returns {boolean}
+     */
+    #deviceIsOpen(device) {
+        const known = this.#readDeviceState(device)
+        if (!known) return false
+        if (Number.isFinite(known.position)) return known.position > 0
+        return known.state === 'OPEN'
+    }
+
+    /**
+     * Redis key for a target's restore snapshot.
+     * @private
+     * @param {string} targetId - Target identifier
+     * @returns {string}
+     */
+    #restoreSnapshotKey(targetId) {
+        return `auto:${this.name}:restore:${targetId}`
+    }
+
+    /**
+     * Fetch a restore snapshot. The key exists only when the device was on
+     * before this automation turned it off; null means "no memory".
+     * In-memory map first; Redis hydrates it after a restart.
+     * @private
+     * @param {string} targetId - Target identifier
+     * @returns {Promise<boolean|null>} true (was on), or null (no memory)
+     */
+    async #getRestoreSnapshot(targetId) {
+        if (this.#restoreMemory.has(targetId)) return this.#restoreMemory.get(targetId)
+        try {
+            const stored = await CacheService.get(this.#restoreSnapshotKey(targetId))
+            if (stored === true) {
+                this.#restoreMemory.set(targetId, true)
+                return true
+            }
+        } catch (_) {
+            // Cache unavailable -- memory-only snapshots still apply.
+        }
+        return null
+    }
+
+    /**
+     * Record that a device was on when this automation turned it off
+     * (memory + best-effort Redis with a self-cleaning TTL).
+     * @private
+     * @param {string} targetId - Target identifier
+     * @returns {Promise<void>}
+     */
+    async #rememberRestoreSnapshot(targetId) {
+        this.#restoreMemory.set(targetId, true)
+        try {
+            await CacheService.set(this.#restoreSnapshotKey(targetId), true, RESTORE_SNAPSHOT_TTL_SECONDS)
+        } catch (_) {
+            // Best-effort persistence; the in-memory snapshot still applies.
+        }
+    }
+
+    /**
+     * Consume a restore snapshot after it has been acted on.
+     * @private
+     * @param {string} targetId - Target identifier
+     * @returns {Promise<void>}
+     */
+    async #clearRestoreSnapshot(targetId) {
+        this.#restoreMemory.delete(targetId)
+        try {
+            await CacheService.delete(this.#restoreSnapshotKey(targetId))
+        } catch (_) {
+            // Best-effort; the in-memory snapshot is cleared regardless.
+        }
+    }
+
+    /**
+     * State-aware gate for dispatched commands (only active when
+     * `restore_state_aware` is on). Also suppresses provable no-ops so the
+     * sticky re-assert ticks do not spam MQTT with redundant commands.
+     *
+     * Light (switch) payloads:
+     *   - OFF: skipped when the device is already known-off; otherwise
+     *     dispatched, remembering "was on" so a later ON can restore it.
+     *   - ON: dispatched only when the snapshot says this automation turned
+     *     the light off from an on-state (consuming it) -- or when the owning
+     *     rule sets `force_restore: true` ("always on" ambient lights).
+     *     Already-on devices are skipped as no-ops; without memory and
+     *     without force the command is skipped, leaving lights the automation
+     *     did not turn off to the automations that own them.
+     *
+     * Roller payloads:
+     *   - CLOSE: skipped when already known-closed; otherwise dispatched,
+     *     remembering "was open" when it closed from an open state.
+     *   - OPEN: dispatched only to undo a close this automation performed
+     *     itself (ownership hand-back); never opens blinds it found closed.
+     *
+     * @private
+     * @param {DeviceBase} device - Target device
+     * @param {string} targetId - Target identifier
+     * @param {object|string} payload - Resolved command payload
+     * @param {boolean} forceRestore - Owning rule sets `force_restore: true`
+     * @returns {Promise<object|string|null>} Payload to dispatch, or null to skip
+     */
+    async #applyRestoreAwareness(device, targetId, payload, forceRestore) {
+        // Light (switch) payloads.
+        if (payload && typeof payload === 'object' && typeof payload.state === 'string') {
+            const upper = payload.state.toUpperCase()
+            if (upper === 'OFF') {
+                if (this.#readDeviceState(device)?.state === 'OFF') return null // no-op
+                if (this.#deviceIsOn(device)) await this.#rememberRestoreSnapshot(targetId)
+                return payload
+            }
+            if (upper === 'ON') {
+                const wasOn = await this.#getRestoreSnapshot(targetId)
+                if (wasOn === true) await this.#clearRestoreSnapshot(targetId)
+                if (this.#deviceIsOn(device)) return null // no-op
+                if (wasOn === true || forceRestore) return payload
+                this.log(`${device.getName()}: not restoring (was not on before dark mode)`, 'debug')
+                return null
+            }
+            return payload
+        }
+
+        // Roller payloads.
+        if (payload === 'CLOSE' || payload === 'OPEN') {
+            if (payload === 'CLOSE') {
+                const known = this.#readDeviceState(device)
+                if (known && (known.position === 0 || known.state === 'CLOSE')) return null // no-op
+                if (this.#deviceIsOpen(device)) await this.#rememberRestoreSnapshot(targetId)
+                return payload
+            }
+            if ((await this.#getRestoreSnapshot(targetId)) === true) {
+                await this.#clearRestoreSnapshot(targetId)
+                return payload
+            }
+            return null
+        }
+
+        return payload
+    }
 
     /**
      * Check whether an `once` rule has already consumed today's action slot.
@@ -591,5 +866,23 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         // Already an object
         return presence
+    }
+
+    /**
+     * Normalize a video-player condition to an object of { host: string[] } pairs.
+     * Supported formats:
+     *   { htpc: 'playing' }            -> { htpc: ['playing'] }
+     *   { htpc: ['playing', 'paused'] } -> { htpc: ['playing', 'paused'] }
+     *
+     * @private
+     * @param {Object} videoPlayer - Raw condition value from YAML (host -> status or status list)
+     * @returns {Object} Map of host name to array of accepted statuses
+     */
+    #normalizeVideoPlayerCondition(videoPlayer) {
+        const result = {}
+        for (const [host, value] of Object.entries(videoPlayer ?? {})) {
+            result[host] = Array.isArray(value) ? value : [value]
+        }
+        return result
     }
 }

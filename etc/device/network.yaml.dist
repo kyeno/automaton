@@ -19,3 +19,28 @@ ac:
 appliances:
   # Smart appliances tracked on the network
   # - "Appliance Name": 0.0.0.0
+
+# Video players polled by the VideoPlayerMonitor. Each entry is an object
+# (NOT a bare IP string) so NetworkPresence does not treat it as a ping target.
+# `parser` selects the response parser:
+#   vlc -- VLC HTTP API (http://<host>:<port>/requests/status.json, JSON)
+#   mpc -- MPC-HC web interface (http://<host>:<port>/variables.html; parsing
+#          verified against MPC-HC 1.9.16.63, expected to hold for 1.9.x)
+# For MPC-HC, enable the web interface via View -> Options -> Player ->
+# Web Interface: turn on "Listen on port" and turn off "Allow access from
+# localhost only". The compression setting does not matter (the built-in HTTP
+# client decompresses transparently).
+videoPlayers:
+  # my-pc:
+  #   host: 0.0.0.0
+  #   port: 8080
+  #   path: /requests/status.json
+  #   parser: vlc
+  #   # VLC requires a password (Lua HTTP Password); sent as basic auth:
+  #   # username: ''
+  #   # password: 'your-vlc-password'
+  # living-room:
+  #   host: 0.0.0.0
+  #   port: 13579
+  #   path: /variables.html
+  #   parser: mpc

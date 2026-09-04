@@ -28,6 +28,7 @@ import AutomationContainer from './automation/container/automationContainer.js'
 import InteractionContainer from './interaction/container/interactionContainer.js'
 
 import NetworkPresence from './monitor/networkPresence.js'
+import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
 
 import AiAssistant     from './ai/aiAssistant.js'
 import TtsService      from './service/ttsService.js'
@@ -216,6 +217,20 @@ async function gracefulDeath(reason, errorLevel = 0) {
         }
 
         // ---------------------------------------------------------------
+        // Phase 1b -- Stop network monitors (presence + video players) so
+        // no further EventBus events fire during teardown.
+        // ---------------------------------------------------------------
+        if (initialized.has('NetworkPresence')) {
+            LoggerService.debug('Stopping NetworkPresence...', 'Main')
+            NetworkPresence.stop()
+        }
+
+        if (initialized.has('VideoPlayerMonitor')) {
+            LoggerService.debug('Stopping VideoPlayerMonitor...', 'Main')
+            VideoPlayerMonitor.stop()
+        }
+
+        // ---------------------------------------------------------------
         // Phase 2 -- Unsubscribe devices from MQTT topics.
         // MUST happen while MqttService is still connected so the broker
         // receives proper UNSUBSCRIBE packets before we disconnect.
@@ -366,6 +381,7 @@ async function bootstrap() {
     await initService('AutomationContainer', () => AutomationContainer.init())
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('NetworkPresence', () => NetworkPresence.init())
+    await initService('VideoPlayerMonitor', () => VideoPlayerMonitor.init())
 
     // AI Assistant -- optional; skipped entirely when unconfigured so startup logs
     // reflect reality instead of claiming a disabled service initialized.

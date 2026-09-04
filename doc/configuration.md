@@ -249,6 +249,37 @@ computers:
 
 Each host is pinged via `arping` to detect presence on the local network. The short name (e.g., `hostname1`) is used as a key in automation rules.
 
+#### Video Players (`videoPlayers`)
+
+Polls media players over their HTTP APIs (every 4 seconds) and exposes a normalized status (`playing`, `paused`, `stopped`, `unreachable`) to rules via the `videoPlayer` condition. Each entry is an object -- **not** a bare IP string -- so NetworkPresence does not treat it as a ping target:
+
+```yaml
+videoPlayers:
+  hostname1:
+    host: 192.168.1.10
+    port: 8080
+    path: /requests/status.json
+    parser: vlc
+  hostname2:
+    host: 192.168.1.11
+    port: 13579
+    path: /variables.html
+    parser: mpc
+```
+
+| `parser` | Player | Endpoint |
+|----------|--------|----------|
+| `vlc` | VLC HTTP interface | `/requests/status.json` (JSON) |
+| `mpc` | MPC-HC web interface | `/variables.html` (HTML) |
+
+Notes:
+
+- For MPC-HC, enable the web interface via *View -> Options -> Player -> Web Interface*: open a movie, turn on **"Listen on port"** and turn off **"Allow access from localhost only"**. The compression setting does not matter -- responses are decompressed transparently. Parsing is verified against MPC-HC **1.9.16.63** and expected to hold for the 1.9.x series; other versions warn once and keep parsing.
+- For VLC, set a password in *Tools -> Preferences (All) -> Interface -> Main interfaces -> Lua -> Lua HTTP Password* and configure optional `username` / `password` keys on the player entry (sent as basic auth).
+- Requests time out after 500 ms (players are LAN-local and answer in single-digit milliseconds); override per player with a `timeout_ms` key.
+- A player host that is also listed under a ping category (e.g. `computers`) is not polled while that host is known to be offline; hosts absent from every ping category are polled directly.
+- Status changes publish `videoPlayer:<host>` EventBus events -- subscribe automations via `triggers_video`.
+
 ---
 
 ## 4. Automation Rules (`etc/automation/*.yaml`)
@@ -357,6 +388,26 @@ If omitted entirely, automations run normally with no silence period applied.
 | `gte` | Greater than or equal | `{ gte: 25 }` |
 
 Multiple operators on the same field create a range: `{ gt: 1800, lte: 11000 }`.
+
+### Video Player Conditions
+
+The optional `videoPlayer` condition gates a rule on media-player status (see `videoPlayers` under Network Hosts). Values accept a single status or a list per host:
+
+```yaml
+conditions:
+  videoPlayer:
+    hostname1: [paused, stopped, unreachable]   # "not actively playing"
+    hostname2: playing                          # single value shorthand
+```
+
+An **unknown** player status (host offline or not yet polled) matches ONLY condition lists that explicitly include the `unknown` token -- each rule decides whether an unknown state is safe to act on. Typical patterns:
+
+- Ambient-restore rules: `[paused, stopped, unreachable, unknown]`. Keep `presence` on light rules so a machine that is simply switched off restores nothing.
+- Ownership hand-back guards: `[unknown, unreachable]` -- the player-room roller automations stand down while the player answers HTTP (any state) and resume when it does not.
+
+`triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
+
+With `restore_state_aware: true` (automation level), dispatched commands are state-aware and provable no-ops are suppressed: ON is re-asserted only for lights the automation itself turned off from an on-state, and OPEN only for rollers it closed from an open state. A rule can mark its targets as unconditional with `force_restore: true` -- e.g. dim "bathroom/snack" lights that should always come back on pause. Lights that were already off before dark mode are never forced back on -- the automations that normally own them decide that.
 
 ### Daily Once Markers (`once`)
 

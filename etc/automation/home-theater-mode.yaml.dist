@@ -1,0 +1,105 @@
+# Presence-gated video-player automation (distribution template).
+#
+# While a player answers HTTP (any state -- playing, paused or stopped), the
+# room's rollers are closed; when the player is gone (machine off or player
+# closed), they are handed back to their default automations. When a video is
+# actively playing, interfering lights are switched off (dark mode); on
+# pause/stop the ambient lights come back -- the "always on" ones directly,
+# the rest only if they were on before dark mode.
+#
+# Requires video players defined under `videoPlayers` in etc/device/network.yaml
+# (see the MPC-HC / VLC setup notes there).
+#
+# The automation opts into `override_human_interaction` so it is "sticky" while
+# active: manual changes to its target devices are re-corrected on the next tick
+# rather than being deferred to a human-interaction cooldown.
+
+override_human_interaction: true
+
+# Restore lights only when this automation turned them off from an on-state.
+# Lights that were already off before dark mode are never forced back on --
+# the automations that normally own them decide that.
+restore_state_aware: true
+
+targets:
+  # Replace with your own Zigbee device names (must exist in zigbee.yaml).
+  # --- Living room -- interfering lights / rollers ---
+  - name: 'Living Room Plug'
+    id: theater_living_room_plug
+  - name: 'Living Room Roller Left'
+    id: theater_living_room_roller_left
+  # --- Bedroom -- lights / rollers ---
+  - name: 'Bedroom Plug'
+    id: theater_bedroom_plug
+  - name: 'Bedroom Roller Left'
+    id: theater_bedroom_roller_left
+
+# Player host names as configured under `videoPlayers` in network.yaml.
+triggers_video:
+  - my-pc
+  - laptop
+
+triggers_network:
+  - my-pc
+  - laptop
+
+# Safety net: re-evaluate periodically in case an event trigger is missed.
+timer_interval: '30s'
+
+rules:
+  # Rollers: owned while the player answers HTTP (any state); handed back when
+  # it is gone. Hand-back re-opens only rollers this automation closed itself.
+  - name: 'Living room: player reachable - close rollers'
+    conditions:
+      videoPlayer: { my-pc: [playing, paused, stopped] }
+    targets:
+      theater_living_room_roller_left: CLOSE
+
+  - name: 'Living room: player gone - hand rollers back'
+    conditions:
+      videoPlayer: { my-pc: [unknown, unreachable] }
+    targets:
+      theater_living_room_roller_left: OPEN
+
+  - name: 'Bedroom: player reachable - close rollers'
+    conditions:
+      videoPlayer: { laptop: [playing, paused, stopped] }
+    targets:
+      theater_bedroom_roller_left: CLOSE
+
+  - name: 'Bedroom: player gone - hand rollers back'
+    conditions:
+      videoPlayer: { laptop: [unknown, unreachable] }
+    targets:
+      theater_bedroom_roller_left: OPEN
+
+  # Lights: keep `presence` on the light rules -- a machine that is simply
+  # switched off must not restore anything.
+  - name: 'Bedroom: not playing - always-on ambient lights'
+    conditions:
+      presence: { laptop: true }
+      videoPlayer: { laptop: [paused, stopped, unreachable, unknown] }
+    force_restore: true
+    targets:
+      theater_bedroom_plug: ON
+
+  - name: 'Bedroom: playing - dark mode'
+    conditions:
+      presence: { laptop: true }
+      videoPlayer: { laptop: [playing] }
+    targets:
+      theater_bedroom_plug: OFF
+
+  - name: 'Living room: not playing - restore lights (state-aware)'
+    conditions:
+      presence: { my-pc: true }
+      videoPlayer: { my-pc: [paused, stopped, unreachable, unknown] }
+    targets:
+      theater_living_room_plug: ON
+
+  - name: 'Living room: playing - dark mode'
+    conditions:
+      presence: { my-pc: true }
+      videoPlayer: { my-pc: [playing] }
+    targets:
+      theater_living_room_plug: OFF
