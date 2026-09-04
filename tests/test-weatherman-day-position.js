@@ -282,9 +282,34 @@ console.log('\n── computeDayPosition() ──\n')
     assert(lines.at(-1) === expectedCloser, `NEXT: closer resolves to "${expectedCloser}"`)
     assert(!out.includes('{%'), 'NEXT: placeholder fully interpolated')
 
-    // FIRST suppresses the closer even when a next interval is known.
+    // FIRST now announces the next update too: the opener stays and the resolved closer is
+    // appended after the message (a next tick is known here). LAST still suppresses it.
     out = wm.buildAiPrompt(CORE, { isFirst: true, nextIntervalMs: I })
-    assert(out.includes(bundle.ai_message_first) && !out.includes(String(bundle.ai_message_next)), 'FIRST+next: opener only, no closer')
+    lines = out.split('\n')
+    assert(lines.includes(bundle.ai_message_first), 'FIRST+next: opener still present')
+    assert(out.endsWith(expectedCloser), 'FIRST+next: closer now appended after the message')
+    assert(!out.includes('{%'), 'FIRST+next: placeholder fully interpolated')
+
+    // LAST keeps suppressing the closer even when a next interval is known.
+    out = wm.buildAiPrompt(CORE, { isLast: true, nextIntervalMs: I })
+    assert(!out.includes(expectedCloser), 'LAST+next: closer suppressed on the last run')
+
+    // Direct-TTS path speaks every day-position marker minus the creative ai_prefix.
+    const directFirst = wm.buildDirectTtsText(CORE, { isFirst: true, nextIntervalMs: I })
+    assert(directFirst.startsWith(bundle.ai_message_first), 'DIRECT-FIRST: starts with opener')
+    assert(directFirst.endsWith(expectedCloser), 'DIRECT-FIRST: ends with next-update closer')
+    assert(!directFirst.startsWith(String(bundle.ai_prefix)), 'DIRECT: never reads the creative ai_prefix aloud')
+
+    const directLast = wm.buildDirectTtsText(CORE, { isLast: true })
+    assert(directLast.startsWith(bundle.ai_message_last), 'DIRECT-LAST: starts with the last marker')
+    assert(!directLast.endsWith(expectedCloser), 'DIRECT-LAST: no next-update closer on the last run')
+    assert(directLast.includes(CORE), 'DIRECT-LAST: still includes the base message')
+
+    const directMiddle = wm.buildDirectTtsText(CORE, { nextIntervalMs: I })
+    assert(directMiddle.endsWith(expectedCloser), 'DIRECT-MIDDLE: middle run gets the closer')
+
+    const directNoMeta = wm.buildDirectTtsText(CORE)
+    assert(directNoMeta === CORE.trim(), 'DIRECT-NOMETA: no meta → just the base message')
 
     await wm.cleanup()   // stop the timer started by init() so the process can exit
 }

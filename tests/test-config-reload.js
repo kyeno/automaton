@@ -334,8 +334,9 @@ console.log('\n\u2500\u2500 reload: full subsystem refresh after initialization 
         assertEqual(I18nLoader.getTimeFormat(), '12h', 'unchanged time_format preserved through the swap')
 
         // Data-driven expectation: read whichever voice the en_US bundle currently ships so the
-        // suite survives voice swaps in etc/i18n/en_US/tts.yaml without test churn.
-        const enModel = String(/^model:\s*"?([^"\r\n]+)"?\s*$/m.exec(
+        // suite survives voice swaps (and trailing comments) in etc/i18n/en_US/tts.yaml without
+        // test churn. The value is the first non-quote/space/hash token after "model:".
+        const enModel = String(/^model:\s*"?([^"\s#]+)"?/m.exec(
             fs.readFileSync(path.join(I18N_ROOT, 'en_US', 'tts.yaml'), 'utf8'))?.[1] ?? '')
         assert(Boolean(enModel), 'en_US tts.yaml exposes an active model for the switch assertion')
         assert(out.includes(`TTS now enabled, model=${enModel}`), 'TTS template followed the new locale directory')

@@ -204,6 +204,21 @@ console.log('── execute(): both-off guard ──\n')
     const originalAiAvailable = aiProto.isAvailable
     const originalTtsEnabled = ttsProto.isEnabled
 
+    // Stub the wall clock to a mid-session instant (15:00, outside the default
+    // 02:30-10:30 silence window) so the non-forced AI-only / TTS-only runs below are
+    // not suppressed by the silent-period guard. Without this, those two assertions
+    // depend on the real time of day and the suite is flaky (same pattern as section G).
+    const OriginalDate = global.Date
+    class FakeDate extends OriginalDate {
+        constructor(...args) {
+            if (args.length === 0) super(2026, 8 /* September */, 1, 15, 0, 0, 0)
+            else super(...args)
+        }
+        static now() { return new FakeDate().getTime() }
+    }
+    Object.setPrototypeOf(FakeDate.prototype, OriginalDate.prototype)
+    global.Date = FakeDate
+
     try {
         // Both unavailable → the run is skipped before any context build or emission.
         aiProto.isAvailable = () => false
@@ -230,6 +245,7 @@ console.log('── execute(): both-off guard ──\n')
     } finally {
         aiProto.isAvailable = originalAiAvailable
         ttsProto.isEnabled = originalTtsEnabled
+        global.Date = OriginalDate
         for (const unsub of unsubs) unsub()
         await wm.cleanup()
     }

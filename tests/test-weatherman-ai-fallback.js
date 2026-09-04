@@ -142,6 +142,16 @@ try {
     assert(seen.periodic.length === 1 && seen.periodic[0].text === NICE, 'rewritten report surfaced once in chat window')
     assert(seen.tts.length === 0, 'routeThroughAi does not re-speak a reply AiAssistant already voiced')
     assert(seen.system.length === 0, 'no failure notice on the happy path')
+
+    // F. AI-failed fallback carries the same day-position markers as the direct-TTS path
+    console.log('── F. AI-failed fallback carries day-position markers ──')
+    resetSeen()
+    stubAi(new Error('boom'))
+    await wm.routeThroughAi('PROMPT X', RAW, {}, { isFirst: true, nextIntervalMs: 3600000 })
+    assert(seen.tts.length === 1, 'fallback still speaks exactly once')
+    assert(seen.tts[0].text.startsWith(bundle.ai_message_first), 'fallback opener matches the direct-TTS path')
+    assert(seen.tts[0].text !== RAW, 'fallback is no longer the bare raw message when markers apply')
+    assert(!seen.tts[0].text.startsWith(String(bundle.ai_prefix)), 'fallback never reads the creative ai_prefix aloud')
 } finally {
     restoreAi()
     for (const unsub of unsubs) unsub()

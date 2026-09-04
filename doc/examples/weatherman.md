@@ -21,7 +21,7 @@ When routing through AI, each announcement is positioned within its **daily sess
 | first | Run happened less than one timer interval after the session began | Opening line after `ai_prefix`, before the message |
 | last | Session ends less than one timer interval after this run | Same opening-line slot |
 | only | Both (session shorter than the timer interval) | Same slot; takes priority over first/last |
-| next | Neither first nor last | Closing line *after* the message, containing `{% next_interval %}` |
+| next | Not the last update | Closing line *after* the message, containing `{% next_interval %}` |
 
 Because timer ticks are spaced at least one interval apart even across process restarts (`setInterval` re-anchors on boot), a run less than an interval away from a session boundary can never have had a neighbour in that same session -- making first/last detection exact for timer-driven runs. The only residual error is a missed "first" marker when the process was down across the wake-up boundary. Markers require a valid positive timer interval; first/last additionally require a valid `silence_between`. The small model inflects the localized unit words (e.g., Polish *"za godzinę"*) into natural speech as part of its rewrite.
 

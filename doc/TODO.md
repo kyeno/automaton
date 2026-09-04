@@ -17,7 +17,9 @@
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 
 ## AI & TTS
+- Allow multiple AI engines configuration and a monitor checking which is online, so we can route from best to worst
 - Absurd anecdote generator (driver for AI)
+- CONSIDER: Modifying AI so it does not use the same system prompt for everything; f.e., Weatherman overrides the system prompt instead of appending the user message. Consider pros vs cons when it comes to inference engine caching
 - CONSIDER: Add quotes database?
 - VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp

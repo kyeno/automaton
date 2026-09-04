@@ -11,7 +11,7 @@
  * When routing through AI, day-position markers derived purely from clock + config
  * (no stored state) frame the core content: an opening line marks the first / last /
  * only announcement of each daily session (the stretch between two silence windows),
- * while "next update in {% next_interval %}" closes middle-of-session runs.
+ * while "next update in {% next_interval %}" now closes every run except the last (first/middle runs included), not just middle-of-session runs.
  *
  * An opening time-of-day line is rendered before the base sentence on both output
  * paths; its clock parts are pre-rendered as plain digits so tiny models never have
@@ -331,28 +331,19 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     }
 
     /**
-     * Assemble the full prompt sent to the AI for a weather update. Layout: creative
-     * prefix -> optional day-position opener (first / last / only) -> core message ->
-     * optional "next update in ..." closer. Returns the plain message unchanged when
-     * nothing was added, so callers can detect marker-less runs cheaply.
-     *
-     * Exposed without the # prefix so unit tests can verify assembly order and i18n
-     * degradation without a live AI provider; #speak() is the sole production caller.
-     *
+     * Assemble the ordered day-position speech segments for a run -- an optional single
+     * opener (first / last / only), then the core message, then an optional "next update"
+     * closer. Excludes the creative ai_prefix entirely; these are plain sentences meant to
+     * be spoken verbatim on BOTH output paths. The closer now appears on every run except
+     * the last (and whenever a next tick can be predicted), so first runs announce it too.
+     * @private
      * @param {string} message - Interpolated core speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
      *   Day position computed by {@link computeDayPosition}
-     * @returns {string} Full AI prompt (equals `message` when no markers apply)
+     * @returns {string[]} Ordered segments (message always present)
      */
-    buildAiPrompt(message, meta = {}) {
+    #speechSegments(message, meta = {}) {
         const parts = []
-
-        // Creative instruction prefix (existing behaviour).
-        const aiPrefixKey = this.config.sentence_ai_prefix
-        if (aiPrefixKey && this.#bundle) {
-            const prefixText = this.#resolveI18n(aiPrefixKey, '')
-            if (prefixText) parts.push(prefixText)
-        }
 
         // Opening day-position marker -- exactly one of first / last / only applies per run.
         let openerKey = null
@@ -366,9 +357,8 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
         parts.push(message)
 
-        // Closing "next update" line -- middle-of-session runs only. Skipped gracefully
-        // when the bundle lacks the template or the date bundle lacks duration words.
-        if (!meta.isFirst && !meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
+        // Closing "next update" line -- every run except the last, when a next tick is known.
+        if (!meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
             const template = this.#resolveI18n('weatherman.ai_message_next', '')
             const phrase = temporal.msToHumanPhrase(meta.nextIntervalMs, temporal.getDurationUnits())
             if (template && phrase) {
@@ -376,7 +366,56 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
-        return parts.length === 1 ? message : parts.join('\n')
+        return parts
+    }
+
+    /**
+     * Assemble the full prompt sent to the AI for a weather update. Layout: creative prefix
+     * -> optional day-position opener (first / last / only) -> core message -> optional
+     * "next update in ..." closer. The creative prefix is prepended whenever it is
+     * configured, independent of whether any day-position markers apply; the core message
+     * itself is always present.
+     *
+     * Exposed without the # prefix so unit tests can verify assembly order and i18n
+     * degradation without a live AI provider; #speak() is the sole production caller.
+     *
+     * @param {string} message - Interpolated core speech text
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position computed by {@link computeDayPosition}
+     * @returns {string} Full AI prompt (creative prefix + day-position markers + core message)
+     */
+    buildAiPrompt(message, meta = {}) {
+        const segments = this.#speechSegments(message, meta)
+        const body = segments.join('\n')          // keep the newline layout the model expects
+
+        // Creative instruction prefix (existing behaviour). Only the AI leg carries it --
+        // direct TTS must never read these instructions aloud.
+        const aiPrefixKey = this.config.sentence_ai_prefix
+        if (aiPrefixKey && this.#bundle) {
+            const prefixText = this.#resolveI18n(aiPrefixKey, '')
+            if (prefixText) return `${prefixText}\n${body}`
+        }
+
+        return body
+    }
+
+    /**
+     * Plain-speech text for the direct-TTS path (AI unavailable). Includes every day-position
+     * marker (first / last / only + next-update closer) so listeners get the same framing even
+     * without AI -- but deliberately excludes the creative ai_prefix, which is an instruction to
+     * the model, not something to be spoken. Segments are space-joined for natural sentence flow.
+     *
+     * Exposed without the # prefix so unit tests can pin the pure-TTS output shape; #speak()
+     * is the sole production caller.
+     *
+     * @param {string} message - Interpolated core speech text
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position computed by {@link computeDayPosition}
+     * @returns {string} Speech text with markers (no ai_prefix)
+     */
+    buildDirectTtsText(message, meta = {}) {
+        const segments = this.#speechSegments(message, meta)
+        return segments.join(' ').trim()
     }
 
     /**
@@ -615,8 +654,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     }
 
     /**
-     * Send the built message to TTS, optionally routing through AI first. When the AI
-     * handles it, day-position markers frame the core content via buildAiPrompt().
+     * Send the built message to TTS, optionally routing through AI first. When the AI handles
+     * it, day-position markers frame the core content via buildAiPrompt(); on the direct-TTS
+     * fallback they come from buildDirectTtsText() so listeners get the same framing either way.
      * Configured tts_options extras travel along in every 'tts:speak' payload -- both paths.
      * @private
      * @param {string} message - Final interpolated speech text
@@ -636,30 +676,29 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         // emission byte-identical to the plain-text shape when nothing is configured.
         const ttsOptions = this.resolveTtsOptions()
 
-        // Build the full prompt BEFORE any emissions, so Window 3 sees exactly
-        // what will be sent to the AI (creative prefix and day-position markers included).
-        let displayText = trimmedMessage
-        let aiPrompt = trimmedMessage
+        const aiAvailable = AiAssistant.isAvailable()
 
-        if (AiAssistant.isAvailable()) {
-            const fullPrompt = this.buildAiPrompt(trimmedMessage, meta)
-            if (fullPrompt !== trimmedMessage) {
-                aiPrompt = fullPrompt
-                displayText = fullPrompt   // UI shows the full prompt including prefix/markers
-            }
-        }
+        // The text shown in Window 3 must match what is actually heard. On the AI leg that
+        // is the full prompt (creative prefix + day-position markers, which go into the
+        // model); on the direct-TTS fallback it is the spoken text (markers, but no
+        // creative prefix, which is an instruction to the model rather than something to
+        // read aloud).
+        const spokenText = aiAvailable
+            ? this.buildAiPrompt(trimmedMessage, meta)
+            : this.buildDirectTtsText(trimmedMessage, meta)
 
-        // Emit system input to UI with the actual text that goes into the LLM.
+        // Emit system input to UI with the exact text that will be heard.
         // Guard against --no-ui runs where no subscribers exist.
         if (EventBus.hasSubscribers('ai:systemMessage')) {
-            EventBus.emit('ai:systemMessage', { text: displayText })
+            EventBus.emit('ai:systemMessage', { text: spokenText })
         }
 
-        if (AiAssistant.isAvailable()) {
-            await this.routeThroughAi(aiPrompt, trimmedMessage, ttsOptions)
+        if (aiAvailable) {
+            await this.routeThroughAi(spokenText, trimmedMessage, ttsOptions, meta)
         } else {
-            // Direct TTS when AI unavailable
-            EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
+            // Direct TTS when AI unavailable: speak every day-position marker minus the creative
+            // ai_prefix, which is an instruction to the model rather than something to read aloud.
+            EventBus.emit('tts:speak', { text: spokenText, ...ttsOptions })
             this.log('Weather update sent via direct TTS', 'debug')
         }
     }
@@ -668,9 +707,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * Send one built weather report through the AI -> TTS pipeline with graceful
      * degradation. A non-empty model reply is surfaced in the chat window as a periodic
      * response (the audio itself was already fired by AiAssistant for that reply). An
-     * empty reply or any provider failure falls back to speaking the raw message directly
-     * and posts a visible <system> notice explaining why no rewritten report appears -- so
-     * a slow/dead LLM never leaves Window 3 looking dead while audio plays from nowhere.
+     * empty reply or any provider failure falls back to speaking the message directly
+     * (with the same day-position markers the AI-unavailable path uses) and posts a
+     * visible <system> notice explaining why no rewritten report appears -- so a
+     * slow/dead LLM never leaves Window 3 looking dead while audio plays from nowhere.
      *
      * Exposed without the # prefix so unit tests can pin fallback behaviour against a
      * stubbed AiAssistant without MQTT, devices, or a live LLM; #speak() is the sole
@@ -678,8 +718,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * @param {string} aiPrompt - Full prompt sent to the model (prefix/markers included)
      * @param {string} trimmedMessage - Plain core text used for the direct-TTS fallback
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position, forwarded to the fallback so it speaks the same markers
      */
-    async routeThroughAi(aiPrompt, trimmedMessage, ttsOptions) {
+    async routeThroughAi(aiPrompt, trimmedMessage, ttsOptions, meta = {}) {
         let spoken = ''
         try {
             const response = await AiAssistant.processMessage(aiPrompt, {
@@ -689,13 +731,13 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             spoken = typeof response === 'string' ? response.trim() : ''
         } catch (error) {
             this.log(`AI processing failed: ${error.message}`, 'error')
-            return this.#degradeToRawTts(trimmedMessage, ttsOptions, error.message)
+            return this.#degradeToRawTts(trimmedMessage, ttsOptions, error.message, meta)
         }
 
         if (!spoken) {
             // Model answered with nothing usable -- nothing was spoken yet; degrade loudly.
             this.log('AI reply was empty -- falling back to direct TTS', 'warn')
-            return this.#degradeToRawTts(trimmedMessage, ttsOptions, 'empty reply from model')
+            return this.#degradeToRawTts(trimmedMessage, ttsOptions, 'empty reply from model', meta)
         }
 
         // Emit the AI's response back to UI for rendering with <AI> prefix.
@@ -709,21 +751,26 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     /**
      * Fallback leg of routeThroughAi(): post a visible <system> notice explaining that the
      * assistant did not deliver (localized via the weatherman bundle key
-     * `weatherman.ai_fallback_notice`), then speak the raw message directly so the report
-     * is never lost. Jingle params still apply on the fallback path.
+     * `weatherman.ai_fallback_notice`), then speak the message directly (with the same
+     * day-position markers the AI-unavailable path uses) so the report is never lost.
+     * Jingle params still apply on the fallback path.
      * @private
      * @param {string} trimmedMessage - Plain core text to speak
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
      * @param {string} reason - Failure description kept in the log trail
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position, so the fallback speaks the same markers as the direct-TTS path
      */
-    #degradeToRawTts(trimmedMessage, ttsOptions, reason) {
+    #degradeToRawTts(trimmedMessage, ttsOptions, reason, meta = {}) {
         const notice = this.#resolveI18n('weatherman.ai_fallback_notice', '') ||
             'The assistant did not answer in time -- reading the plain report instead.'
         if (EventBus.hasSubscribers('ai:systemMessage')) {
             EventBus.emit('ai:systemMessage', { text: notice })
         }
-        // Fallback to direct TTS on AI failure -- jingle params still apply
-        EventBus.emit('tts:speak', { text: trimmedMessage, ...ttsOptions })
+        // Fallback to direct TTS on AI failure -- speak the same day-position markers the
+        // AI-unavailable path uses (minus the creative prefix), so a flaky AI never drops
+        // them. Jingle params still apply on the fallback path.
+        EventBus.emit('tts:speak', { text: this.buildDirectTtsText(trimmedMessage, meta), ...ttsOptions })
         this.log(`Weather update fell back to direct TTS (${reason})`, 'debug')
     }
 
