@@ -10,6 +10,9 @@
  *     reports it online. Offline hosts are recorded as `null` (unknown); an
  *     unknown status is treated as "not actively playing", so playback-dependent
  *     actions stay inert while safe/ambient actions still apply -- no flapping.
+ *   - Endpoint IPs need no duplication: each player's address resolves from
+ *     the same-named `computers` entry; an explicit `host` key overrides, and
+ *     a player with neither is skipped with an error log.
  *   - One shared interval timer drives all hosts in parallel; a re-entrancy
  *     guard prevents overlapping sweeps.
  *   - A per-host failure-strike counter (3 strikes) avoids flapping a
@@ -129,9 +132,11 @@ class SVideoPlayerMonitor {
     /**
      * Initialize the video-player monitor.
      *
-     * Reads the `videoPlayers` map from the network config section and starts
-     * the periodic sweep. An optional `configOverride` may be supplied (used by
-     * tests) to bypass the live config section.
+     * Reads the `videoPlayers` map from the network config section, resolving
+     * each endpoint IP from the same-named `computers` entry unless an
+     * explicit `host` key overrides it, and starts the periodic sweep. An
+     * optional `configOverride` may be supplied (used by tests) to bypass the
+     * live config section.
      *
      * @param {Object} [configOverride] - Optional network-config object override
      * @async
@@ -150,7 +155,19 @@ class SVideoPlayerMonitor {
                 LoggerService.warn(`Ignoring video player "${host}": ${problem}`, 'VideoPlayerMonitor')
                 continue
             }
-            this.#videoPlayers[host] = entry
+
+            // Resolve the endpoint IP: an explicit "host" wins (failsafe
+            // override); otherwise the same-named "computers" entry is the
+            // single source of truth. Unresolvable players are skipped loudly.
+            const resolvedHost = entry.host ?? config.computers?.[host]
+            if (typeof resolvedHost !== 'string' || resolvedHost.trim() === '') {
+                LoggerService.error(
+                    `Ignoring video player "${host}": no "host" key and no matching "computers" entry to resolve it from`,
+                    'VideoPlayerMonitor'
+                )
+                continue
+            }
+            this.#videoPlayers[host] = { ...entry, host: resolvedHost }
         }
 
         const hosts = Object.keys(this.#videoPlayers)
@@ -334,10 +351,10 @@ class SVideoPlayerMonitor {
      */
     #validatePlayerEntry(entry) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            return 'entry must be an object with host/port/path/parser keys'
+            return 'entry must be an object with port/path/parser keys'
         }
-        if (typeof entry.host !== 'string' || entry.host.trim() === '') {
-            return '"host" must be a non-empty string'
+        if (entry.host != null && (typeof entry.host !== 'string' || entry.host.trim() === '')) {
+            return '"host" is optional but, when present, must be a non-empty string'
         }
         if (!Number.isFinite(entry.port) || entry.port <= 0 || entry.port > 65535) {
             return '"port" must be a number between 1 and 65535'

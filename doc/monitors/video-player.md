@@ -27,12 +27,11 @@ Players are defined under `videoPlayers` in `etc/device/network.yaml` (template:
 
 ```yaml
 videoPlayers:
-  my-pc:
-    host: 192.168.1.10
+  my-pc:                  # IP resolved from computers: my-pc
     port: 13579
     path: /variables.html
     parser: mpc
-  laptop:
+  laptop:                 # explicit host override (failsafe)
     host: 192.168.1.11
     port: 8080
     path: /requests/status.json
@@ -44,7 +43,7 @@ videoPlayers:
 
 | Key | Required | Description |
 |-----|----------|-------------|
-| `host` | Yes | IP address or hostname of the player machine |
+| `host` | No | IP address or hostname of the player machine; defaults to the same-named `computers` entry (see [Network Presence](./network-presence.md)) |
 | `port` | Yes | HTTP port of the player's web interface |
 | `path` | Yes | Status endpoint path (must start with `/`) |
 | `parser` | Yes | Response parser: `vlc` or `mpc` |

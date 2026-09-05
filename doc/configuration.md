@@ -227,16 +227,16 @@ Polls media players over their HTTP APIs and exposes a normalized status (`playi
 ```yaml
 videoPlayers:
   hostname1:
-    host: 192.168.1.10
     port: 8080
     path: /requests/status.json
     parser: vlc
   hostname2:
-    host: 192.168.1.11
     port: 13579
     path: /variables.html
     parser: mpc
 ```
+
+Each player's IP resolves from the same-named `computers` entry; an optional `host` key overrides that lookup, and a player with neither is skipped with an error log.
 
 | `parser` | Player | Endpoint |
 |----------|--------|----------|

@@ -22,6 +22,9 @@ appliances:
 
 # Video players polled by the VideoPlayerMonitor. Each entry is an object
 # (NOT a bare IP string) so NetworkPresence does not treat it as a ping target.
+# The endpoint IP resolves from the same-named "computers" entry above; an
+# optional "host" key overrides that lookup, and a player with neither is
+# skipped with an error log.
 # `parser` selects the response parser:
 #   vlc -- VLC HTTP API (http://<host>:<port>/requests/status.json, JSON)
 #   mpc -- MPC-HC web interface (http://<host>:<port>/variables.html; parsing
@@ -31,15 +34,14 @@ appliances:
 # localhost only". The compression setting does not matter (the built-in HTTP
 # client decompresses transparently).
 videoPlayers:
-  # my-pc:
-  #   host: 0.0.0.0
+  # my-pc:                          # IP resolved from computers: my-pc
   #   port: 8080
   #   path: /requests/status.json
   #   parser: vlc
   #   # VLC requires a password (Lua HTTP Password); sent as basic auth:
   #   # username: ''
   #   # password: 'your-vlc-password'
-  # living-room:
+  # living-room:                     # Explicit host override (failsafe)
   #   host: 0.0.0.0
   #   port: 13579
   #   path: /variables.html
