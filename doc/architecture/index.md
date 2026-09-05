@@ -1,6 +1,6 @@
 # Architecture
 
-> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md)
+> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md) · [Rule Engine Restore & Ownership](./rule-engine-restore-semantics.md) · [Weatherman Speech Rendering](./weatherman-speech-rendering.md)
 
 ## Project Structure
 
@@ -15,7 +15,9 @@
 │   ├── architecture/           # Architecture deep-dive
 │   │   ├── index.md            # This file — project structure and design
 │   │   ├── ai-conversation-caching.md  # AI conversation persistence & caching behavior
-│   │   └── automation-human-differentiation.md # Automation vs human origin classification
+│   │   ├── automation-human-differentiation.md # Automation vs human origin classification
+│   │   ├── rule-engine-restore-semantics.md # Snapshots, ownership, no-op suppression
+│   │   └── weatherman-speech-rendering.md # Clock phrases, day markers, date fusion
 │   ├── installation/           # Setup guides
 │   │   ├── index.md            # Requirements, install steps, running modes
 │   │   ├── ai-integration.md   # LLM setup (llama.cpp, Ollama, vLLM)
@@ -25,13 +27,18 @@
 │   │   ├── index.md            # Windows, channels, layout, input bar
 │   │   └── commands/           # Slash-command reference
 │   │       └── index.md        # Quick ref, custom commands, context API
+│   ├── monitors/               # Monitor documentation
+│   │   ├── index.md            # Overview and navigation
+│   │   ├── network-presence.md # Arping-based host presence
+│   │   └── video-player.md     # VLC / MPC-HC status polling
 │   ├── configuration.md        # Comprehensive configuration guide
-│   ├── examples/               # Included example automations
+│   ├── automations/            # Included automations
 │   │   ├── index.md                # Overview and navigation
 │   │   ├── ambient-lights.md       # Ambient lights automation walkthrough
 │   │   ├── weatherman.md           # TTS weather announcer walkthrough
 │   │   ├── home-office-rollers.md  # Home office roller-shutter controller
-│   │   └── bedroom-rollers.md      # Bedroom rollers + pilot remote interaction
+│   │   ├── bedroom-rollers.md      # Bedroom rollers + pilot remote interaction
+│   │   └── home-theater-mode.md    # Video-player-driven dark mode
 │   └── TODO.md                 # Roadmap and known issues
 ├── etc/                        # Configuration directory
 │   ├── automaton.yaml          # Main configuration file

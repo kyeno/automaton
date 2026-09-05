@@ -24,7 +24,7 @@ This is the global default destination for all TTS requests. If this variable is
 
 Any component emitting the internal `tts:speak` EventBus event may attach extra parameters to its payload, and they merge into **that request only** -- every other speaker keeps the plain shape. For each optional field the resolution order is runtime event value > locale template default (see Request Parameters below).
 
-The shipped consumer is the [weatherman automation](../examples/weatherman.md), which forwards its optional `tts_options` config block verbatim on every utterance it produces:
+The shipped consumer is the [weatherman automation](../automations/weatherman.md), which forwards its optional `tts_options` config block verbatim on every utterance it produces:
 
 ```yaml
 # etc/automation/tts-weatherman.yaml

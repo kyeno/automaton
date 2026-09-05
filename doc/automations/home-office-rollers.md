@@ -69,4 +69,4 @@ Season conditions, all numeric operators, and the human-interaction cooldown are
 
 ---
 
-→ Back to [Example Automations](./index.md) · Sibling example: [Bedroom Rollers](./bedroom-rollers.md)
+→ Back to [Automations](./index.md) · Sibling example: [Bedroom Rollers](./bedroom-rollers.md)

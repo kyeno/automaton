@@ -143,7 +143,7 @@ ai:
   fetch_timeout_ms: "5m"
 ```
 
-To make conversations expire faster, reduce `conversation_ttl_sec`. Automated announcements are produced by rule-based automations rather than a built-in messenger -- control their cadence per automation (`timer_interval`, `silence_between`; see [weatherman example](../examples/weatherman.md)).
+To make conversations expire faster, reduce `conversation_ttl_sec`. Automated announcements are produced by rule-based automations rather than a built-in messenger -- control their cadence per automation (`timer_interval`, `silence_between`; see [weatherman automation](../automations/weatherman.md)).
 
 ---
 
@@ -169,5 +169,5 @@ To make conversations expire faster, reduce `conversation_ttl_sec`. Automated an
 | Document | Relation |
 |----------|----------|
 | [Automation vs Human Differentiation](./automation-human-differentiation.md) | Sibling deep-dive: how command provenance and origin classification work |
-| [TTS Weather Man example](../examples/weatherman.md) | Consumer of system-originated announcements discussed here |
+| [TTS Weather Man automation](../automations/weatherman.md) | Consumer of system-originated announcements discussed here |
 | [Architecture Overview](./index.md) | Project structure and core concepts |

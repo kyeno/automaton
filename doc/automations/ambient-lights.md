@@ -59,4 +59,4 @@ Daily `once` markers, season conditions, and all other condition operators are d
 
 ---
 
-→ Back to [Example Automations](./index.md) · Sibling example: [TTS Weather Man](./weatherman.md)
+→ Back to [Automations](./index.md) · Sibling example: [TTS Weather Man](./weatherman.md)

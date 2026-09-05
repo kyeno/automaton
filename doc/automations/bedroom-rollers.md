@@ -69,4 +69,4 @@ Released as obfuscated templates so they work out of the box once you rename dev
 
 ---
 
-→ Back to [Example Automations](./index.md) · Sibling example: [Home Office Rollers](./home-office-rollers.md)
+→ Back to [Automations](./index.md) · Sibling example: [Home Office Rollers](./home-office-rollers.md)

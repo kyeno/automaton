@@ -28,15 +28,24 @@ The IRC-style multi-window interface.
 - [Terminal UI](ui/index.md) — windows, channels, layout, input bar behavior
 - [UI Commands Reference](ui/commands/index.md) — slash commands, custom command guide, context API
 
-### Example Automations
+### Automations
 
-Included examples demonstrating automation patterns.
+Included automations demonstrating rule-engine patterns.
 
-- [Example Automations](examples/index.md) — overview and navigation
-- [Ambient Lights](examples/ambient-lights.md) — daily lighting windows with per-rule target sets
-- [TTS Weather Man](examples/weatherman.md) — i18n weather announcer through the AI → TTS pipeline
-- [Home Office Rollers](examples/home-office-rollers.md) — presence-aware roller control with most-closed-wins merging
-- [Bedroom Rollers](examples/bedroom-rollers.md) — night-close rollers + pilot remote outlet interaction example
+- [Automations](automations/index.md) — overview and navigation
+- [Ambient Lights](automations/ambient-lights.md) — daily lighting windows with per-rule target sets
+- [TTS Weather Man](automations/weatherman.md) — i18n weather announcer through the AI → TTS pipeline
+- [Home Office Rollers](automations/home-office-rollers.md) — presence-aware roller control with most-closed-wins merging
+- [Bedroom Rollers](automations/bedroom-rollers.md) — night-close rollers + pilot remote outlet interaction example
+- [Home Theater Mode](automations/home-theater-mode.md) — video-player-driven dark mode with roller ownership
+
+### Monitors
+
+Singletons watching the world outside Zigbee.
+
+- [Monitors](monitors/index.md) — overview and navigation
+- [Network Presence](monitors/network-presence.md) — arping-based host presence with `presence` conditions
+- [Video Player](monitors/video-player.md) — VLC / MPC-HC status polling with `videoPlayer` conditions
 
 ### Guides & Roadmap
 

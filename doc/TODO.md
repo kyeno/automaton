@@ -1,14 +1,10 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Create "greeter" TTS/AI automation that will work in tandem with network monitor and greet people when their computers go online
+- Create "greeter" TTS/AI automation that will work in tandem with network monitor and greet people when their computers go online; add "off period guard" on launching, so you don't greet person on reboot. Consider goodbye logic not to do the same.
 - Add WiFi and WiFi devices support
 - Add crypto price monitor
-- CONSIDER: Add "hooks" - http endpoints (vs mqtt events?) to control certain devices?
-  DONE (via polling, not hooks): HTPC/bedroom video player state now drives ambient lights
-  through VideoPlayerMonitor + `videoPlayer` rule conditions (Home Theater Mode). LATER:
-  revisit push hooks as a lower-latency alternative to the 4s polling sweep
-  LATER: Add timeseries database for state history (sensors, monitors)
+- LATER: Add timeseries database for state history (sensors, monitors)
 - LATER: Postpone automations so they don't fire all at once
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
@@ -60,7 +56,7 @@ personas:
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
-- Improve how things are redrawn by statusbar; it seems to be constantly reading files
+- LATER: Improve how things are redrawn by statusbar; it seems to be constantly reading files
 - LATER: Consistent color palette across all windows (status bar, device window)
 - MAYBELATER: Proper nick highlighting (own messages emphasized in chat)
 - MAYBELATER: Nicer slash commands output, some color formatting etc.

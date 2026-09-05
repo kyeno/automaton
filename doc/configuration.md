@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This document provides a detailed walkthrough of every configuration file and section in Automaton. The shipped examples represent a real, working home deployment -- you will need to customize device names, network addresses, and automation rules to match your own setup.
+A detailed walkthrough of every configuration file and section in Automaton. The shipped templates represent a real, working home deployment -- customize device names, network addresses, and automation rules to match your own setup.
 
 ## Configuration Hierarchy
 
@@ -29,18 +29,15 @@ Copy `.env.example` to `.env` and adjust values. This file is gitignored and sho
 | `TTS_API_URL` | No | TTS server API endpoint | `http://localhost:7423/tts` |
 | `TTS_TCP_ENDPOINT` | No | Audio playback destination (`ip:port`) | `192.168.1.x:12345` |
 
-> The AI and TTS services are optional. If their URLs are not set, those features will be disabled at startup with a warning. You can also disable them per-run without touching `.env`: starting Automaton with `--no-ai` or `--no-tts` behaves exactly as if the corresponding variables were unset.
+> The AI and TTS services are optional — unset URLs disable those features at startup with a warning. The `--no-ai` / `--no-tts` startup flags disable them per-run without touching `.env`.
 
 ### Overriding settings from the command line
 
-Any parameter of `etc/automaton.yaml` can be overridden for a single run without editing the file, using `-c` / `--config-override`:
+Any parameter of `etc/automaton.yaml` can be overridden for a single run using the repeatable `-c` / `--config-override` flag; values are interpreted as YAML and go through the same strict schema validation as the file itself (an unknown key or wrong type aborts startup):
 
 ```bash
 sh bin/automaton -c "locale.language: en_US" -c "ai.temperature: 0.7"
 ```
-
-The flag is repeatable -- each occurrence takes one `"key.path: value"` pair and values are interpreted as YAML (numbers, booleans, quoted strings; inline objects work too for whole subtrees). Overrides go through the same strict schema validation as the config file itself: an unknown parameter or a wrong type/value aborts startup with an error instead of running with broken settings.
-
 
 ---
 
@@ -65,7 +62,7 @@ automation:
   # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
 ```
 
-This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are interpreted as milliseconds, strings use the same `<integer><unit>` grammar (`d`, `h`, `m`, `s`). The optional origin-classification tuning keys (nested under `automation:`) fine-tune origin classification — echo windows, stall watchdog, settle absorption of post-completion tails, and retry backoff for unresponsive devices; see [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) for what each one controls.
+This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are milliseconds, strings use the `<integer><unit>` grammar (`d`, `h`, `m`, `s`). The optional origin-classification tuning keys fine-tune origin classification -- see [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) for what each one controls.
 
 ### Locale Section
 
@@ -75,8 +72,8 @@ locale:
   time_format: "12h"   # Display format: "12h" or "24h"
 ```
 
-- **`locale.language`** -- Full BCP 47 locale code selecting the bundle directory under `etc/i18n/{code}/`. Determines the system prompt language, tool descriptions, UI greetings AND the TTS voice model/effects. Does NOT change the app/UI interface language (no plans to add that).
-- **`locale.time_format`** -- Controls how time is displayed throughout the UI.
+- **`locale.language`** -- Full BCP 47 locale code selecting the bundle directory under `etc/i18n/{code}/`. Determines the system prompt language, tool descriptions, UI greetings AND the TTS voice model/effects. Does NOT change the app/UI interface language.
+- **`locale.time_format`** -- How time is displayed throughout the UI (`"12h"` or `"24h"`).
 
 ### TTS Configuration
 
@@ -84,7 +81,7 @@ TTS is configured entirely through environment variables and locale-specific i18
 
 - **`TTS_API_URL`** (`.env`) — TTS server API endpoint; service auto-enables when set
 - **`TTS_TCP_ENDPOINT`** (`.env`) — Global audio playback destination (`ip:port`). Can also be overridden per-request via EventBus event payloads or per-locale in `etc/i18n/{locale}/tts.yaml`
-- **Per-request extras** — Components emitting `tts:speak` events may attach extra TTS server parameters to individual utterances (e.g., intro/outro jingle waves); they merge into that request only, with runtime values winning over locale template defaults. Shipped example: the weatherman automation's optional `tts_options` block. See [Weather Man](examples/weatherman.md) and [TTS Integration](installation/tts-integration.md).
+- **Per-request extras** — Components emitting `tts:speak` events may attach extra TTS server parameters to individual utterances (e.g., intro/outro jingle waves); they merge into that request only, with runtime values winning over locale template defaults. Shipped example: the weatherman automation's optional `tts_options` block. See [Weather Man](automations/weatherman.md) and [TTS Integration](installation/tts-integration.md).
 
 ### AI Section
 
@@ -94,24 +91,13 @@ ai:
   max_tokens: -1              # -1 = unlimited (provider default)
   temperature: 1.0            # 0.0 (deterministic) to 1.0 (creative)
   fetch_timeout_ms: "5m"      # Per-request LLM HTTP timeout ("45s"/"5m"/... or plain ms); final, not retried
-  conversation_ttl_sec: "15m" # Conversation history TTL ("45s"/"15m"/... or legacy seconds)
-  max_conversation_turns: 15  # Max message turns retained in context
+  conversation_ttl_sec: "15m" # Conversation history TTL in Redis ("45s"/"15m"/... or legacy seconds)
+  max_conversation_turns: 15  # Max message turns retained in context (prevents token explosion)
   strip_ai_formatting: false  # Strip markdown/emoji from responses before UI/TTS
-  include_chat_history_in_system_calls: false  # Announcements (system-origin turns) receive prior chat context; false = standalone [default]
+  include_chat_history_in_system_calls: false  # System-origin turns (announcements) receive prior chat history; false = standalone [default]
 ```
 
-| Setting | Description |
-|---------|-------------|
-| `ai.model` | Model name sent to the LLM provider with every chat request |
-| `ai.max_tokens` | Maximum response tokens; use `-1` to omit (provider default) |
-| `ai.temperature` | Sampling temperature: lower = more deterministic, higher = more creative |
-| `ai.fetch_timeout_ms` | Per-request HTTP timeout for LLM calls (human-readable duration or plain ms); timeouts are treated as final — not retried |
-| `ai.conversation_ttl_sec` | After this period of inactivity, conversation history is purged from Redis (accepts human-readable durations like `"15m"` or plain seconds) |
-| `ai.max_conversation_turns` | Caps the number of message turns in the context window to prevent token explosion |
-| `ai.strip_ai_formatting` | Strip markdown formatting and emoji from responses before displaying in UI / passing to TTS |
-| `ai.include_chat_history_in_system_calls` | Controls whether system-origin turns (rule-based automation announcements such as TtsWeatherMan) include accumulated chat history in their LLM request. Default `false`: each announcement runs standalone against a fresh system prompt + its own message -- faster inference and deterministic rewrites for small models. Set `true` when an announcement should be aware of prior conversation context |
-
-**Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (e.g., TtsWeatherManAutomation announces on its own timer with silence windows and day-position markers; system-originated messages still appear with a yellow `<system>` prefix and stay out of conversation caching). See [Example Automations](./examples/index.md).
+**Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (see [Automations](./automations/index.md); how system-originated announcements stay out of conversation caching is covered in [AI Conversation Caching](architecture/ai-conversation-caching.md)).
 
 ### UI Section
 
@@ -128,17 +114,12 @@ ui:
             render_seconds: false
           - type: separator
             char: " |"
-          - type: time_of_day
-        right: []
-      - left:
           - type: temp
             device: "Your Device Name"
             label: "Short Label"
             format: "{value}*C"
-          # ... more widgets ...
         right:
           - [{type: state, key: "mqtt.connected", iconTrue: "[o]", iconFalse: "[x]", label: "MQTT"}]
-          - [{type: state, key: "redis.connected", iconTrue: "[o]", iconFalse: "[x]", label: "Redis"}]
 ```
 
 Available widget types for the status bar:
@@ -171,24 +152,15 @@ ui:
       title: "Logs"
       shortcut: 1            # Alt+1 to switch
       readonly: true
-    - id: device
-      channel: "!sensors"
-      title: "Devices"
-      shortcut: 2
-      readonly: true
     - id: ai
       channel: "#automaton"
       title: "AI Chat"
       shortcut: 3
       readonly: false        # Accepts user input
-    - id: tts
-      channel: "#tts"
-      title: "TTS"
-      shortcut: 4
-      readonly: false
+    # ... device (!sensors) and tts (#tts) windows follow the same shape
 ```
 
-Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows are created only when their backing services are configured -- if AI or TTS is disabled/unconfigured, that window simply does not exist in the UI.
+Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows exist only when their backing services are configured.
 
 ### Logger Section
 
@@ -207,7 +179,7 @@ logger:
     trace: var/log/trace.log
 ```
 
-Uses Winston for structured logging with file rotation. Non-absolute paths are resolved relative to the project root. In addition to `debug` through `error`, a fifth **TRACE** level exists for high-volume diagnostic detail (raw MQTT payloads, per-report verdict context, token lifecycle events). TRACE entries are routed exclusively to the dedicated `trace` log file -- they never appear on the console or in the UI log window, so you can leave them on permanently without spamming the TUI. Passing `--no-trace` at startup suppresses the stream entirely (the transport is not built at all).
+Uses Winston for structured logging with file rotation; non-absolute paths resolve relative to the project root. A fifth **TRACE** level (raw MQTT payloads, token lifecycle events) routes exclusively to the dedicated `trace` log file -- never to the console or UI log window. Passing `--no-trace` at startup suppresses the stream entirely.
 
 ---
 
@@ -227,7 +199,6 @@ remote:                   # Wireless remotes and controllers
 
 sensor:                   # Sensors providing readings
   - Temperature Sensor X
-  - Illuminance Sensor Y
 ```
 
 Device types determine behavior:
@@ -247,11 +218,11 @@ computers:
   hostname2: 192.168.1.11
 ```
 
-Each host is pinged via `arping` to detect presence on the local network. The short name (e.g., `hostname1`) is used as a key in automation rules.
+Each host is pinged via `arping` to detect presence on the local network. The short name (e.g., `hostname1`) is used as a key in automation rules. Sweep mechanics and the `presence` condition are covered in [Network Presence Monitor](monitors/network-presence.md).
 
 #### Video Players (`videoPlayers`)
 
-Polls media players over their HTTP APIs (every 4 seconds) and exposes a normalized status (`playing`, `paused`, `stopped`, `unreachable`) to rules via the `videoPlayer` condition. Each entry is an object -- **not** a bare IP string -- so NetworkPresence does not treat it as a ping target:
+Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `unreachable`) to rules via the `videoPlayer` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
 
 ```yaml
 videoPlayers:
@@ -272,19 +243,13 @@ videoPlayers:
 | `vlc` | VLC HTTP interface | `/requests/status.json` (JSON) |
 | `mpc` | MPC-HC web interface | `/variables.html` (HTML) |
 
-Notes:
-
-- For MPC-HC, enable the web interface via *View -> Options -> Player -> Web Interface*: open a movie, turn on **"Listen on port"** and turn off **"Allow access from localhost only"**. The compression setting does not matter -- responses are decompressed transparently. Parsing is verified against MPC-HC **1.9.16.63** and expected to hold for the 1.9.x series; other versions warn once and keep parsing.
-- For VLC, set a password in *Tools -> Preferences (All) -> Interface -> Main interfaces -> Lua -> Lua HTTP Password* and configure optional `username` / `password` keys on the player entry (sent as basic auth).
-- Requests time out after 500 ms (players are LAN-local and answer in single-digit milliseconds); override per player with a `timeout_ms` key.
-- A player host that is also listed under a ping category (e.g. `computers`) is not polled while that host is known to be offline; hosts absent from every ping category are polled directly.
-- Status changes publish `videoPlayer:<host>` EventBus events -- subscribe automations via `triggers_video`.
+Optional per-player keys: `username` / `password` (VLC basic auth) and `timeout_ms` (default 500 ms). Player-side setup (MPC-HC web interface, VLC Lua HTTP password), polling mechanics, and the `videoPlayer:<host>` status events are covered in [Video Player Monitor](monitors/video-player.md); subscribe automations to status changes via `triggers_video`.
 
 ---
 
 ## 4. Automation Rules (`etc/automation/*.yaml`)
 
-Automations are defined as YAML files paired with optional JavaScript classes. Each `.yaml` file defines the rules; an accompanying `<Name>Automation.js` file provides custom logic extending `RuleBasedAutomationBase`.
+Automations are YAML files paired with optional JavaScript classes: the `.yaml` defines the rules, an accompanying `<Name>Automation.js` provides custom logic extending `RuleBasedAutomationBase`. Working examples are documented in [Automations](automations/index.md).
 
 ### YAML Structure
 
@@ -333,15 +298,12 @@ rules:
 The optional `timer_interval` key controls how often an automation evaluates on its periodic timer. It accepts human-readable durations made of `<integer><unit>` tokens where the unit is `d` (days), `h` (hours), `m` (minutes) or `s` (seconds):
 
 ```yaml
-timer_interval: "90s"     # every 90 seconds
-timer_interval: "3m 45s"  # every 3 minutes 45 seconds
-timer_interval: "1h"      # hourly
-timer_interval: "2d 4h"   # multi-day cadences
+timer_interval: "90s"      # every 90 seconds
+timer_interval: "3m 45s"   # tokens combine: every 3 minutes 45 seconds
 ```
 
-- Omitting the key disables the timer entirely -- the automation becomes event-driven only (same as legacy `timer_interval_ms: 0`).
-- Legacy numeric `timer_interval_ms` remains supported; when both keys are present, `timer_interval` wins.
-- Invalid values log a warning and disable the timer (fail-open). Values above ~24.8 days (the 32-bit `setInterval` limit) are rejected for the same reason.
+- Omitting the key disables the timer entirely -- the automation becomes event-driven only. Legacy numeric `timer_interval_ms` remains supported; when both keys are present, `timer_interval` wins.
+- Invalid values log a warning and disable the timer (fail-open). Values above ~24.8 days (the 32-bit `setInterval` limit) are rejected.
 
 ### Silence Periods (`silence_between`)
 
@@ -351,32 +313,14 @@ The optional `silence_between` key defines a time window during which an automat
 silence_between: "HHmm-HHmm"   # e.g., "0500-0900" or overnight "2300-0600"
 ```
 
-#### Format
-
-Times use compact four-digit **NATO-style** notation without separators: hours followed by minutes. A dash separates start from end.
+Times use compact four-digit **NATO-style** notation (hours then minutes, no separators):
 
 | Example | Meaning |
 |---------|---------|
 | `"0500-0900"` | Suppress from 5:00 AM until 8:59 AM |
 | `"2300-0600"` | Suppress from 11:00 PM through midnight into 5:59 AM next day |
-| `"0730-0815"` | Suppress from 7:30 AM to 8:14 AM |
 
-Start time is **inclusive** (execution at exactly that minute is blocked). End time is **exclusive** (execution resumes at the end boundary).
-
-#### Scope
-
-Silence suppression blocks **all trigger sources**, not just timer ticks. If a zigbee sensor fires an MQTT event or a network host comes online during the silent window, the automation will still be suppressed and log `Suppressed during silent period` at debug level. This differs from setting `timer_interval_ms: 0`, which only disables periodic execution while leaving event-driven triggers active.
-
-#### Error Handling
-
-Invalid formats produce a one-time warning in logs and fall through to normal behavior (fail-open). Examples of invalid input treated as "no silence":
-
-- `"05:00-09:00"` — colons instead of compact digits
-- `"50-90"` — too few characters
-- `null` / number / non-string type
-- `"1200-1200"` — start equals end (treated as no-op)
-
-If omitted entirely, automations run normally with no silence period applied.
+Start time is **inclusive**, end time **exclusive**. Suppression blocks **all trigger sources**, not just timer ticks — unlike omitting `timer_interval`, which only disables the periodic timer while leaving event-driven triggers active. Invalid formats warn once and fall through to normal behavior (fail-open); if omitted, no silence period applies.
 
 ### Condition Operators
 
@@ -400,18 +344,13 @@ conditions:
     hostname2: playing                          # single value shorthand
 ```
 
-An **unknown** player status (host offline or not yet polled) matches ONLY condition lists that explicitly include the `unknown` token -- each rule decides whether an unknown state is safe to act on. Typical patterns:
+An **unknown** player status (host offline or not yet polled) matches ONLY condition lists that explicitly include the `unknown` token -- each rule decides whether an unknown state is safe to act on (e.g. ambient-restore rules opt in with `[paused, stopped, unreachable, unknown]`; ownership hand-back guards use `[unknown, unreachable]`). `triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
 
-- Ambient-restore rules: `[paused, stopped, unreachable, unknown]`. Keep `presence` on light rules so a machine that is simply switched off restores nothing.
-- Ownership hand-back guards: `[unknown, unreachable]` -- the player-room roller automations stand down while the player answers HTTP (any state) and resume when it does not.
-
-`triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
-
-With `restore_state_aware: true` (automation level), dispatched commands are state-aware and provable no-ops are suppressed: ON is re-asserted only for lights the automation itself turned off from an on-state, and OPEN only for rollers it closed from an open state. A rule can mark its targets as unconditional with `force_restore: true` -- e.g. dim "bathroom/snack" lights that should always come back on pause. Lights that were already off before dark mode are never forced back on -- the automations that normally own them decide that.
+With `restore_state_aware: true` (automation level), restore commands are filtered through pre-command snapshots so an automation only undoes changes it made itself; a rule can mark its targets as unconditional with `force_restore: true`. Full snapshot, ownership, and no-op suppression semantics are covered in [Rule Engine Restore & Ownership](architecture/rule-engine-restore-semantics.md).
 
 ### Daily Once Markers (`once`)
 
-Adding `once: true` to a rule makes it act **at most once per local calendar day**. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a daily marker in Redis and stands down for the rest of that day; humans then have full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. The marker stores the local date and self-resets each day without cleanup logic; storage failures fail open so an unavailable cache never blocks automation.
+Adding `once: true` to a rule makes it act **at most once per local calendar day**. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a daily marker in Redis and stands down for the rest of that day; humans then have full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. The marker self-resets each day; storage failures fail open.
 
 ### Season Conditions
 
@@ -434,14 +373,7 @@ Accepts a single value or a list: `season: spring`, `season: [winter]`. Detectio
 
 ### Custom JavaScript Automations
 
-Create `<Name>Automation.js` in `etc/automation/` alongside your YAML. The autoloader expects PascalCase naming matching the YAML filename prefix:
-
-```
-bedroom-rollers.yaml -> bedroomRollersAutomation.js
-ambient-lights.yaml -> ambientLightsAutomation.js
-```
-
-Extend `RuleBasedAutomationBase` and override methods as needed. See existing examples for reference.
+Create `<Name>Automation.js` in `etc/automation/` alongside your YAML, extending `RuleBasedAutomationBase` and overriding methods as needed. The autoloader expects PascalCase naming matching the YAML filename prefix (`bedroom-rollers.yaml` → `bedroomRollersAutomation.js`). See the [Automations](automations/index.md) section for working examples.
 
 ---
 
@@ -469,11 +401,11 @@ interactions:
 | `targets` | Array of `{device, command}` objects -- direct device control |
 | `calls` | String referencing a custom JavaScript interaction class |
 
-Both can be combined in a single action entry. The `targets` execute first, then the `calls` delegation runs.
+Both can be combined in a single action entry; `targets` execute first, then the `calls` delegation runs.
 
 ### Custom JavaScript Interactions
 
-Create `<Name>Interaction.js` in `etc/interaction/`. Extend `InteractionBase` and implement custom logic. The autoloader uses the same PascalCase naming convention as automations.
+Create `<Name>Interaction.js` in `etc/interaction/`, extending `InteractionBase`. The autoloader uses the same PascalCase naming convention as automations.
 
 ---
 
@@ -489,28 +421,20 @@ Defines the system prompt sent to the LLM, tool descriptions, device role annota
 system_prompt: |
   Your system prompt text here...
 
-sections:
+sections:                  # Strings framing the device list in the prompt
   devices_header: "=== AVAILABLE DEVICES ==="
   device_instruction: 'Mappings (device_name -> function):'
 
 devices:
-  mechanism:                     # Only non-obvious name->function mappings
+  mechanism:               # Only non-obvious name->function mappings
     "Device Name": "human description"
 
-tools:
-  set_device_state:
-    description: "Change device state..."
-    parameters:
-      device_name: 'Description...'
-      action: "Available actions..."
+tools:                     # LLM tool descriptions and their parameter docs
+  set_device_state: { description: "Change device state...", parameters: { device_name: 'Description...', action: "Available actions..." } }
+  get_device_state: { description: "Check device state...", parameters: { device_name: "Device to check." } }
 
-get_device_state:
-  description: "Check device state..."
-  parameters:
-    device_name: "Device to check."
-
-formatting:
-  decimal_separator: ","         # Locale-specific number formatting
+formatting:                # Locale-specific number formatting
+  decimal_separator: ","
   thousand_separator: " "
 
 periodic:
@@ -528,7 +452,7 @@ Defines voice model settings and audio effects per locale. Referenced by the TTS
 
 ### Date Bundle (`date.yaml`)
 
-Owned by the date helper (`src/lib/date.js`). Holds the localized date/time vocabulary used by speech automations such as the weatherman: day-of-week names, (genitive) month names, the year word, the `date_sentence` fragment (fused into the weatherman's opening line via `{% date %}` on first-of-day / first-of-session runs), the `period_words` for `{% time_of_day %}`, and the `duration_units` for `{% next_interval %}`. This is a system file (force-tracked in git, no `.dist` template) -- it is not a user-customizable speech template.
+Owned by the date helper (`src/lib/date.js`): localized day-of-week and month names, the `date_sentence` fragment, `period_words` for `{% time_of_day %}`, and `duration_units` for `{% next_interval %}` -- the vocabulary behind [Weatherman Speech Rendering](architecture/weatherman-speech-rendering.md). A system file (force-tracked in git, no `.dist` template), not a user-customizable speech template.
 
 ---
 
@@ -546,24 +470,20 @@ Owned by the date helper (`src/lib/date.js`). Holds the localized date/time voca
 
 ### Configuration validation errors
 
-Automaton validates `etc/automaton.yaml` against a schema at startup. If a required key is missing or has the wrong type, you'll see a descriptive error listing each problem. Check the console output or `var/log/debug.log`.
+`etc/automaton.yaml` is validated against a schema at startup; a missing key or wrong type produces a descriptive error listing each problem (check the console or `var/log/debug.log`).
 
 ### Device not found
 
-Ensure every device name in your automations and interactions exactly matches the name configured in Zigbee2MQTT. Names are case-sensitive.
+Device names in automations and interactions must exactly match the name configured in Zigbee2MQTT — names are case-sensitive.
 
 ### Automation never triggers
 
-Verify that:
-- The `timer_interval_ms` is reasonable (not too high)
-- At least one trigger topic matches active MQTT topics
-- Conditions use correct operator syntax (`lt`, `lte`, `gt`, `gte`)
-- Network presence hosts in `triggers_network` match keys in `etc/device/network.yaml`
+Verify that `timer_interval` is reasonable, at least one trigger topic matches active MQTT topics, conditions use correct operator syntax (`lt`, `lte`, `gt`, `gte`), and `triggers_network` hosts match keys in `etc/device/network.yaml`.
 
 ### AI doesn't recognize devices
 
-Check that your `etc/i18n/{locale}/ai.yaml` includes device annotations for any non-obvious device names. The AI uses these mappings to understand which device does what.
+Add annotations for non-obvious device names to `devices.mechanism` in `etc/i18n/{locale}/ai.yaml` — the AI uses these mappings to understand which device does what.
 
 ---
 
-→ [Documentation Home](./index.md) · See also: [Architecture Overview](architecture/index.md) · [Example Automations](examples/index.md)
+→ [Documentation Home](./index.md) · See also: [Architecture Overview](architecture/index.md) · [Automations](automations/index.md) · [Monitors](monitors/index.md)
