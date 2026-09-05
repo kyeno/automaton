@@ -56,49 +56,6 @@ const TESTED_VERSION = '1.9.16.63 (52425f077)'
 const warnedVersions = new Set()
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the trimmed text content of a `<p id="...">` paragraph.
- * @param {string} html - Raw HTML page
- * @param {string} id - Paragraph id to look up
- * @returns {string|null} Text content, or null when the paragraph is absent
- */
-function extractParagraph(html, id) {
-    const match = html.match(new RegExp(`<p[^>]*id="${id}"[^>]*>([\\s\\S]*?)</p>`, 'i'))
-    if (!match) return null
-    return match[1].replace(/<[^>]*>/g, '').trim()
-}
-
-/**
- * Warn once per major.minor when the player version is outside the supported
- * range (or cannot be determined from the page).
- * @param {string|null} version - Raw version string from the page
- * @returns {void}
- */
-function warnUnsupportedVersion(version) {
-    const match = typeof version === 'string' ? version.match(/^(\d+)\.(\d+)/) : null
-    if (
-        match &&
-        Number(match[1]) === SUPPORTED_VERSION_RANGE.major &&
-        Number(match[2]) === SUPPORTED_VERSION_RANGE.minor
-    ) {
-        return
-    }
-
-    const key = match ? `${match[1]}.${match[2]}` : 'unknown'
-    if (warnedVersions.has(key)) return
-    warnedVersions.add(key)
-    LoggerService.warn(
-        `MPC-HC ${version ?? '(version unknown)'} is outside the supported ` +
-        `${SUPPORTED_VERSION_RANGE.major}.${SUPPORTED_VERSION_RANGE.minor}.x range ` +
-        `(verified against ${TESTED_VERSION}); parsing continues but is unverified`,
-        'MpcProvider'
-    )
-}
-
-// ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 
@@ -141,9 +98,9 @@ export default class MpcProvider {
      *   monitor's strike counter, eventually marking the host unreachable)
      */
     parse(body) {
-        warnUnsupportedVersion(extractParagraph(body, 'version'))
+        this.#warnUnsupportedVersion(this.#extractParagraph(body, 'version'))
 
-        const raw = extractParagraph(body, 'statestring')
+        const raw = this.#extractParagraph(body, 'statestring')
         if (raw === null) {
             throw new Error('MPC response has no "statestring" paragraph')
         }
@@ -151,5 +108,53 @@ export default class MpcProvider {
         const status = raw.toLowerCase()
         if (status === 'playing' || status === 'paused') return status
         return 'stopped'
+    }
+
+    // -- Private helpers --------------------------------------------------
+
+    /**
+     * Extract the trimmed text content of a `<p id="...">` paragraph.
+     *
+     * @private
+     * @param {string} html - Raw HTML page
+     * @param {string} id - Paragraph id to look up
+     * @returns {string|null} Text content, or null when the paragraph is absent
+     */
+    #extractParagraph(html, id) {
+        const match = html.match(new RegExp(`<p[^>]*id="${id}"[^>]*>([\\s\\S]*?)</p>`, 'i'))
+        if (!match) return null
+        return match[1].replace(/<[^>]*>/g, '').trim()
+    }
+
+    /**
+     * Warn once per major.minor when the player version is outside the supported
+     * range (or cannot be determined from the page).
+     *
+     * The warned-versions guard lives at module level because the monitor
+     * re-instantiates providers on every sweep -- it must outlive instances.
+     *
+     * @private
+     * @param {string|null} version - Raw version string from the page
+     * @returns {void}
+     */
+    #warnUnsupportedVersion(version) {
+        const match = typeof version === 'string' ? version.match(/^(\d+)\.(\d+)/) : null
+        if (
+            match &&
+            Number(match[1]) === SUPPORTED_VERSION_RANGE.major &&
+            Number(match[2]) === SUPPORTED_VERSION_RANGE.minor
+        ) {
+            return
+        }
+
+        const key = match ? `${match[1]}.${match[2]}` : 'unknown'
+        if (warnedVersions.has(key)) return
+        warnedVersions.add(key)
+        LoggerService.warn(
+            `MPC-HC ${version ?? '(version unknown)'} is outside the supported ` +
+            `${SUPPORTED_VERSION_RANGE.major}.${SUPPORTED_VERSION_RANGE.minor}.x range ` +
+            `(verified against ${TESTED_VERSION}); parsing continues but is unverified`,
+            'MpcProvider'
+        )
     }
 }
