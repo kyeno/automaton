@@ -40,9 +40,9 @@ Before dispatching, the engine compares the commanded state against the device's
 
 ## The `unknown` Status Token
 
-Monitor-backed conditions (`videoPlayer`, and any future monitor) treat a `null` status as an explicit **`unknown`** token rather than a wildcard:
+Monitor-backed conditions (`video-player`, and any future monitor) treat a `null` status as an explicit **`unknown`** token rather than a wildcard:
 
-- An unknown status matches **only** condition lists that explicitly include `unknown` -- and, for the top-level `videoPlayer_suppression` stand-down guard, suppresses only when `unknown` is listed among the suppression statuses.
+- An unknown status matches **only** condition lists that explicitly include `unknown` -- and, for the top-level `video_player_suppression` stand-down guard, suppresses only when `unknown` is listed among the suppression statuses.
 - Each rule decides whether an unknown state is safe to act on: ambient-restore rules opt in (`[paused, stopped, unreachable, unknown]`), playback rules stay inert (no dark-mode action fires on a guess).
 - `unreachable` is a *real* status (the host is online but the player does not answer) and matches lists containing it, independent of `unknown`.
 
@@ -63,5 +63,5 @@ The [Home Theater Mode](../automations/home-theater-mode.md) automation demonstr
 |----------|----------|
 | [Home Theater Mode](../automations/home-theater-mode.md) | Flagship consumer of snapshots, ownership, and `force_restore` |
 | [Video Player Monitor](../monitors/video-player.md) | Source of the statuses the `unknown` token governs |
-| [Configuration Guide](../configuration.md) | Rule syntax: `restore_state_aware`, `force_restore`, `videoPlayer` condition |
+| [Configuration Guide](../configuration.md) | Rule syntax: `restore_state_aware`, `force_restore`, `video-player` condition |
 | [Automation vs Human Differentiation](./automation-human-differentiation.md) | The cooldown/override system these rules dispatch through |

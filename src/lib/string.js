@@ -22,6 +22,24 @@ export function slugify(str) {
 }
 
 /**
+ * Derives the rule-target key used under automation `rules[].targets` from a
+ * DeviceContainer friendly name: trims surrounding whitespace and collapses
+ * internal whitespace runs to single underscores while preserving original
+ * casing (e.g., "Kuchnia Gniazdo LED" -> "Kuchnia_Gniazdo_LED").
+ *
+ * Unlike {@link slugify}, this transform is deliberately near-reversible so
+ * YAML keys stay recognizable as the exact registered device name; it exists
+ * solely for user-facing automation config keys. Internal identity slugs
+ * (cache keys, interaction routing) keep using case-insensitive slugify().
+ *
+ * @param {string} str - The device name to transform.
+ * @returns {string} The transformed target key.
+ */
+export function toTargetKey(str) {
+    return str.trim().replace(/\s+/g, '_')
+}
+
+/**
  * Strips markdown formatting (bold, italic, code blocks, headers, links,
  * images, blockquotes, list markers, horizontal rules) and emoji characters
  * from a string.

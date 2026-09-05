@@ -45,7 +45,7 @@ export default class HomeOfficeRollersAutomation extends RuleBasedAutomationBase
     /**
      * Delegate to the blinds-specific resolver in the base class ("most-closed-wins" merge).
      * @param {DeviceBase} device - Target device
-     * @param {string} targetId - Identifier of the target (from config.targets[].id)
+     * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)
      * @param {{}[]} matchingRules - Rules whose conditions matched
      */
     resolveCommand(device, targetId, matchingRules) {

@@ -4,17 +4,16 @@
 # Each rule acts at most once per day ("once: true"), then stands down until
 # the next window opens -- humans keep full control of the lights in between.
 #
-# Copy this file to "ambient-lights.yaml" and customize device names/ids.
+# Copy this file to "ambient-lights.yaml" and customize device names/thresholds.
 
+# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
+# keys are these same names with spaces replaced by underscores (casing kept).
 targets:
   # --- Ambient lamps (sockets) -- morning OFF + evening ON ---
-  - name: 'Kitchen Outlet'
-    id: kitchen_outlet
-  - name: 'Hallway Outlet'
-    id: hallway_outlet
+  - 'Kitchen Outlet'
+  - 'Hallway Outlet'
   # --- Wall switches driving main room lights -- morning OFF only ---
-  - name: 'Living Room Switch'
-    id: living_switch
+  - 'Living Room Switch'
 
 sensors:
   illuminance: 'Outdoor Luminance'
@@ -31,9 +30,9 @@ rules:
       time-of-day: [morning]
       illuminance: { gte: 20 }
     targets:
-      kitchen_outlet: OFF
-      hallway_outlet: OFF
-      living_switch: OFF
+      Kitchen_Outlet: OFF
+      Hallway_Outlet: OFF
+      Living_Room_Switch: OFF
 
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
@@ -41,5 +40,5 @@ rules:
       time-of-day: [evening]
       illuminance: { lt: 900 }
     targets:
-      kitchen_outlet: ON
-      hallway_outlet: ON
+      Kitchen_Outlet: ON
+      Hallway_Outlet: ON

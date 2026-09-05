@@ -30,7 +30,7 @@ A minimal night-close roller automation plus its companion **pilot remote intera
 
 ## Home Theater Mode
 
-Stages a room for watching: rollers are owned and closed while the room's video player answers HTTP (any state) and handed back when it disappears; playback drives the lights — dark mode while playing, state-aware ambient restore on pause. Demonstrates the `videoPlayer` condition with the explicit `unknown` token, `force_restore`, and restore/ownership semantics.
+Stages a room for watching: rollers are owned and closed while the room's video player answers HTTP (any state) and handed back when it disappears; playback drives the lights — dark mode while playing, state-aware ambient restore on pause. Demonstrates the `video-player` condition with the explicit `unknown` token, `force_restore`, and restore/ownership semantics.
 
 → [Full documentation](./home-theater-mode.md)
 

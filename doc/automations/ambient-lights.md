@@ -19,7 +19,7 @@ Each rule carries its own per-target command map, so the ON and OFF sets can dif
 | Bright morning → `OFF` | `time-of-day: [morning]`, `illuminance: { gte: 20 }` | Every listed target (sockets and wall switches) |
 | Settled dusk → `ON` | `time-of-day: [evening]`, `illuminance: { lt: <threshold> }` | Only the socket-powered lamps |
 
-The shared `targets:` section maps display names to short ids; each rule's `targets:` map references those ids with an action value. Simple automations may instead use a single flat `action:` field applied uniformly to every listed device.
+The top-level `targets:` section lists device friendly names exactly as registered; each rule's `targets:` map addresses them by their derived **target key** -- the name trimmed with whitespace collapsed to underscores, casing preserved (`Kitchen Outlet` -> `Kitchen_Outlet`). Simple automations may instead use a single flat `action:` field applied uniformly to every listed device.
 
 ## Configuration File
 
@@ -40,8 +40,8 @@ rules:
     conditions:
       time-of-day: [morning]
       illuminance: { gte: 20 }
-    targets:                    # Per-target actions for this rule
-      kitchen_outlet: OFF
+    targets:                    # Per-target actions (keys = declared names, spaces -> _)
+      Kitchen_Outlet: OFF
       ...
 ```
 

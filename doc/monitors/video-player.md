@@ -71,11 +71,11 @@ triggers_video:          # Re-evaluate when these players change status
 rules:
   - name: 'Living room: playing - dark mode'
     conditions:
-      videoPlayer: { my-pc: [playing] }
+      video-player: { my-pc: [playing] }
     targets: ...
 ```
 
-Full `videoPlayer` condition syntax (including the `unknown` token) and the related top-level `videoPlayer_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
+Full `video-player` condition syntax (including the `unknown` token) and the related top-level `video_player_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
 
 ## File Map
 

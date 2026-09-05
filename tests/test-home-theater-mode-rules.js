@@ -120,7 +120,7 @@ class TestHomeTheaterMode extends RuleBasedAutomationBase {
     /** @type {Object} */ #context
 
     /**
-     * @param {Map<string, Object>} devices - Map of target id -> stub device
+     * @param {Map<string, Object>} devices - Map of rule-target key -> stub device
      * @param {Object} context - Fabricated sensor context
      */
     constructor(devices, context) {
@@ -157,30 +157,30 @@ function makeHomeTheaterMode(devices, context) {
             {
                 name: 'HTPC: player reachable - close Salon rollers',
                 conditions: {
-                    videoPlayer: { htpc: ['playing', 'paused', 'stopped'] }
+                    'video-player': { htpc: ['playing', 'paused', 'stopped'] }
                 },
-                targets: { htpc_salon_lewe: 'CLOSE', htpc_salon_prawe: 'CLOSE' }
+                targets: { Salon_Roleta_Okno_Lewe: 'CLOSE', Salon_Roleta_Okno_Prawe: 'CLOSE' }
             },
             {
                 name: 'HTPC: player gone - hand Salon rollers back',
                 conditions: {
-                    videoPlayer: { htpc: ['unknown', 'unreachable'] }
+                    'video-player': { htpc: ['unknown', 'unreachable'] }
                 },
-                targets: { htpc_salon_lewe: 'OPEN', htpc_salon_prawe: 'OPEN' }
+                targets: { Salon_Roleta_Okno_Lewe: 'OPEN', Salon_Roleta_Okno_Prawe: 'OPEN' }
             },
             {
                 name: 'Bedroom: player reachable - close Sypialnia rollers',
                 conditions: {
-                    videoPlayer: { bedroom: ['playing', 'paused', 'stopped'] }
+                    'video-player': { bedroom: ['playing', 'paused', 'stopped'] }
                 },
-                targets: { bedroom_syp_lewe_lewa: 'CLOSE' }
+                targets: { Sypialnia_Roleta_Okno_Lewe_Lewa: 'CLOSE' }
             },
             {
                 name: 'Bedroom: player gone - hand Sypialnia rollers back',
                 conditions: {
-                    videoPlayer: { bedroom: ['unknown', 'unreachable'] }
+                    'video-player': { bedroom: ['unknown', 'unreachable'] }
                 },
-                targets: { bedroom_syp_lewe_lewa: 'OPEN' }
+                targets: { Sypialnia_Roleta_Okno_Lewe_Lewa: 'OPEN' }
             },
             // Lights: playback controls them, the player merely being open does not.
             // (Presence conditions are omitted here only because the test fabricates
@@ -188,38 +188,38 @@ function makeHomeTheaterMode(devices, context) {
             {
                 name: 'HTPC: not playing - always-on ambient lights',
                 conditions: {
-                    videoPlayer: { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }
+                    'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }
                 },
                 force_restore: true,
-                targets: { htpc_przedp_gniazdo: 'ON' }
+                targets: { Przedpokoj_Gniazdo: 'ON' }
             },
             {
                 name: 'HTPC: not playing - restore remaining lights (state-aware)',
                 conditions: {
-                    videoPlayer: { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }
+                    'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }
                 },
-                targets: { htpc_kuchnia_gniazdo: 'ON' }
+                targets: { Kuchnia_Gniazdo: 'ON' }
             },
             {
                 name: 'HTPC: playing - dark mode',
                 conditions: {
-                    videoPlayer: { htpc: ['playing'] }
+                    'video-player': { htpc: ['playing'] }
                 },
-                targets: { htpc_przedp_gniazdo: 'OFF', htpc_kuchnia_gniazdo: 'OFF' }
+                targets: { Przedpokoj_Gniazdo: 'OFF', Kuchnia_Gniazdo: 'OFF' }
             },
             {
                 name: 'Bedroom: not playing - restore ambient lights (state-aware)',
                 conditions: {
-                    videoPlayer: { bedroom: ['paused', 'stopped', 'unreachable', 'unknown'] }
+                    'video-player': { bedroom: ['paused', 'stopped', 'unreachable', 'unknown'] }
                 },
-                targets: { bedroom_sypialnia_gniazdo: 'ON' }
+                targets: { Sypialnia_Gniazdo: 'ON' }
             },
             {
                 name: 'Bedroom: playing - dark mode',
                 conditions: {
-                    videoPlayer: { bedroom: ['playing'] }
+                    'video-player': { bedroom: ['playing'] }
                 },
-                targets: { bedroom_sypialnia_gniazdo: 'OFF' }
+                targets: { Sypialnia_Gniazdo: 'OFF' }
             }
         ]
     }
@@ -251,7 +251,7 @@ async function runSequence(devices, steps) {
  * Assert a device received exactly the expected payload sequence (and that
  * every dispatched command was automation-originated).
  * @param {Map<string, Object>} devices
- * @param {string} id - Target id
+ * @param {string} id - Rule-target key
  * @param {(Object|string)[]} expectedPayloads - Expected payloads, in order
  * @param {string} label - Assertion label
  */
@@ -281,12 +281,12 @@ const CONTEXT = { timeOfDay: 'evening' }
  */
 function makeDevices() {
     return new Map([
-        ['htpc_przedp_gniazdo', makeStubDevice('Przedpokoj Gniazdo', { state: 'ON' })],
-        ['htpc_kuchnia_gniazdo', makeStubDevice('Kuchnia Gniazdo', { state: 'OFF' })],
-        ['htpc_salon_lewe', makeStubDevice('Salon Roleta Okno Lewe', { position: 50 })],
-        ['htpc_salon_prawe', makeStubDevice('Salon Roleta Okno Prawe', { position: 50 })],
-        ['bedroom_sypialnia_gniazdo', makeStubDevice('Sypialnia Gniazdo', { state: 'ON' })],
-        ['bedroom_syp_lewe_lewa', makeStubDevice('Sypialnia Roleta Okno Lewe Lewa', { position: 50 })]
+        ['Przedpokoj_Gniazdo', makeStubDevice('Przedpokoj Gniazdo', { state: 'ON' })],
+        ['Kuchnia_Gniazdo', makeStubDevice('Kuchnia Gniazdo', { state: 'OFF' })],
+        ['Salon_Roleta_Okno_Lewe', makeStubDevice('Salon Roleta Okno Lewe', { position: 50 })],
+        ['Salon_Roleta_Okno_Prawe', makeStubDevice('Salon Roleta Okno Prawe', { position: 50 })],
+        ['Sypialnia_Gniazdo', makeStubDevice('Sypialnia Gniazdo', { state: 'ON' })],
+        ['Sypialnia_Roleta_Okno_Lewe_Lewa', makeStubDevice('Sypialnia Roleta Okno Lewe Lewa', { position: 50 })]
     ])
 }
 
@@ -310,20 +310,20 @@ console.log('\n── Home theater mode: dark mode, pause restores only what was
         { htpc: 'playing', bedroom: 'stopped' },
         { htpc: 'paused', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'htpc_przedp_gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'htpc_przedp_gniazdo: OFF then restored ON (always-on ambient, force_restore)')
-    assertCalls(devices, 'htpc_kuchnia_gniazdo', [],
-        'htpc_kuchnia_gniazdo: silent (OFF no-op -- already off; ON skipped -- no memory)')
-    assertCalls(devices, 'htpc_salon_lewe', ['CLOSE'],
-        'htpc_salon_lewe: CLOSE once (paused re-tick suppressed as no-op)')
-    assertCalls(devices, 'htpc_salon_prawe', ['CLOSE'],
-        'htpc_salon_prawe: CLOSE once (paused re-tick suppressed as no-op)')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
+        'Przedpokoj_Gniazdo: OFF then restored ON (always-on ambient, force_restore)')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [],
+        'Kuchnia_Gniazdo: silent (OFF no-op -- already off; ON skipped -- no memory)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'],
+        'Salon_Roleta_Okno_Lewe: CLOSE once (paused re-tick suppressed as no-op)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'],
+        'Salon_Roleta_Okno_Prawe: CLOSE once (paused re-tick suppressed as no-op)')
     // Bedroom player open but idle: its roller is still owned (closed), and the
     // still-on ambient light is an ON no-op -- never double-commanded.
-    assertCalls(devices, 'bedroom_sypialnia_gniazdo', [],
-        'bedroom_sypialnia_gniazdo: silent (still on -- ON no-op)')
-    assertCalls(devices, 'bedroom_syp_lewe_lewa', ['CLOSE'],
-        'bedroom_syp_lewe_lewa: CLOSE once (player reachable though idle)')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [],
+        'Sypialnia_Gniazdo: silent (still on -- ON no-op)')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'],
+        'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE once (player reachable though idle)')
 }
 
 console.log('\n── Home theater mode: already-dark room, only the always-on ambient returns ──\n')
@@ -336,26 +336,26 @@ console.log('\n── Home theater mode: already-dark room, only the always-on a
         { htpc: 'playing', bedroom: 'stopped' },
         { htpc: 'paused', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'htpc_przedp_gniazdo', [{ state: 'ON' }],
-        'htpc_przedp_gniazdo: forced ON on pause (force_restore ambient)')
-    assertCalls(devices, 'htpc_kuchnia_gniazdo', [],
-        'htpc_kuchnia_gniazdo: never forced back on (was off, no memory)')
-    assertCalls(devices, 'htpc_salon_lewe', [], 'htpc_salon_lewe: CLOSE suppressed (already closed)')
-    assertCalls(devices, 'htpc_salon_prawe', [], 'htpc_salon_prawe: CLOSE suppressed (already closed)')
-    assertCalls(devices, 'bedroom_sypialnia_gniazdo', [], 'bedroom_sypialnia_gniazdo: never forced back on')
-    assertCalls(devices, 'bedroom_syp_lewe_lewa', [], 'bedroom_syp_lewe_lewa: CLOSE suppressed (already closed)')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'ON' }],
+        'Przedpokoj_Gniazdo: forced ON on pause (force_restore ambient)')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [],
+        'Kuchnia_Gniazdo: never forced back on (was off, no memory)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', [], 'Salon_Roleta_Okno_Lewe: CLOSE suppressed (already closed)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', [], 'Salon_Roleta_Okno_Prawe: CLOSE suppressed (already closed)')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [], 'Sypialnia_Gniazdo: never forced back on')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', [], 'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE suppressed (already closed)')
 }
 
 console.log('\n── Home theater mode: both playing (full dark) ──\n')
 
 {
     const devices = await runSequence(makeDevices(), [{ htpc: 'playing', bedroom: 'playing' }])
-    assertCalls(devices, 'htpc_przedp_gniazdo', [{ state: 'OFF' }], 'htpc_przedp_gniazdo: OFF')
-    assertCalls(devices, 'htpc_kuchnia_gniazdo', [], 'htpc_kuchnia_gniazdo: OFF suppressed (already off)')
-    assertCalls(devices, 'htpc_salon_lewe', ['CLOSE'], 'htpc_salon_lewe: CLOSE')
-    assertCalls(devices, 'htpc_salon_prawe', ['CLOSE'], 'htpc_salon_prawe: CLOSE')
-    assertCalls(devices, 'bedroom_sypialnia_gniazdo', [{ state: 'OFF' }], 'bedroom_sypialnia_gniazdo: OFF')
-    assertCalls(devices, 'bedroom_syp_lewe_lewa', ['CLOSE'], 'bedroom_syp_lewe_lewa: CLOSE')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }], 'Przedpokoj_Gniazdo: OFF')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: OFF suppressed (already off)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'], 'Salon_Roleta_Okno_Lewe: CLOSE')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'], 'Salon_Roleta_Okno_Prawe: CLOSE')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }], 'Sypialnia_Gniazdo: OFF')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'], 'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE')
 }
 
 console.log('\n── Home theater mode: movie ends (stopped) -- lights return, rollers stay owned ──\n')
@@ -368,16 +368,16 @@ console.log('\n── Home theater mode: movie ends (stopped) -- lights return, 
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: 'stopped', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'htpc_przedp_gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'htpc_przedp_gniazdo: OFF then restored ON')
-    assertCalls(devices, 'htpc_kuchnia_gniazdo', [],
-        'htpc_kuchnia_gniazdo: silent (was off before dark mode)')
-    assertCalls(devices, 'htpc_salon_lewe', ['CLOSE'],
-        'htpc_salon_lewe: CLOSE only (stopped keeps the rollers owned)')
-    assertCalls(devices, 'htpc_salon_prawe', ['CLOSE'], 'htpc_salon_prawe: CLOSE only')
-    assertCalls(devices, 'bedroom_sypialnia_gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'bedroom_sypialnia_gniazdo: OFF then restored ON (state-aware memory)')
-    assertCalls(devices, 'bedroom_syp_lewe_lewa', ['CLOSE'], 'bedroom_syp_lewe_lewa: CLOSE only')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
+        'Przedpokoj_Gniazdo: OFF then restored ON')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [],
+        'Kuchnia_Gniazdo: silent (was off before dark mode)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'],
+        'Salon_Roleta_Okno_Lewe: CLOSE only (stopped keeps the rollers owned)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'], 'Salon_Roleta_Okno_Prawe: CLOSE only')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
+        'Sypialnia_Gniazdo: OFF then restored ON (state-aware memory)')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'], 'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE only')
 }
 
 console.log('\n── Home theater mode: roller ownership lifecycle (reachable -> gone -> reachable) ──\n')
@@ -397,18 +397,18 @@ console.log('\n── Home theater mode: roller ownership lifecycle (reachable -
         { htpc: 'playing', bedroom: null },
         { htpc: 'unreachable', bedroom: null }
     ])
-    assertCalls(devices, 'htpc_salon_lewe', ['CLOSE', 'OPEN', 'CLOSE', 'OPEN'],
-        'htpc_salon_lewe: CLOSE, hand-back OPEN on unknown, re-owned CLOSE, OPEN on unreachable')
-    assertCalls(devices, 'htpc_salon_prawe', ['CLOSE', 'OPEN', 'CLOSE', 'OPEN'],
-        'htpc_salon_prawe: CLOSE, OPEN, CLOSE, OPEN')
-    assertCalls(devices, 'htpc_przedp_gniazdo',
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'OPEN', 'CLOSE', 'OPEN'],
+        'Salon_Roleta_Okno_Lewe: CLOSE, hand-back OPEN on unknown, re-owned CLOSE, OPEN on unreachable')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'OPEN', 'CLOSE', 'OPEN'],
+        'Salon_Roleta_Okno_Prawe: CLOSE, OPEN, CLOSE, OPEN')
+    assertCalls(devices, 'Przedpokoj_Gniazdo',
         [{ state: 'OFF' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
-        'htpc_przedp_gniazdo: dark mode and restore follow playback, not ownership')
-    assertCalls(devices, 'htpc_kuchnia_gniazdo', [], 'htpc_kuchnia_gniazdo: silent throughout')
-    assertCalls(devices, 'bedroom_syp_lewe_lewa', [],
-        'bedroom_syp_lewe_lewa: never opened (automation never closed it)')
-    assertCalls(devices, 'bedroom_sypialnia_gniazdo', [],
-        'bedroom_sypialnia_gniazdo: silent (still on -- ON no-op)')
+        'Przedpokoj_Gniazdo: dark mode and restore follow playback, not ownership')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: silent throughout')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', [],
+        'Sypialnia_Roleta_Okno_Lewe_Lewa: never opened (automation never closed it)')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [],
+        'Sypialnia_Gniazdo: silent (still on -- ON no-op)')
 }
 
 console.log('\n── Home theater mode: rollers found closed are never opened on hand-back ──\n')
@@ -418,19 +418,19 @@ console.log('\n── Home theater mode: rollers found closed are never opened o
     // is a no-op and writes no snapshot, so the later hand-back OPEN must not
     // fire -- blinds this automation did not close stay as they are.
     const devices = makeDevices()
-    devices.get('htpc_salon_lewe').stateLast = { position: 0 }
-    devices.get('htpc_salon_prawe').stateLast = { position: 0 }
+    devices.get('Salon_Roleta_Okno_Lewe').stateLast = { position: 0 }
+    devices.get('Salon_Roleta_Okno_Prawe').stateLast = { position: 0 }
     const after = await runSequence(devices, [
         { htpc: 'playing', bedroom: null },
         { htpc: null, bedroom: null }
     ])
-    assertCalls(after, 'htpc_salon_lewe', [],
-        'htpc_salon_lewe: stays closed (CLOSE no-op, OPEN without ownership)')
-    assertCalls(after, 'htpc_salon_prawe', [], 'htpc_salon_prawe: stays closed')
-    assertCalls(after, 'htpc_przedp_gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'htpc_przedp_gniazdo: lights still cycle normally')
-    assertCalls(after, 'htpc_kuchnia_gniazdo', [], 'htpc_kuchnia_gniazdo: silent')
-    assertCalls(after, 'bedroom_syp_lewe_lewa', [], 'bedroom_syp_lewe_lewa: never opened')
+    assertCalls(after, 'Salon_Roleta_Okno_Lewe', [],
+        'Salon_Roleta_Okno_Lewe: stays closed (CLOSE no-op, OPEN without ownership)')
+    assertCalls(after, 'Salon_Roleta_Okno_Prawe', [], 'Salon_Roleta_Okno_Prawe: stays closed')
+    assertCalls(after, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
+        'Przedpokoj_Gniazdo: lights still cycle normally')
+    assertCalls(after, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: silent')
+    assertCalls(after, 'Sypialnia_Roleta_Okno_Lewe_Lewa', [], 'Sypialnia_Roleta_Okno_Lewe_Lewa: never opened')
 }
 
 console.log('\n── Home theater mode: players vanish mid-movie (unknown) -- full hand-back ──\n')
@@ -443,55 +443,55 @@ console.log('\n── Home theater mode: players vanish mid-movie (unknown) -- f
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: null, bedroom: null }
     ])
-    assertCalls(devices, 'htpc_przedp_gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'htpc_przedp_gniazdo: OFF then restored ON')
-    assertCalls(devices, 'htpc_kuchnia_gniazdo', [], 'htpc_kuchnia_gniazdo: silent (was off before)')
-    assertCalls(devices, 'htpc_salon_lewe', ['CLOSE', 'OPEN'],
-        'htpc_salon_lewe: CLOSE then hand-back OPEN')
-    assertCalls(devices, 'htpc_salon_prawe', ['CLOSE', 'OPEN'], 'htpc_salon_prawe: CLOSE then OPEN')
-    assertCalls(devices, 'bedroom_sypialnia_gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'bedroom_sypialnia_gniazdo: OFF then restored ON')
-    assertCalls(devices, 'bedroom_syp_lewe_lewa', ['CLOSE', 'OPEN'],
-        'bedroom_syp_lewe_lewa: CLOSE then hand-back OPEN')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
+        'Przedpokoj_Gniazdo: OFF then restored ON')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: silent (was off before)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'OPEN'],
+        'Salon_Roleta_Okno_Lewe: CLOSE then hand-back OPEN')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'OPEN'], 'Salon_Roleta_Okno_Prawe: CLOSE then OPEN')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
+        'Sypialnia_Gniazdo: OFF then restored ON')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE', 'OPEN'],
+        'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE then hand-back OPEN')
 }
 
 // ---------------------------------------------------------------------------
-// videoPlayer condition unit checks
+// video-player condition unit checks
 // ---------------------------------------------------------------------------
 
-console.log('\n── videoPlayer condition (conditionsMatch) ──\n')
+console.log('\n── video-player condition (conditionsMatch) ──\n')
 
 {
     const auto = makeHomeTheaterMode(new Map([['stub', makeStubDevice('Stub')]]), CONTEXT)
 
     // playing matches [playing]
     await setVideoStatus('htpc', 'playing')
-    assert(await auto.conditionsMatch({ videoPlayer: { htpc: 'playing' } }, CONTEXT),
-        'videoPlayer: htpc=playing matches [playing]')
-    assert(!(await auto.conditionsMatch({ videoPlayer: { htpc: ['paused', 'stopped'] } }, CONTEXT)),
-        'videoPlayer: htpc=playing rejected by [paused, stopped]')
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: 'playing' } }, CONTEXT),
+        'video-player: htpc=playing matches [playing]')
+    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
+        'video-player: htpc=playing rejected by [paused, stopped]')
     // paused matches the not-playing list
     await setVideoStatus('htpc', 'paused')
-    assert(await auto.conditionsMatch({ videoPlayer: { htpc: ['paused', 'stopped', 'unreachable'] } }, CONTEXT),
-        'videoPlayer: htpc=paused matches not-playing list')
-    assert(!(await auto.conditionsMatch({ videoPlayer: { htpc: ['playing'] } }, CONTEXT)),
-        'videoPlayer: htpc=paused rejected by [playing]')
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unreachable'] } }, CONTEXT),
+        'video-player: htpc=paused matches not-playing list')
+    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
+        'video-player: htpc=paused rejected by [playing]')
     // unreachable matches the not-playing list
     await setVideoStatus('htpc', 'unreachable')
-    assert(await auto.conditionsMatch({ videoPlayer: { htpc: ['paused', 'stopped', 'unreachable'] } }, CONTEXT),
-        'videoPlayer: htpc=unreachable matches not-playing list')
-    assert(!(await auto.conditionsMatch({ videoPlayer: { htpc: ['unknown'] } }, CONTEXT)),
-        'videoPlayer: unreachable is a real status, not the unknown token')
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unreachable'] } }, CONTEXT),
+        'video-player: htpc=unreachable matches not-playing list')
+    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['unknown'] } }, CONTEXT)),
+        'video-player: unreachable is a real status, not the unknown token')
     // Unknown (null) status: matches ONLY lists that explicitly opt in via the
     // 'unknown' token (ambient restore, ownership hand-back). Playback
     // requirements and plain not-playing lists stay inert on a guess.
     await setVideoStatus('htpc', null)
-    assert(!(await auto.conditionsMatch({ videoPlayer: { htpc: ['playing'] } }, CONTEXT)),
-        'videoPlayer: unknown status does not satisfy a "playing" requirement')
-    assert(!(await auto.conditionsMatch({ videoPlayer: { htpc: ['paused', 'stopped'] } }, CONTEXT)),
-        'videoPlayer: unknown status does not match a list without the unknown token')
-    assert(await auto.conditionsMatch({ videoPlayer: { htpc: ['paused', 'stopped', 'unknown'] } }, CONTEXT),
-        'videoPlayer: unknown status matches a list that opts in via unknown')
+    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
+        'video-player: unknown status does not satisfy a "playing" requirement')
+    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
+        'video-player: unknown status does not match a list without the unknown token')
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unknown'] } }, CONTEXT),
+        'video-player: unknown status matches a list that opts in via unknown')
 }
 
 // ---------------------------------------------------------------------------

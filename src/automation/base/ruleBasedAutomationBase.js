@@ -4,7 +4,7 @@
  * Extends {@link ../automationBase.js} with context building (sensor readings,
  * time-of-day periods, network presence), YAML config parsing, condition
  * evaluation (including optional `season` conditions and per-rule daily `once`
- * markers), an optional top-level `videoPlayer_suppression` stand-down guard,
+ * markers), an optional top-level `video_player_suppression` stand-down guard,
  * and a template-method `execute()` flow. Subclasses implement
  * {@link loadDevices} and {@link resolveCommand} hooks.
  *
@@ -23,7 +23,7 @@ import temporal from '../../lib/date.js'
 import CacheService from '../../service/cacheService.js'
 import LoggerService from '../../service/loggerService.js'
 import { parseDocument as yamlParseDocument } from 'yaml'
-import { slugify } from '../../lib/string.js'
+import { slugify, toTargetKey } from '../../lib/string.js'
 
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import networkPresence from '../../monitor/networkPresence.js'
@@ -77,6 +77,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @type {Map<string, boolean>}
      */
     #restoreMemory = new Map()
+
+    /**
+     * Config object already validated by {@link validateTargets} -- warnings are
+     * emitted at most once per config instance instead of on every tick; a
+     * replaced config object (tests, reloads) re-triggers validation.
+     * @type {{targets?: unknown, rules?: unknown}|null}
+     */
+    #validatedConfig = null
 
     /**
      * Construct a rule-based automation.
@@ -205,8 +213,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         // video player status check
-        if (conditions.videoPlayer !== undefined) {
-            const expected = this.#normalizeVideoPlayerCondition(conditions.videoPlayer)
+        if (conditions['video-player'] !== undefined) {
+            const expected = this.#normalizeVideoPlayerCondition(conditions['video-player'])
             for (const [host, statuses] of Object.entries(expected)) {
                 const status = await videoPlayerMonitor.getStatus(host)
                 if (!status) {
@@ -227,7 +235,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'season' || key === 'presence' || key === 'videoPlayer') continue // handled above
+            if (key === 'time-of-day' || key === 'season' || key === 'presence' || key === 'video-player') continue // handled above
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -253,7 +261,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @param {string} [triggerData.trigger] - Trigger source identifier
      * @param {boolean} [triggerData.force] - When true (e.g., "/automation force"), bypasses the
      *   silent-period suppression and per-rule once-per-day markers; human-interaction cooldowns still
-     *   apply, and the top-level videoPlayer_suppression stand-down guard is never bypassed
+     *   apply, and the top-level video_player_suppression stand-down guard is never bypassed
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
@@ -273,25 +281,25 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
-        // Top-level video-player stand-down guard (videoPlayer_suppression): while
+        // Top-level video-player stand-down guard (video_player_suppression): while
         // any listed player is in one of its listed statuses, the automation stands
         // down so it does not fight another automation (e.g., Home Theater Mode)
         // over the same devices. Individual rules may opt out via
-        // ignore_videoPlayer_suppression. Unlike the silent period, this guard is
+        // ignore_video_player_suppression. Unlike the silent period, this guard is
         // NOT bypassed by a forced run -- forcing must not create device fights.
         let suppressionActive = false
-        if (this.config.videoPlayer_suppression) {
+        if (this.config.video_player_suppression) {
             if (await this.#evaluateVideoPlayerSuppression()) {
                 const hasExemptRule = (this.config.rules ?? []).some(
-                    (rule) => rule.ignore_videoPlayer_suppression === true
+                    (rule) => rule.ignore_video_player_suppression === true
                 )
                 if (!hasExemptRule) {
-                    this.log(`Suppressed by videoPlayer_suppression (${triggerSource})`, 'debug')
+                    this.log(`Suppressed by video_player_suppression (${triggerSource})`, 'debug')
                     return
                 }
                 suppressionActive = true
                 this.log(
-                    `videoPlayer_suppression active -- evaluating exempt rules only (${triggerSource})`,
+                    `video_player_suppression active -- evaluating exempt rules only (${triggerSource})`,
                     'debug'
                 )
             }
@@ -316,6 +324,15 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         const rules = this.config.rules ?? []
 
+        // Surface target-key misconfigurations exactly once per config object --
+        // an unknown rule key would otherwise be silently inert on every tick.
+        if (this.#validatedConfig !== this.config) {
+            this.#validatedConfig = this.config
+            for (const warning of this.validateTargets()) {
+                this.log(warning, 'warn')
+            }
+        }
+
         // Build device map via subclass hook
         const devices = this.loadDevices()
         if (devices.size === 0) {
@@ -327,7 +344,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         const matchingRules = []
         for (const rule of rules) {
             // Stand-down guard active: only rules that opted out participate.
-            if (suppressionActive && rule.ignore_videoPlayer_suppression !== true) continue
+            if (suppressionActive && rule.ignore_video_player_suppression !== true) continue
 
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
@@ -447,41 +464,35 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /**
-     * Load target devices from config and return as a Map.
-     * Supports two config formats:
-     *   - targets: [{ id, name }] -- returns Map keyed by id
-     *   - devices: ['name1', 'name2'] -- returns Map keyed by name
+     * Load target devices from config and return as a Map keyed by each
+     * device's rule-target key (see toTargetKey in lib/string.js: friendly name
+     * trimmed, whitespace collapsed to underscores, casing preserved). The
+     * top-level "targets:" section is an array of DeviceContainer friendly
+     * names; rules reference those same keys under their own "targets:" maps.
      * Subclasses may override for custom device structures.
      * 
      * @returns {Map<string, DeviceBase>} map of target key -> device
      */
     loadDevices() {
         const result = new Map()
+        const targets = this.config.targets
+        if (!Array.isArray(targets)) return result
 
-        // Format 1: targets array with { id, name } objects (blinds)
-        if (this.config.targets) {
-            for (const target of this.config.targets) {
-                const device = this.findDevice(target.name)
-                if (device) {
-                    result.set(target.id, device)
-                } else {
-                    this.log(`Target device "${target.name}" not found`, 'warn')
-                }
+        for (const target of targets) {
+            if (typeof target !== 'string' || target.trim().length === 0) {
+                this.log(
+                    `Invalid entry in "targets" -- expected a device name string, got ${JSON.stringify(target)} ` +
+                    '(legacy "{name, id}" objects are no longer supported)',
+                    'warn'
+                )
+                continue
             }
-            return result
-        }
-
-        // Format 2: devices array of simple name strings (lights)
-        if (this.config.devices) {
-            for (const devName of this.config.devices) {
-                const device = this.findDevice(devName)
-                if (device) {
-                    result.set(devName, device)
-                } else {
-                    this.log(`Device "${devName}" not found`, 'warn')
-                }
+            const device = this.findDevice(target)
+            if (device) {
+                result.set(toTargetKey(target), device)
+            } else {
+                this.log(`Target device "${target}" not found`, 'warn')
             }
-            return result
         }
 
         return result
@@ -494,6 +505,60 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     findDevice(name) {
         return DeviceContainer.findByName(name)
+    }
+
+    /**
+     * Check the top-level "targets:" list against rule usage and report config
+     * problems as human-readable warnings (returned, not logged -- callers
+     * decide when to surface them):
+     *   - duplicate keys: two friendly names collapsing onto one target key, so
+     *     only one of the devices is addressable from rules;
+     *   - unknown rule keys: a rule's "targets:" map references a key no
+     *     declared target maps to -- such commands are silently inert (usually a
+     *     typo or a renamed device).
+     * Pure with respect to this.config; safe to call repeatedly.
+     *
+     * @returns {string[]} Warning messages (empty when the config is consistent)
+     */
+    validateTargets() {
+        const warnings = []
+        const config = this.config ?? {}
+        const targets = Array.isArray(config.targets) ? config.targets : []
+
+        // Map each target key back to the friendly name(s) producing it.
+        const namesByKey = new Map()
+        for (const target of targets) {
+            if (typeof target !== 'string' || target.trim().length === 0) continue
+            const key = toTargetKey(target)
+            namesByKey.set(key, [...(namesByKey.get(key) ?? []), target])
+        }
+
+        for (const [key, names] of namesByKey) {
+            if (names.length > 1) {
+                warnings.push(
+                    `Duplicate target key "${key}": both ${names.map(n => `"${n}"`).join(' and ')} map to it -- only one device can be addressed by that key`
+                )
+            }
+        }
+
+        const rules = Array.isArray(config.rules) ? config.rules : []
+        const unknownKeys = new Set()
+        for (const rule of rules) {
+            const ruleTargets = rule?.targets
+            if (!ruleTargets || typeof ruleTargets !== 'object') continue
+            for (const key of Object.keys(ruleTargets)) {
+                if (!namesByKey.has(key)) unknownKeys.add(key)
+            }
+        }
+        if (unknownKeys.size > 0) {
+            warnings.push(
+                `Rule "targets:" reference undeclared keys: ${[...unknownKeys].map(k => `"${k}"`).join(', ')}. ` +
+                `Expected the declared target names with spaces replaced by underscores; valid keys: ` +
+                `[${[...namesByKey.keys()].map(k => `"${k}"`).join(', ')}]`
+            )
+        }
+
+        return warnings
     }
 
     /**
@@ -538,7 +603,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * Subclasses can simply delegate: `return this.blindsResolveCommand(device, key, rules)`
      * 
      * @param {DeviceBase} device - Target device
-     * @param {string} targetId - Identifier for the target (from config.targets[].id)
+     * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)
      * @param {Array} matchingRules - Array of rules whose conditions matched
      * @returns {Object|null} Object with payload property, or null
      */
@@ -571,7 +636,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * Subclasses must implement to define their own command resolution logic.
      * 
      * @param {DeviceBase} device - Target device
-     * @param {string} targetKey - Identifier for the target (id or name)
+     * @param {string} targetKey - Rule-target key identifying the target device (see toTargetKey in lib/string.js)
      * @param {Array} matchingRules - Array of rules whose conditions matched
      * @returns {Object|null} Object with payload and optional skip flag, or null
      */
@@ -587,7 +652,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      *
      * @param {DeviceBase} device - Target device (unused; present for
      *   resolveCommand signature parity)
-     * @param {string} targetId - Identifier of the target (from config.targets[].id)
+     * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)
      * @param {{}[]} matchingRules - Rules whose conditions matched
      * @returns {{payload: object|string}|null} Object with payload, or null
      *   when no matching rule defines a command for the target
@@ -916,9 +981,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /**
-     * Evaluate the top-level `videoPlayer_suppression` stand-down guard.
+     * Evaluate the top-level `video_player_suppression` stand-down guard.
      *
-     * Inverted semantics vs. the per-rule `videoPlayer` condition: instead of
+     * Inverted semantics vs. the per-rule `video-player` condition: instead of
      * statuses a rule requires, the suppression map lists statuses that make
      * the whole automation stand down. Hosts combine with OR -- while ANY
      * listed host reports one of its listed statuses, the guard is active. A
@@ -930,12 +995,12 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @returns {Promise<boolean>} true while the automation should stand down
      */
     async #evaluateVideoPlayerSuppression() {
-        const suppression = this.#normalizeVideoPlayerCondition(this.config.videoPlayer_suppression)
+        const suppression = this.#normalizeVideoPlayerCondition(this.config.video_player_suppression)
         for (const [host, statuses] of Object.entries(suppression)) {
             const status = await videoPlayerMonitor.getStatus(host)
             const effective = status ?? VIDEO_PLAYER_UNKNOWN
             if (statuses.includes(effective)) {
-                this.log(`videoPlayer_suppression: "${host}" is ${effective}`, 'debug')
+                this.log(`video_player_suppression: "${host}" is ${effective}`, 'debug')
                 return true
             }
         }

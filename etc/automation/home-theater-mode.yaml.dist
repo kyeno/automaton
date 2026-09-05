@@ -23,16 +23,13 @@ restore_state_aware: true
 
 targets:
   # Replace with your own Zigbee device names (must exist in zigbee.yaml).
+  # Rule "targets:" keys are these same names with spaces replaced by underscores.
   # --- Living room -- interfering lights / rollers ---
-  - name: 'Living Room Plug'
-    id: theater_living_room_plug
-  - name: 'Living Room Roller Left'
-    id: theater_living_room_roller_left
+  - 'Living Room Plug'
+  - 'Living Room Roller Left'
   # --- Bedroom -- lights / rollers ---
-  - name: 'Bedroom Plug'
-    id: theater_bedroom_plug
-  - name: 'Bedroom Roller Left'
-    id: theater_bedroom_roller_left
+  - 'Bedroom Plug'
+  - 'Bedroom Roller Left'
 
 # Player host names as configured under `videoPlayers` in network.yaml.
 triggers_video:
@@ -51,55 +48,55 @@ rules:
   # it is gone. Hand-back re-opens only rollers this automation closed itself.
   - name: 'Living room: player reachable - close rollers'
     conditions:
-      videoPlayer: { my-pc: [playing, paused, stopped] }
+      video-player: { my-pc: [playing, paused, stopped] }
     targets:
-      theater_living_room_roller_left: CLOSE
+      Living_Room_Roller_Left: CLOSE
 
   - name: 'Living room: player gone - hand rollers back'
     conditions:
-      videoPlayer: { my-pc: [unknown, unreachable] }
+      video-player: { my-pc: [unknown, unreachable] }
     targets:
-      theater_living_room_roller_left: OPEN
+      Living_Room_Roller_Left: OPEN
 
   - name: 'Bedroom: player reachable - close rollers'
     conditions:
-      videoPlayer: { laptop: [playing, paused, stopped] }
+      video-player: { laptop: [playing, paused, stopped] }
     targets:
-      theater_bedroom_roller_left: CLOSE
+      Bedroom_Roller_Left: CLOSE
 
   - name: 'Bedroom: player gone - hand rollers back'
     conditions:
-      videoPlayer: { laptop: [unknown, unreachable] }
+      video-player: { laptop: [unknown, unreachable] }
     targets:
-      theater_bedroom_roller_left: OPEN
+      Bedroom_Roller_Left: OPEN
 
   # Lights: keep `presence` on the light rules -- a machine that is simply
   # switched off must not restore anything.
   - name: 'Bedroom: not playing - always-on ambient lights'
     conditions:
       presence: { laptop: true }
-      videoPlayer: { laptop: [paused, stopped, unreachable, unknown] }
+      video-player: { laptop: [paused, stopped, unreachable, unknown] }
     force_restore: true
     targets:
-      theater_bedroom_plug: ON
+      Bedroom_Plug: ON
 
   - name: 'Bedroom: playing - dark mode'
     conditions:
       presence: { laptop: true }
-      videoPlayer: { laptop: [playing] }
+      video-player: { laptop: [playing] }
     targets:
-      theater_bedroom_plug: OFF
+      Bedroom_Plug: OFF
 
   - name: 'Living room: not playing - restore lights (state-aware)'
     conditions:
       presence: { my-pc: true }
-      videoPlayer: { my-pc: [paused, stopped, unreachable, unknown] }
+      video-player: { my-pc: [paused, stopped, unreachable, unknown] }
     targets:
-      theater_living_room_plug: ON
+      Living_Room_Plug: ON
 
   - name: 'Living room: playing - dark mode'
     conditions:
       presence: { my-pc: true }
-      videoPlayer: { my-pc: [playing] }
+      video-player: { my-pc: [playing] }
     targets:
-      theater_living_room_plug: OFF
+      Living_Room_Plug: OFF

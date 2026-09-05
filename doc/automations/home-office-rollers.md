@@ -16,7 +16,7 @@ Because many rules can be true at once ("warm & not bright → open" while someo
 | Intent | Example condition set | Resulting merge |
 |--------|-----------------------|-----------------|
 | Keep shutters up when warm but dim | `time-of-day: [morning..evening]`, `illuminance < 11000`, `temperature < 25` | `OPEN` unless another matched rule is more closed |
-| Park at a preset while someone is home | `presence: my-laptop`, `illuminance <= 11000` | e.g. left `40`, right `12` — overridden if a `CLOSE` rule also matches |
+| Park at a preset while someone is home | `presence: my-laptop`, `illuminance <= 11000` | e.g. left shutter `40`, right shutter `12` — overridden if a `CLOSE` rule also matches |
 | Hard close at night / extreme heat | `illuminance <= 15`, or `temperature >= 29` in afternoon/noon | `CLOSE` wins for that target |
 
 ## Configuration File
@@ -24,11 +24,9 @@ Because many rules can be true at once ("warm & not bright → open" while someo
 Located at `etc/automation/home-office-rollers.yaml` (template: `home-office-rollers.yaml.dist`). Key fields:
 
 ```yaml
-targets:                      # Display name -> short id used by rules
-  - name: 'Home Office Roller Left'
-    id: left
-  - name: 'Home Office Roller Right'
-    id: right
+targets:                      # Device names exactly as registered; rule keys = these with spaces -> _
+  - 'Home Office Roller Left'
+  - 'Home Office Roller Right'
 
 sensors:                      # Logical key -> Zigbee device feeding the context
   illuminance: 'Outdoor Luminance'
@@ -44,7 +42,7 @@ triggers_network:             # Hosts whose presence can gate rules (see network
 
 timer_interval: "1m"          # How often rules are evaluated when no trigger fires
 
-videoPlayer_suppression:      # Optional stand-down guard (see note below)
+video_player_suppression:      # Optional stand-down guard (see note below)
   my-pc: [playing, paused, stopped]
 
 rules:
@@ -53,14 +51,14 @@ rules:
       time-of-day: [morning, noon, afternoon]
       illuminance: { lte: 11000 }
       presence: my-laptop
-    targets:                  # Per-target actions for this rule
-      left: 40
-      right: 12
+    targets:                  # Per-target actions for this rule (keys = declared names, spaces -> _)
+      Home_Office_Roller_Left: 40
+      Home_Office_Roller_Right: 12
 ```
 
 > **Tuning note:** The illuminance thresholds (`11000`, `12700`) and position presets (`40`, `12`, …) are starting points. Watch your outdoor sensor's real readings through a day and adjust so shutters park where you'd set them by hand. Presence hostnames must match entries in `etc/device/network.yaml`.
 
-> **Stand-down guard:** While any player listed under `videoPlayer_suppression` is in one of the listed statuses, the whole automation stands down -- e.g. so a home-theater automation can own the same shutters during a movie without the two fighting over them. Hosts combine with OR; individual rules may opt out via `ignore_videoPlayer_suppression: true`. See [Video Player Suppression](../configuration.md) in the Configuration Guide.
+> **Stand-down guard:** While any player listed under `video_player_suppression` is in one of the listed statuses, the whole automation stands down -- e.g. so a home-theater automation can own the same shutters during a movie without the two fighting over them. Hosts combine with OR; individual rules may opt out via `ignore_video_player_suppression: true`. See [Video Player Suppression](../configuration.md) in the Configuration Guide.
 
 Season conditions, all numeric operators, and the human-interaction cooldown are documented in the [Configuration Guide](../configuration.md).
 

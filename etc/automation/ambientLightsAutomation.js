@@ -50,7 +50,7 @@ export default class AmbientLightsAutomation extends RuleBasedAutomationBase {
      * command exists. Maps ON/OFF actions to state payloads for mechanisms.
      * 
      * @param {DeviceBase} device - Target device
-     * @param {string} targetId - Identifier of the target (from config.targets[].id)
+     * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)
      * @param {{}[]} matchingRules - Rules whose conditions matched
      * @returns {{payload: object}|null} Object with payload, or null if no command found
      */

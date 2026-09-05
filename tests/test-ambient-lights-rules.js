@@ -105,10 +105,10 @@ function makeStubDevice(name) {
 }
 
 const ALL_IDS = [
-    'kitchen_outlet', 'hallway_outlet', 'living_switch',
+    'Kitchen_Outlet', 'Hallway_Outlet', 'Living_Room_Switch',
 ]
 const AMBIENT_ON_IDS = [
-    'kitchen_outlet', 'hallway_outlet',
+    'Kitchen_Outlet', 'Hallway_Outlet',
 ]
 
 // Self-contained rule set mirroring ambient-lights.yaml.dist -- keeps the suite
@@ -117,12 +117,9 @@ const TEST_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'automaton-ambient-test-'))
 const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'ambient-lights-test.yaml')
 writeFileSync(TEST_CONFIG_PATH, [
     'targets:',
-    "  - name: 'Kitchen Outlet'",
-    '    id: kitchen_outlet',
-    "  - name: 'Hallway Outlet'",
-    '    id: hallway_outlet',
-    "  - name: 'Living Room Switch'",
-    '    id: living_switch',
+    "  - 'Kitchen Outlet'",
+    "  - 'Hallway Outlet'",
+    "  - 'Living Room Switch'",
     '',
     'sensors:',
     "  illuminance: 'Outdoor Luminance'",
@@ -139,9 +136,9 @@ writeFileSync(TEST_CONFIG_PATH, [
     '      time-of-day: [morning]',
     '      illuminance: { gte: 20 }',
     '    targets:',
-    '      kitchen_outlet: OFF',
-    '      hallway_outlet: OFF',
-    '      living_switch: OFF',
+    '      Kitchen_Outlet: OFF',
+    '      Hallway_Outlet: OFF',
+    '      Living_Room_Switch: OFF',
     '',
     "  - name: 'Settled dusk - turn on ambient lamps'",
     '    once: true',
@@ -149,8 +146,8 @@ writeFileSync(TEST_CONFIG_PATH, [
     '      time-of-day: [evening]',
     '      illuminance: { lt: 2000 }',
     '    targets:',
-    '      kitchen_outlet: ON',
-    '      hallway_outlet: ON',
+    '      Kitchen_Outlet: ON',
+    '      Hallway_Outlet: ON',
 ].join('\n'))
 
 /**
@@ -160,7 +157,7 @@ class TestAmbient extends AmbientLightsAutomation {
     #devices
     #context
     /**
-     * @param {Map<string, object>} devices - Stub device map keyed by target id
+     * @param {Map<string, object>} devices - Stub device map keyed by rule-target key
      * @param {{illuminance?: number|null, timeOfDay: string}} context - Fabricated buildContext result
      */
     constructor(devices, context) {
@@ -235,7 +232,7 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     }
 
     const dev = makeStubDevice('Stub Light')
-    const auto = new FlatActionAutomation(cfgPath, new Map([['stub_light', dev]]))
+    const auto = new FlatActionAutomation(cfgPath, new Map([['Stub_Light', dev]]))
     await auto.execute({ trigger: 'test' })
     assert(
         dev.calls.length === 1 && JSON.stringify(dev.calls[0].payload) === '{"state":"OFF"}',

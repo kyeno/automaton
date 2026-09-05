@@ -1,7 +1,7 @@
 /**
- * Top-level videoPlayer_suppression stand-down guard tests.
+ * Top-level video_player_suppression stand-down guard tests.
  *
- * Exercises the automation-wide `videoPlayer_suppression` key (inverted
+ * Exercises the automation-wide `video_player_suppression` key (inverted
  * stand-down semantics) against a self-contained rule set (no local
  * configuration required):
  *   - Suppressed while a listed host is playing / paused / stopped
@@ -9,10 +9,10 @@
  *   - `unknown`-listed suppression list also stands down on a null status
  *   - Backward compatibility: no key -> no suppression, rules dispatch
  *   - Multi-host OR: any listed host in a listed status suppresses
- *   - Exempt rules (ignore_videoPlayer_suppression) still dispatch while
+ *   - Exempt rules (ignore_video_player_suppression) still dispatch while
  *     the guard is active; non-exempt rules are skipped
  *   - Early-return path: no exempt rules -> no dispatch at all
- *   - Coexistence: per-rule videoPlayer condition still applies on top
+ *   - Coexistence: per-rule video-player condition still applies on top
  *   - Forced runs do NOT bypass the guard
  *
  * The video-player status is injected directly into the VideoPlayerMonitor
@@ -132,7 +132,7 @@ class TestRollers extends RuleBasedAutomationBase {
 /**
  * Build a roller automation with a fixed rule set and an optional suppression map.
  * @param {Map<string, Object>} devices - Device map
- * @param {Object|null} [suppression] - videoPlayer_suppression map (host -> statuses)
+ * @param {Object|null} [suppression] - video_player_suppression map (host -> statuses)
  * @param {Object} [extraRule] - Optional extra rule appended to the rule set
  * @returns {TestRollers}
  */
@@ -143,12 +143,12 @@ function makeRollers(devices, suppression = null, extraRule = null) {
         {
             name: 'Night - close all',
             conditions: { illuminance: { lt: 15 } },
-            targets: { left: 'CLOSE', right: 'CLOSE' }
+            targets: { Roller_Left: 'CLOSE', Roller_Right: 'CLOSE' }
         }
     ]
     if (extraRule) rules.push(extraRule)
     auto.config = { rules }
-    if (suppression) auto.config.videoPlayer_suppression = suppression
+    if (suppression) auto.config.video_player_suppression = suppression
     return auto
 }
 
@@ -158,8 +158,8 @@ function makeRollers(devices, suppression = null, extraRule = null) {
  */
 function makeDevices() {
     return new Map([
-        ['left', makeStubDevice('Roller Left')],
-        ['right', makeStubDevice('Roller Right')]
+        ['Roller_Left', makeStubDevice('Roller Left')],
+        ['Roller_Right', makeStubDevice('Roller Right')]
     ])
 }
 
@@ -191,7 +191,7 @@ console.log('\n── Suppression active on listed statuses ──\n')
         const auto = makeRollers(devices, { htpc: ['playing', 'paused', 'stopped'] })
         await setVideoStatus('htpc', status)
         await auto.execute({ trigger: 'test' })
-        assertCalls(devices, 'left', [], `suppression: ${status} -> no dispatch`)
+        assertCalls(devices, 'Roller_Left', [], `suppression: ${status} -> no dispatch`)
     }
 }
 
@@ -204,7 +204,7 @@ console.log('\n── Suppression inactive on unlisted statuses ──\n')
         const auto = makeRollers(devices, { htpc: ['playing', 'paused', 'stopped'] })
         await setVideoStatus('htpc', status)
         await auto.execute({ trigger: 'test' })
-        assertCalls(devices, 'left', ['CLOSE'], `no suppression: ${status ?? 'null'} -> CLOSE dispatched`)
+        assertCalls(devices, 'Roller_Left', ['CLOSE'], `no suppression: ${status ?? 'null'} -> CLOSE dispatched`)
     }
 }
 
@@ -216,14 +216,14 @@ console.log('\n── unknown token listed in suppression ──\n')
     const auto = makeRollers(devices, { htpc: ['playing', 'unknown'] })
     await setVideoStatus('htpc', null)
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'left', [], 'suppression: unknown listed -> null status stands down')
+    assertCalls(devices, 'Roller_Left', [], 'suppression: unknown listed -> null status stands down')
 
     // ... but a real unreachable status is not in the list -> dispatch
     const devices2 = makeDevices()
     const auto2 = makeRollers(devices2, { htpc: ['playing', 'unknown'] })
     await setVideoStatus('htpc', 'unreachable')
     await auto2.execute({ trigger: 'test' })
-    assertCalls(devices2, 'left', ['CLOSE'], 'suppression: unreachable not listed -> CLOSE dispatched')
+    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'suppression: unreachable not listed -> CLOSE dispatched')
 }
 
 console.log('\n── Backward compatibility: no suppression key ──\n')
@@ -234,7 +234,7 @@ console.log('\n── Backward compatibility: no suppression key ──\n')
     const auto = makeRollers(devices)
     await setVideoStatus('htpc', 'playing')
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'left', ['CLOSE'], 'no suppression key: playing -> CLOSE dispatched (legacy behavior)')
+    assertCalls(devices, 'Roller_Left', ['CLOSE'], 'no suppression key: playing -> CLOSE dispatched (legacy behavior)')
 }
 
 console.log('\n── Multi-host OR ──\n')
@@ -246,7 +246,7 @@ console.log('\n── Multi-host OR ──\n')
     await setVideoStatus('htpc', 'stopped')
     await setVideoStatus('bedroom', 'playing')
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'left', [], 'multi-host OR: bedroom playing -> no dispatch')
+    assertCalls(devices, 'Roller_Left', [], 'multi-host OR: bedroom playing -> no dispatch')
 
     // Neither host in a listed status -> dispatch
     const devices2 = makeDevices()
@@ -254,40 +254,40 @@ console.log('\n── Multi-host OR ──\n')
     await setVideoStatus('htpc', 'stopped')
     await setVideoStatus('bedroom', 'unreachable')
     await auto2.execute({ trigger: 'test' })
-    assertCalls(devices2, 'left', ['CLOSE'], 'multi-host OR: none listed -> CLOSE dispatched')
+    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'multi-host OR: none listed -> CLOSE dispatched')
 }
 
 
 console.log('\n── Exempt rules dispatch while suppression is active ──\n')
 
 {
-    // A rule with ignore_videoPlayer_suppression still runs while suppressed.
+    // A rule with ignore_video_player_suppression still runs while suppressed.
     const devices = makeDevices()
     const exemptRule = {
         name: 'Exempt: always open at night',
-        ignore_videoPlayer_suppression: true,
+        ignore_video_player_suppression: true,
         conditions: {},
-        targets: { left: 'OPEN', right: 'OPEN' }
+        targets: { Roller_Left: 'OPEN', Roller_Right: 'OPEN' }
     }
     const auto = makeRollers(devices, { htpc: ['playing'] }, exemptRule)
     await setVideoStatus('htpc', 'playing')
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'left', ['OPEN'], 'exempt rule: dispatches while suppressed')
-    assertCalls(devices, 'right', ['OPEN'], 'exempt rule: dispatches to every target while suppressed')
+    assertCalls(devices, 'Roller_Left', ['OPEN'], 'exempt rule: dispatches while suppressed')
+    assertCalls(devices, 'Roller_Right', ['OPEN'], 'exempt rule: dispatches to every target while suppressed')
 
     // The non-exempt CLOSE rule is skipped: most-closed-wins would otherwise
     // resolve CLOSE over OPEN, so OPEN proves the non-exempt rule was excluded.
     const devices2 = makeDevices()
     const exemptRule2 = {
         name: 'Exempt: open',
-        ignore_videoPlayer_suppression: true,
+        ignore_video_player_suppression: true,
         conditions: {},
-        targets: { left: 'OPEN' }
+        targets: { Roller_Left: 'OPEN' }
     }
     const auto2 = makeRollers(devices2, { htpc: ['playing'] }, exemptRule2)
     await setVideoStatus('htpc', 'playing')
     await auto2.execute({ trigger: 'test' })
-    assertCalls(devices2, 'left', ['OPEN'], 'exempt rule: non-exempt CLOSE rule skipped (OPEN wins)')
+    assertCalls(devices2, 'Roller_Left', ['OPEN'], 'exempt rule: non-exempt CLOSE rule skipped (OPEN wins)')
 }
 
 console.log('\n── Early return: no exempt rules ──\n')
@@ -298,32 +298,32 @@ console.log('\n── Early return: no exempt rules ──\n')
     const auto = makeRollers(devices, { htpc: ['playing'] })
     await setVideoStatus('htpc', 'playing')
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'left', [], 'early return: no exempt rules -> no dispatch')
-    assertCalls(devices, 'right', [], 'early return: no exempt rules -> no dispatch (right)')
+    assertCalls(devices, 'Roller_Left', [], 'early return: no exempt rules -> no dispatch')
+    assertCalls(devices, 'Roller_Right', [], 'early return: no exempt rules -> no dispatch (Roller_Right)')
 }
 
-console.log('\n── Coexistence with per-rule videoPlayer condition ──\n')
+console.log('\n── Coexistence with per-rule video-player condition ──\n')
 
 {
     // The per-rule condition still applies on top of the suppression guard:
     // here the guard is inactive (htpc stopped is not listed) but the rule's
-    // own videoPlayer allow-list rejects 'stopped'.
+    // own video-player allow-list rejects 'stopped'.
     const devices = makeDevices()
     const auto = makeRollers(devices, { bedroom: ['playing'] })
-    auto.config.rules[0].conditions.videoPlayer = { htpc: ['unknown', 'unreachable'] }
+    auto.config.rules[0].conditions['video-player'] = { htpc: ['unknown', 'unreachable'] }
     await setVideoStatus('htpc', 'stopped')
     await setVideoStatus('bedroom', 'unreachable')
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'left', [], 'coexistence: per-rule condition rejects stopped even without suppression')
+    assertCalls(devices, 'Roller_Left', [], 'coexistence: per-rule condition rejects stopped even without suppression')
 
     // Same setup but the per-rule allow-list accepts the status -> dispatch.
     const devices2 = makeDevices()
     const auto2 = makeRollers(devices2, { bedroom: ['playing'] })
-    auto2.config.rules[0].conditions.videoPlayer = { htpc: ['unknown', 'unreachable'] }
+    auto2.config.rules[0].conditions['video-player'] = { htpc: ['unknown', 'unreachable'] }
     await setVideoStatus('htpc', 'unreachable')
     await setVideoStatus('bedroom', 'unreachable')
     await auto2.execute({ trigger: 'test' })
-    assertCalls(devices2, 'left', ['CLOSE'], 'coexistence: per-rule condition accepts unreachable -> dispatch')
+    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'coexistence: per-rule condition accepts unreachable -> dispatch')
 }
 
 console.log('\n── Forced run does not bypass the guard ──\n')
@@ -334,7 +334,7 @@ console.log('\n── Forced run does not bypass the guard ──\n')
     const auto = makeRollers(devices, { htpc: ['playing'] })
     await setVideoStatus('htpc', 'playing')
     await auto.execute({ trigger: 'test', force: true })
-    assertCalls(devices, 'left', [], 'force: suppression NOT bypassed by forced run')
+    assertCalls(devices, 'Roller_Left', [], 'force: suppression NOT bypassed by forced run')
 }
 
 // ---------------------------------------------------------------------------

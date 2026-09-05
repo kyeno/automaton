@@ -8,11 +8,11 @@
 # Each automation also needs a companion JavaScript class that extends
 # RuleBasedAutomationBase (see exampleAutomation.js.dist for reference).
 
+# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
+# keys are these same names with spaces replaced by underscores (casing kept).
 targets:
-  - name: 'Living Room Roller Left'
-    id: left
-  - name: 'Living Room Roller Right'
-    id: right
+  - 'Living Room Roller Left'
+  - 'Living Room Roller Right'
 
 sensors:
   illuminance: 'Outdoor Luminance'
@@ -33,8 +33,8 @@ rules:
       time-of-day: [evening, night]
       illuminance: { lte: 15 }
     targets:
-      left: CLOSE
-      right: CLOSE
+      Living_Room_Roller_Left: CLOSE
+      Living_Room_Roller_Right: CLOSE
 
   - name: 'Day - warm, not too bright - open'
     conditions:
@@ -42,16 +42,16 @@ rules:
       illuminance: { lt: 10000 }
       temperature: { lt: 25 }
     targets:
-      left: OPEN
-      right: OPEN
+      Living_Room_Roller_Left: OPEN
+      Living_Room_Roller_Right: OPEN
 
   - name: 'Hot weather - close'
     conditions:
       time-of-day: [morning, noon]
       temperature: { gte: 30 }
     targets:
-      left: CLOSE
-      right: CLOSE
+      Living_Room_Roller_Left: CLOSE
+      Living_Room_Roller_Right: CLOSE
 
   # Presence-based partial position example
   - name: 'Present, bright daylight'
@@ -60,5 +60,5 @@ rules:
       illuminance: { gt: 10000 }
       presence: my-pc
     targets:
-      left: 30
-      right: CLOSE
+      Living_Room_Roller_Left: 30
+      Living_Room_Roller_Right: CLOSE

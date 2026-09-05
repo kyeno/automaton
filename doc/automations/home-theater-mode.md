@@ -26,9 +26,8 @@ Located at `etc/automation/home-theater-mode.yaml` (template: `home-theater-mode
 override_human_interaction: true   # sticky while active
 restore_state_aware: true           # restore only what this automation changed
 
-targets:
-  - name: 'Living Room Plug'
-    id: theater_living_room_plug
+targets:                      # Device names exactly as registered in your setup
+  - 'Living Room Plug'
   # ...
 
 triggers_video:                     # player hosts (videoPlayers keys)
@@ -45,31 +44,31 @@ rules:
   # Rollers: owned while the player answers HTTP; handed back when gone
   - name: 'Living room: player reachable - close rollers'
     conditions:
-      videoPlayer: { my-pc: [playing, paused, stopped] }
+      video-player: { my-pc: [playing, paused, stopped] }
     targets:
-      theater_living_room_roller_left: CLOSE
+      Living_Room_Roller_Left: CLOSE
 
   - name: 'Living room: player gone - hand rollers back'
     conditions:
-      videoPlayer: { my-pc: [unknown, unreachable] }
+      video-player: { my-pc: [unknown, unreachable] }
     targets:
-      theater_living_room_roller_left: OPEN
+      Living_Room_Roller_Left: OPEN
 
   # Lights: playback drives them; presence gates restores
   - name: 'Living room: not playing - always-on ambient lights'
     conditions:
       presence: { my-pc: true }
-      videoPlayer: { my-pc: [paused, stopped, unreachable, unknown] }
+      video-player: { my-pc: [paused, stopped, unreachable, unknown] }
     force_restore: true             # always comes back on pause
     targets:
-      theater_living_room_plug: ON
+      Living_Room_Plug: ON
 
   - name: 'Living room: playing - dark mode'
     conditions:
       presence: { my-pc: true }
-      videoPlayer: { my-pc: [playing] }
+      video-player: { my-pc: [playing] }
     targets:
-      theater_living_room_plug: OFF
+      Living_Room_Plug: OFF
 ```
 
 The `unknown` token, `force_restore`, and snapshot/restore mechanics are documented in [Rule Engine Restore & Ownership](../architecture/rule-engine-restore-semantics.md); condition syntax in the [Configuration Guide](../configuration.md).

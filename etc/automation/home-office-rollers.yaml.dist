@@ -10,11 +10,11 @@
 # Each automation also needs a companion JavaScript class that extends
 # RuleBasedAutomationBase (see homeOfficeRollersAutomation.js or exampleAutomation.js.dist).
 
+# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
+# keys are these same names with spaces replaced by underscores (casing kept).
 targets:
-  - name: 'Home Office Roller Left'
-    id: left
-  - name: 'Home Office Roller Right'
-    id: right
+  - 'Home Office Roller Left'
+  - 'Home Office Roller Right'
 
 sensors:
   illuminance: 'Outdoor Luminance'
@@ -34,8 +34,8 @@ timer_interval: "1m"
 # statuses, the whole automation stands down (e.g., so it does not fight a
 # home-theater automation over the same rollers). Hosts combine with OR;
 # statuses: playing, paused, stopped, unreachable, unknown. Individual rules
-# may opt out via `ignore_videoPlayer_suppression: true`.
-videoPlayer_suppression:
+# may opt out via `ignore_video_player_suppression: true`.
+video_player_suppression:
   my-pc: [playing, paused, stopped]
 
 rules:
@@ -44,8 +44,8 @@ rules:
       time-of-day: [morning, noon]
       temperature: { gte: 25 }
     targets:
-      left: CLOSE
-      right: CLOSE
+      Home_Office_Roller_Left: CLOSE
+      Home_Office_Roller_Right: CLOSE
 
   - name: 'Anytime: Warm, not too bright - open'
     conditions:
@@ -53,24 +53,24 @@ rules:
       illuminance: { lt: 11000 }
       temperature: { lt: 25 }
     targets:
-      left: OPEN
-      right: OPEN
+      Home_Office_Roller_Left: OPEN
+      Home_Office_Roller_Right: OPEN
 
   - name: 'Afternoon: Hot - open'
     conditions:
       time-of-day: [afternoon]
       temperature: { gte: 25, lte: 29 }
     targets:
-      left: OPEN
-      right: OPEN
+      Home_Office_Roller_Left: OPEN
+      Home_Office_Roller_Right: OPEN
 
   - name: 'Afternoon: Extremely hot - close'
     conditions:
       time-of-day: [noon, afternoon]
       temperature: { gte: 29 }
     targets:
-      left: CLOSE
-      right: CLOSE
+      Home_Office_Roller_Left: CLOSE
+      Home_Office_Roller_Right: CLOSE
 
   - name: 'Day: laptop present, not too bright'
     conditions:
@@ -78,8 +78,8 @@ rules:
       illuminance: { lte: 11000 }
       presence: my-laptop
     targets:
-      left: 40
-      right: 12
+      Home_Office_Roller_Left: 40
+      Home_Office_Roller_Right: 12
 
   - name: 'Day: laptop present, bright'
     conditions:
@@ -87,8 +87,8 @@ rules:
       illuminance: { gt: 11000, lte: 12700 }
       presence: my-laptop
     targets:
-      left: 12
-      right: CLOSE
+      Home_Office_Roller_Left: 12
+      Home_Office_Roller_Right: CLOSE
 
   - name: 'Day: laptop present, direct sunlight'
     conditions:
@@ -96,8 +96,8 @@ rules:
       illuminance: { gt: 12700 }
       presence: my-laptop
     targets:
-      left: 10
-      right: CLOSE
+      Home_Office_Roller_Left: 10
+      Home_Office_Roller_Right: CLOSE
 
   - name: 'Evening: laptop present, mid-dark'
     conditions:
@@ -105,8 +105,8 @@ rules:
       illuminance: { gt: 250, lte: 1800 }
       presence: my-laptop
     targets:
-      left: OPEN
-      right: 35
+      Home_Office_Roller_Left: OPEN
+      Home_Office_Roller_Right: 35
 
   - name: 'Evening: laptop present, not too bright'
     conditions:
@@ -114,8 +114,8 @@ rules:
       illuminance: { gt: 1800, lte: 11000 }
       presence: my-laptop
     targets:
-      left: 80
-      right: 30
+      Home_Office_Roller_Left: 80
+      Home_Office_Roller_Right: 30
 
   - name: 'Anytime: desktop present, not too bright'
     conditions:
@@ -123,8 +123,8 @@ rules:
       illuminance: { lte: 11000 }
       presence: my-desktop
     targets:
-      left: 30
-      right: 70
+      Home_Office_Roller_Left: 30
+      Home_Office_Roller_Right: 70
 
   - name: 'Anytime: desktop present, bright'
     conditions:
@@ -132,13 +132,13 @@ rules:
       illuminance: { gt: 11000, lte: 12700 }
       presence: my-desktop
     targets:
-      left: 15
-      right: 30
+      Home_Office_Roller_Left: 15
+      Home_Office_Roller_Right: 30
 
   - name: 'Night: Close all'
     conditions:
       time-of-day: [evening, night]
       illuminance: { lte: 15 }
     targets:
-      left: CLOSE
-      right: CLOSE
+      Home_Office_Roller_Left: CLOSE
+      Home_Office_Roller_Right: CLOSE

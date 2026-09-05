@@ -45,7 +45,7 @@ Singletons watching the world outside Zigbee.
 
 - [Monitors](monitors/index.md) — overview and navigation
 - [Network Presence](monitors/network-presence.md) — arping-based host presence with `presence` conditions
-- [Video Player](monitors/video-player.md) — VLC / MPC-HC status polling with `videoPlayer` conditions
+- [Video Player](monitors/video-player.md) — VLC / MPC-HC status polling with `video-player` conditions
 
 ### Guides & Roadmap
 

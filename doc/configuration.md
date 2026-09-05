@@ -222,7 +222,7 @@ Each host is pinged via `arping` to detect presence on the local network. The sh
 
 #### Video Players (`videoPlayers`)
 
-Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `unreachable`) to rules via the `videoPlayer` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
+Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `unreachable`) to rules via the `video-player` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
 
 ```yaml
 videoPlayers:
@@ -254,14 +254,9 @@ Automations are YAML files paired with optional JavaScript classes: the `.yaml` 
 ### YAML Structure
 
 ```yaml
-devices:                  # For simple automations (list of device names)
-  - 'Device Name'
-
-targets:                  # For complex automations (named target mappings)
-  - name: 'Device Name A'
-    id: alias_a           # Short ID used in rule actions
-  - name: 'Device Name B'
-    id: alias_b
+targets:                  # Device friendly names, exactly as registered in the container
+  - 'Device Name A'
+  - 'Device Name B'
 
 sensors:                  # Sensor references for condition evaluation
   illuminance: 'Light Sensor Name'
@@ -279,7 +274,7 @@ timer_interval: "1m"       # How often to evaluate rules ("90s", "3m 45s", "1h";
 
 silence_between: "0500-0900"   # Optional: suppress execution between these local times (HHmm-HHmm format). Supports overnight ranges like "2300-0600".
 
-videoPlayer_suppression:       # Optional: stand-down guard -- suppress all rules while any listed
+video_player_suppression:       # Optional: stand-down guard -- suppress all rules while any listed
   hostname1: [playing, paused, stopped]   # player is in one of the listed statuses (OR across hosts)
 
 rules:
@@ -291,10 +286,16 @@ rules:
       illuminance: { gte: 20 }          # Sensor threshold
       temperature: { lt: 25 }
       presence: hostname1               # Network host present
-    targets:                            # Per-target actions when conditions match
-      alias_a: OPEN                     # Named target action
-      alias_b: CLOSE
+    targets:                            # Per-target actions; keys are declared names
+      Device_Name_A: OPEN               # with spaces replaced by underscores, casing kept
+      Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
 ```
+
+### Target Keys (`targets:`)
+
+The top-level `targets:` section is an explicit list of device friendly names — exactly as they appear in your Zigbee setup / device container. Rule `targets:` maps address those devices by **target key**: the same name trimmed, whitespace runs collapsed to single underscores, original casing preserved (`Salon Roleta Okno Lewe` → `Salon_Roleta_Okno_Lewe`). There are no separate aliases to invent or keep in sync — the key is mechanically derived from the registered name.
+
+Each automation validates this wiring once at startup and logs warnings for problems that would otherwise be silently inert: duplicate keys (two friendly names collapsing onto one key, so only one of the devices is addressable) and rule target keys matching no declared target (usually typos or renamed devices). Devices listed under `targets:` but missing from the container are skipped with a warning on every run.
 
 ### Timer Interval (`timer_interval`)
 
@@ -338,30 +339,30 @@ Multiple operators on the same field create a range: `{ gt: 1800, lte: 11000 }`.
 
 ### Video Player Conditions
 
-The optional `videoPlayer` condition gates a rule on media-player status (see `videoPlayers` under Network Hosts). Values accept a single status or a list per host:
+The optional `video-player` condition gates a rule on media-player status (see `videoPlayers` under Network Hosts). Values accept a single status or a list per host:
 
 ```yaml
 conditions:
-  videoPlayer:
+  video-player:
     hostname1: [paused, stopped, unreachable]   # "not actively playing"
     hostname2: playing                          # single value shorthand
 ```
 
 An **unknown** player status (host offline or not yet polled) matches ONLY condition lists that explicitly include the `unknown` token -- each rule decides whether an unknown state is safe to act on (e.g. ambient-restore rules opt in with `[paused, stopped, unreachable, unknown]`; ownership hand-back guards use `[unknown, unreachable]`). `triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
 
-### Video Player Suppression (`videoPlayer_suppression`)
+### Video Player Suppression (`video_player_suppression`)
 
-The optional top-level `videoPlayer_suppression` key is an automation-wide **stand-down guard** with inverted semantics: instead of listing statuses a rule requires, it lists statuses that make the whole automation stand down. While **any** listed host (OR across hosts) reports one of its listed statuses, `execute()` suppresses the automation -- typically so it does not fight the [Home Theater Mode](automations/home-theater-mode.md) automation over the same devices while a movie runs:
+The optional top-level `video_player_suppression` key is an automation-wide **stand-down guard** with inverted semantics: instead of listing statuses a rule requires, it lists statuses that make the whole automation stand down. While **any** listed host (OR across hosts) reports one of its listed statuses, `execute()` suppresses the automation -- typically so it does not fight the [Home Theater Mode](automations/home-theater-mode.md) automation over the same devices while a movie runs:
 
 ```yaml
-videoPlayer_suppression:
+video_player_suppression:
   htpc: [playing, paused, stopped]   # stand down while actively playing
 ```
 
-- Statuses use the same vocabulary as the `videoPlayer` condition; a null (unknown) status maps to the explicit `unknown` token, so it suppresses only when listed.
-- Individual rules may opt out with `ignore_videoPlayer_suppression: true`. While the guard is active, only exempt rules are evaluated; when no rule opts out, the automation returns early without even building context.
+- Statuses use the same vocabulary as the `video-player` condition; a null (unknown) status maps to the explicit `unknown` token, so it suppresses only when listed.
+- Individual rules may opt out with `ignore_video_player_suppression: true`. While the guard is active, only exempt rules are evaluated; when no rule opts out, the automation returns early without even building context.
 - Unlike `silence_between`, the guard is **never bypassed by `/automation force`** -- a forced run must not create device fights.
-- The per-rule `videoPlayer` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
+- The per-rule `video-player` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
 
 With `restore_state_aware: true` (automation level), restore commands are filtered through pre-command snapshots so an automation only undoes changes it made itself; a rule can mark its targets as unconditional with `force_restore: true`. Full snapshot, ownership, and no-op suppression semantics are covered in [Rule Engine Restore & Ownership](architecture/rule-engine-restore-semantics.md).
 

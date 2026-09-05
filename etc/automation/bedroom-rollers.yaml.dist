@@ -3,11 +3,11 @@
 #
 # Copy this file to "bedroom-rollers.yaml" (or your own name) and customize.
 
+# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
+# keys are these same names with spaces replaced by underscores (casing kept).
 targets:
-  - name: 'Bedroom Roller Left'
-    id: left
-  - name: 'Bedroom Roller Right'
-    id: right
+  - 'Bedroom Roller Left'
+  - 'Bedroom Roller Right'
 
 sensors:
   illuminance: 'Outdoor Luminance'
@@ -23,7 +23,7 @@ timer_interval: "1m"
 # statuses, the whole automation stands down (e.g., so it does not fight a
 # home-theater automation over the same rollers). Hosts combine with OR;
 # statuses: playing, paused, stopped, unreachable, unknown.
-videoPlayer_suppression:
+video_player_suppression:
   my-pc: [playing, paused, stopped]
 
 rules:
@@ -32,5 +32,5 @@ rules:
       time-of-day: [evening, night]
       illuminance: { lt: 15 }
     targets:
-      left: CLOSE
-      right: CLOSE
+      Bedroom_Roller_Left: CLOSE
+      Bedroom_Roller_Right: CLOSE
