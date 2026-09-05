@@ -44,6 +44,9 @@ triggers_network:             # Hosts whose presence can gate rules (see network
 
 timer_interval: "1m"          # How often rules are evaluated when no trigger fires
 
+videoPlayer_suppression:      # Optional stand-down guard (see note below)
+  my-pc: [playing, paused, stopped]
+
 rules:
   - name: 'Day: laptop present, not too bright'
     conditions:
@@ -56,6 +59,8 @@ rules:
 ```
 
 > **Tuning note:** The illuminance thresholds (`11000`, `12700`) and position presets (`40`, `12`, …) are starting points. Watch your outdoor sensor's real readings through a day and adjust so shutters park where you'd set them by hand. Presence hostnames must match entries in `etc/device/network.yaml`.
+
+> **Stand-down guard:** While any player listed under `videoPlayer_suppression` is in one of the listed statuses, the whole automation stands down -- e.g. so a home-theater automation can own the same shutters during a movie without the two fighting over them. Hosts combine with OR; individual rules may opt out via `ignore_videoPlayer_suppression: true`. See [Video Player Suppression](../configuration.md) in the Configuration Guide.
 
 Season conditions, all numeric operators, and the human-interaction cooldown are documented in the [Configuration Guide](../configuration.md).
 

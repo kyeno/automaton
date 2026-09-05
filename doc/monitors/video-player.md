@@ -75,7 +75,7 @@ rules:
     targets: ...
 ```
 
-Full `videoPlayer` condition syntax (including the `unknown` token) is documented in the [Configuration Guide](../configuration.md).
+Full `videoPlayer` condition syntax (including the `unknown` token) and the related top-level `videoPlayer_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
 
 ## File Map
 

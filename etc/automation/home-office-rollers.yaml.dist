@@ -30,6 +30,14 @@ triggers_network:
 
 timer_interval: "1m"
 
+# Optional stand-down guard: while any listed player is in one of the listed
+# statuses, the whole automation stands down (e.g., so it does not fight a
+# home-theater automation over the same rollers). Hosts combine with OR;
+# statuses: playing, paused, stopped, unreachable, unknown. Individual rules
+# may opt out via `ignore_videoPlayer_suppression: true`.
+videoPlayer_suppression:
+  my-pc: [playing, paused, stopped]
+
 rules:
   - name: 'Morning: Hot - close'
     conditions:

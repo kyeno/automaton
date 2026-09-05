@@ -105,6 +105,7 @@ const testScripts = [
   'test-ambient-lights-rules.js',
   'test-home-theater-mode-rules.js',
   'test-video-player-host-resolution.js',
+  'test-video-player-suppression.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',
   'test-mqtt-publish-hook.js',

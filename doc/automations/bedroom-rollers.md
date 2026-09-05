@@ -28,6 +28,9 @@ triggers_zigbee:
 
 timer_interval: "1m"
 
+videoPlayer_suppression:      # Optional stand-down guard (see note below)
+  my-pc: [playing, paused, stopped]
+
 rules:
   - name: 'Night - close all'
     conditions:
@@ -39,6 +42,8 @@ rules:
 ```
 
 > **Tuning note:** Raise/lower the `illuminance: { lt: 15 }` cutoff so shutters close when you'd normally pull them down yourself; add further rules (morning open, presence presets) using the same target ids.
+
+> **Stand-down guard:** While any player listed under `videoPlayer_suppression` is in one of the listed statuses, the whole automation stands down -- e.g. so a home-theater automation can own the same shutters during a movie without the two fighting over them. Hosts combine with OR; individual rules may opt out via `ignore_videoPlayer_suppression: true`. See [Video Player Suppression](../configuration.md) in the Configuration Guide.
 
 ## Pilot Remote Interaction
 

@@ -4,7 +4,8 @@
  * Extends {@link ../automationBase.js} with context building (sensor readings,
  * time-of-day periods, network presence), YAML config parsing, condition
  * evaluation (including optional `season` conditions and per-rule daily `once`
- * markers), and a template-method `execute()` flow. Subclasses implement
+ * markers), an optional top-level `videoPlayer_suppression` stand-down guard,
+ * and a template-method `execute()` flow. Subclasses implement
  * {@link loadDevices} and {@link resolveCommand} hooks.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -251,7 +252,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @param {Object} [triggerData] - Info about what triggered this run
      * @param {string} [triggerData.trigger] - Trigger source identifier
      * @param {boolean} [triggerData.force] - When true (e.g., "/automation force"), bypasses the
-     *   silent-period suppression and per-rule once-per-day markers; human-interaction cooldowns still apply
+     *   silent-period suppression and per-rule once-per-day markers; human-interaction cooldowns still
+     *   apply, and the top-level videoPlayer_suppression stand-down guard is never bypassed
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
@@ -268,6 +270,30 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                     'debug'
                 )
                 return
+            }
+        }
+
+        // Top-level video-player stand-down guard (videoPlayer_suppression): while
+        // any listed player is in one of its listed statuses, the automation stands
+        // down so it does not fight another automation (e.g., Home Theater Mode)
+        // over the same devices. Individual rules may opt out via
+        // ignore_videoPlayer_suppression. Unlike the silent period, this guard is
+        // NOT bypassed by a forced run -- forcing must not create device fights.
+        let suppressionActive = false
+        if (this.config.videoPlayer_suppression) {
+            if (await this.#evaluateVideoPlayerSuppression()) {
+                const hasExemptRule = (this.config.rules ?? []).some(
+                    (rule) => rule.ignore_videoPlayer_suppression === true
+                )
+                if (!hasExemptRule) {
+                    this.log(`Suppressed by videoPlayer_suppression (${triggerSource})`, 'debug')
+                    return
+                }
+                suppressionActive = true
+                this.log(
+                    `videoPlayer_suppression active -- evaluating exempt rules only (${triggerSource})`,
+                    'debug'
+                )
             }
         }
 
@@ -300,6 +326,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Collect all matching rules
         const matchingRules = []
         for (const rule of rules) {
+            // Stand-down guard active: only rules that opted out participate.
+            if (suppressionActive && rule.ignore_videoPlayer_suppression !== true) continue
+
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
                 if (!match) continue
@@ -884,5 +913,32 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             result[host] = Array.isArray(value) ? value : [value]
         }
         return result
+    }
+
+    /**
+     * Evaluate the top-level `videoPlayer_suppression` stand-down guard.
+     *
+     * Inverted semantics vs. the per-rule `videoPlayer` condition: instead of
+     * statuses a rule requires, the suppression map lists statuses that make
+     * the whole automation stand down. Hosts combine with OR -- while ANY
+     * listed host reports one of its listed statuses, the guard is active. A
+     * null (unknown) status maps to the explicit `unknown` token, so it
+     * suppresses only when listed -- mirroring the per-rule condition
+     * semantics.
+     *
+     * @private
+     * @returns {Promise<boolean>} true while the automation should stand down
+     */
+    async #evaluateVideoPlayerSuppression() {
+        const suppression = this.#normalizeVideoPlayerCondition(this.config.videoPlayer_suppression)
+        for (const [host, statuses] of Object.entries(suppression)) {
+            const status = await videoPlayerMonitor.getStatus(host)
+            const effective = status ?? VIDEO_PLAYER_UNKNOWN
+            if (statuses.includes(effective)) {
+                this.log(`videoPlayer_suppression: "${host}" is ${effective}`, 'debug')
+                return true
+            }
+        }
+        return false
     }
 }

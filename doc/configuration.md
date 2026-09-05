@@ -279,6 +279,9 @@ timer_interval: "1m"       # How often to evaluate rules ("90s", "3m 45s", "1h";
 
 silence_between: "0500-0900"   # Optional: suppress execution between these local times (HHmm-HHmm format). Supports overnight ranges like "2300-0600".
 
+videoPlayer_suppression:       # Optional: stand-down guard -- suppress all rules while any listed
+  hostname1: [playing, paused, stopped]   # player is in one of the listed statuses (OR across hosts)
+
 rules:
   - name: 'Human-readable rule name'
     once: true                          # Optional: act at most once per calendar day
@@ -345,6 +348,20 @@ conditions:
 ```
 
 An **unknown** player status (host offline or not yet polled) matches ONLY condition lists that explicitly include the `unknown` token -- each rule decides whether an unknown state is safe to act on (e.g. ambient-restore rules opt in with `[paused, stopped, unreachable, unknown]`; ownership hand-back guards use `[unknown, unreachable]`). `triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
+
+### Video Player Suppression (`videoPlayer_suppression`)
+
+The optional top-level `videoPlayer_suppression` key is an automation-wide **stand-down guard** with inverted semantics: instead of listing statuses a rule requires, it lists statuses that make the whole automation stand down. While **any** listed host (OR across hosts) reports one of its listed statuses, `execute()` suppresses the automation -- typically so it does not fight the [Home Theater Mode](automations/home-theater-mode.md) automation over the same devices while a movie runs:
+
+```yaml
+videoPlayer_suppression:
+  htpc: [playing, paused, stopped]   # stand down while actively playing
+```
+
+- Statuses use the same vocabulary as the `videoPlayer` condition; a null (unknown) status maps to the explicit `unknown` token, so it suppresses only when listed.
+- Individual rules may opt out with `ignore_videoPlayer_suppression: true`. While the guard is active, only exempt rules are evaluated; when no rule opts out, the automation returns early without even building context.
+- Unlike `silence_between`, the guard is **never bypassed by `/automation force`** -- a forced run must not create device fights.
+- The per-rule `videoPlayer` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
 
 With `restore_state_aware: true` (automation level), restore commands are filtered through pre-command snapshots so an automation only undoes changes it made itself; a rule can mark its targets as unconditional with `force_restore: true`. Full snapshot, ownership, and no-op suppression semantics are covered in [Rule Engine Restore & Ownership](architecture/rule-engine-restore-semantics.md).
 

@@ -42,7 +42,7 @@ Before dispatching, the engine compares the commanded state against the device's
 
 Monitor-backed conditions (`videoPlayer`, and any future monitor) treat a `null` status as an explicit **`unknown`** token rather than a wildcard:
 
-- An unknown status matches **only** condition lists that explicitly include `unknown`.
+- An unknown status matches **only** condition lists that explicitly include `unknown` -- and, for the top-level `videoPlayer_suppression` stand-down guard, suppresses only when `unknown` is listed among the suppression statuses.
 - Each rule decides whether an unknown state is safe to act on: ambient-restore rules opt in (`[paused, stopped, unreachable, unknown]`), playback rules stay inert (no dark-mode action fires on a guess).
 - `unreachable` is a *real* status (the host is online but the player does not answer) and matches lists containing it, independent of `unknown`.
 
