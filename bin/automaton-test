@@ -103,7 +103,7 @@ const testScripts = [
   'test-date-helper.js',
   'test-tts-options-passthrough.js',
   'test-ambient-lights-rules.js',
-  'test-home-theater-mode-rules.js',
+  'test-home-theater-rules.js',
   'test-automation-force.js',
   'test-invoke-automation.js',
   'test-trigger-coalescing.js',

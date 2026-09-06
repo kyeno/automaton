@@ -1,0 +1,67 @@
+# Home Theater Automation -- one-room instance (distribution template).
+#
+# Presence-gated video-player dark mode for a SINGLE room: while the player
+# answers HTTP (any state) the room's rollers are closed and handed back to the
+# room's roller owner when it goes offline; while a video plays, interfering
+# lights go off (dark mode); on pause/stop/gone light restore is delegated to
+# the ambient-lights automation via invoke_automation.
+#
+# One instance per room keeps trigger subscriptions scoped to that room's
+# hosts, so other rooms' players never fire this execution chain. Deploying
+# several rooms in ONE instance also works if you prefer it.
+#
+# Requires video players defined under `videoPlayers` in etc/device/network.yaml
+# (see the MPC-HC / VLC setup notes there).
+#
+# The automation opts into `override_human_interaction` so it is "sticky" while
+# active: manual changes to its target devices are re-corrected on the next tick
+# rather than being deferred to a human-interaction cooldown.
+
+override_human_interaction: true
+
+targets:
+  # Replace with your own Zigbee device names (must exist in zigbee.yaml).
+  # Rule "targets:" keys are these same names with spaces replaced by underscores.
+  - 'Living Room Plug'
+  - 'Kitchen Plug'
+  - 'Living Room Roller Left'
+
+triggers_video:
+  - my-pc
+
+triggers_network:
+  - my-pc
+
+rules:
+  # Rollers are owned while the player answers HTTP; handed back to the room's own
+  # roller automation when it goes offline -- replace placeholder names with your
+  # installed automations. `force: true` makes them act even if a once/silent guard
+  # would otherwise block (human cooldowns still apply).
+  - name: 'Office: player reachable - close rollers'
+    conditions:
+      presence: { my-pc: true }
+      video-player: { my-pc: [playing, paused, stopped] }
+    targets:
+      Living_Room_Roller_Left: CLOSE
+
+  - name: 'Office: player gone - hand rollers back to their owner'
+    conditions:
+      presence: { my-pc: false }
+      video-player: { my-pc: [unknown, unreachable] }
+    invoke_automation: { name: HomeOfficeRollersAutomation, force: true }
+
+  # Light restore is fully delegated via `invoke_automation` to the ambient-lights
+  # automation, which owns all ambient lamp devices and re-evaluates its own
+  # conditions. No `presence` gate here so an offline machine also hands light control back.
+  - name: 'Office: not playing - delegate light restore to ambient lights'
+    conditions:
+      video-player: { my-pc: [paused, stopped, unreachable, unknown] }
+    invoke_automation: { name: AmbientLightsAutomation, force: true }
+
+  - name: 'Office: playing - dark mode (lights off)'
+    conditions:
+      presence: { my-pc: true }
+      video-player: { my-pc: [playing] }
+    targets:
+      Living_Room_Plug: OFF
+      Kitchen_Plug: OFF
