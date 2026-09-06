@@ -1,19 +1,25 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- Add crypto price monitor and TTS automation
+- Add flowers moisture TTS automation (warnings)
+- BUG: DatabaService is *silent*, doesn't produce any lifecycle logs.
+
+## HUGE MILESTONES
+- Add WiFi and WiFi devices support
+- Build entire speech-to-text (SST) architecture based on whisper-cpp
+
+## Architecture
+- Refactor automations so "targets:" section is read entirely from rules "on load"
+- CONSIDER: naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
+- Same about monitor names. networkPresence doesn't have the Monitor suffix. Decide if we want those there or not.
+- LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 - CONSIDER: "ZigbeeMonitor" sharing the same "state change" logic as other monitors and populate that via local EventBus. Log real Zigbee state changes ONLY as trace; every higher level - via EventBus.
 - CONSIDER: Dropping db's shm and wal to original DB more often, not just on quit?
-- Create "greeter" TTS/AI automation that will work in tandem with network monitor and greet people when their computers go online; add "off period guard" on launching, so you don't greet person on reboot. Consider goodbye logic not to do the same.
-- Add WiFi and WiFi devices support
-- Add crypto price monitor
 - LATER: Postpone automations so they don't fire all at once
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
   module longnames coming out as "<file>\n<copyright>" for lib/* headers
-
-## Architecture
-- CONSIDER naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
-- LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 
 ## AI & TTS
 - Allow multiple AI engines configuration and a monitor checking which is online, so we can route from best to worst
@@ -24,9 +30,6 @@
 - LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - LATER: Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
 - LATER: Drive the "* AI thinking..." indicator from shared state instead of inline print -- expose `ai.busy` plus a start timestamp via StateService while processMessage() holds its FIFO lock; AiWindow observes it and either rewrites the line to "* AI thought for X seconds" on completion or appends an IRC `/me`-style follow-up message
-
-## LATER: SST
-- Build entire speech-to-text architecture based on whisper-cpp
 
 ### LATER: Assistant personalization
 - Dynamic model temperature settings per persona!
@@ -53,7 +56,6 @@ personas:
     sox_effects: "pitch 300 speed 1.1 tempo 1.05"
 
 ## BitchX UI
-
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
@@ -64,10 +66,14 @@ personas:
 - VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
 
 ### Slash commands
-- FIX: /config rendering YAMLs without indentation; reloading doesn't render greeting on AI channel
 - MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
 - MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - LATER: Debug timers (LATER)
+
+## TTS Greeter "Goodbye" enhance ideas
+- Greet only when someone comes back -- extend the greeter to also say goodbye when their computer goes OFFLINE after being up for a while (measure online duration via priorStateDurationMs() on the offline event, symmetric to today's windows).
+- Keep goodbyes distinct from greetings: separate bundle buckets/sentences per host, so "see you later" never reads like a welcome-back and vice versa.
+- Guard against chatter: a quick step-away must not trigger both a greeting and a goodbye; consider suppressing the next-day welcome right after an already-said goodbye (and deduping repeat offline events).
 
 ---
 
