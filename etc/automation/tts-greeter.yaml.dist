@@ -1,0 +1,43 @@
+# ================================================================
+# TTS GREETER -- Configuration Template
+# ================================================================
+# Greets people when their computers come back online, based on how long
+# they were absent. The absence duration comes from the transition history
+# (DatabaseService.priorStateDurationMs): how long the host sat OFFLINE before
+# this return event -- so a quick reboot never triggers a full welcome.
+#
+# greeting_windows are evaluated top-down; the FIRST window whose bounds match
+# the absence wins; no match = silence. Bounds accept human-readable durations
+# ("5s", "90s", "7m", "4h") or plain milliseconds; either bound may be omitted
+# for an open-ended side:
+#   { gte: "4h" }        -> 4 hours or longer
+#   { lte: "2m" }        -> up to 2 minutes
+#   { gte: "7m", lte: "30m" } -> between 7 and 30 minutes
+# Each window's "sentence" names a section of the greeter i18n bundle
+# (etc/i18n/<locale>/greeter.yaml), which holds per-host tts/ai templates.
+# Add new windows freely -- e.g., a "long weekend" bucket with its own line.
+#
+# Copy this file to "tts-greeter.yaml" and customize for your home.
+
+triggers_network: [hostname1, hostname2]   # hosts to greet on return (must exist in etc/device/network.yaml)
+
+use_ai: false                        # true  -> route each greeting through AI -> TTS when available
+                                     #         (warn log + plain TTS sentence if the AI is down);
+                                     # false -> direct TTS only, never touches the AI pipeline
+
+greeting_windows:
+  - name: 'quick_reboot'             # short blip -> fun "it just rebooted!" line instead of a welcome
+    absent_for: { gte: "5s", lte: "2m" }
+    sentence: 'reboot'               # greeter bundle section (per-host tts/ai templates inside)
+
+  - name: 'short_return'             # came back quickly -> "did you forget something?"
+    absent_for: { gte: "7m", lte: "30m" }
+    sentence: 'forgot'
+
+  - name: 'welcome_back'             # been gone for real -> proper welcome; open-ended above
+    absent_for: { gte: "4h" }
+    sentence: 'welcome'
+
+# Optional -- suppress execution between these local times ("HHmm-HHmm"); set to null to disable.
+# Not required at all: with no silence_between key the greeter runs whenever it is triggered.
+#silence_between: "0100-0600"

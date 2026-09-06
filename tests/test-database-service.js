@@ -60,6 +60,19 @@ async function main() {
     // -- Absent subject ---------------------------------------------------
     assert.equal(await DatabaseService.getCurrent('network', 'ghost'), null, 'absent subject current is null')
     assert.equal(await DatabaseService.lastTransitionTs('network', 'ghost'), null, 'absent subject ts is null')
+    assert.equal(await DatabaseService.priorStateDurationMs('network', 'ghost'), null, 'absent subject duration is null')
+
+    // -- priorStateDurationMs ----------------------------------------------
+    let p = await DatabaseService.recordTransition({ domain: 'network', subject: 'solo', toState: 'online' })
+    assert.equal(p.changed, true, 'first transition for solo recorded')
+    assert.equal(await DatabaseService.priorStateDurationMs('network', 'solo'), null, 'single transition -> no prior state -> null')
+    const q = await DatabaseService.recordTransition({ domain: 'network', subject: 'solo', toState: 'offline' })
+    assert.equal(q.changed, true, 'second transition for solo recorded')
+    assert.equal(
+        await DatabaseService.priorStateDurationMs('network', 'solo'),
+        q.ts - p.ts,
+        'two transitions -> exact interval between them (prior-state duration)'
+    )
 
     // -- History filtering + ordering ------------------------------------
     const all = await DatabaseService.getTransitions()
@@ -77,6 +90,7 @@ async function main() {
     assert.equal(await DatabaseService.getCurrent('videoPlayer', 'htpc'), null, 'reads fail open after close')
     r = await DatabaseService.recordTransition({ domain: 'network', subject: 'tv', toState: 'online' })
     assert.equal(r.changed, false, 'writes are no-ops when unavailable')
+    assert.equal(await DatabaseService.priorStateDurationMs('network', 'solo'), null, 'duration reads fail open after close')
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`)
 }

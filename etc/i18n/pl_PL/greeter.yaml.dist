@@ -1,0 +1,39 @@
+# Greeter -- Polish Language Bundle (Template)
+# ---------------------------------------------
+# Speech templates for the ttsGreeter automation (greetings on computer return).
+# Each section holds per-host lines split by output path:
+#   <bucket>.tts.<host> -- spoken verbatim when use_ai is off / AI unavailable
+#   <bucket>.ai.<host>  -- instruction sent to the model; it speaks its own greeting
+# Placeholders: {% name_vocative %} and {% name_genitive %} are filled from names.<host>,
+# so pick whichever case your sentence grammar needs ("Witaj, Macieju!" vs "komputer Macieja").
+# Add more buckets freely and reference them from greeting_windows in tts-greeter.yaml.
+#
+# Copy this file to "greeter.yaml" and customize sentences + host names for your home.
+
+names:
+  hostname1: { vocative: 'Janie', genitive: 'Jana' }
+  hostname2: { vocative: 'Zosiu', genitive: 'Zosię' }
+
+welcome:
+  tts:
+    hostname1: 'Witaj z powrotem, {% name_vocative %}!'
+    hostname2: 'Witaj z powrotem, {% name_vocative %}!'
+  ai:
+    hostname1: 'Powitaj ciepło i krótko {% name_genitive %}, który właśnie wrócił do domu.'
+    hostname2: 'Powitaj ciepło i krótko {% name_genitive %}, która właśnie wróciła do domu.'
+
+forgot:
+  tts:
+    hostname1: 'Witaj ponownie, {% name_vocative %}. Zapomniałeś czegoś?'
+    hostname2: 'Witaj ponownie, {% name_vocative %}. Zapomniałaś czegoś?'
+  ai:
+    hostname1: 'Powiedz krótko i z przymrużeniem oka, że {% name_genitive %} pewnie coś zapomniał. Powitaj go.'
+    hostname2: 'Powiedz krótko i z przymrużeniem oka, że {% name_genitive %} pewnie coś zapomniała. Powitaj ją.'
+
+reboot:
+  tts:
+    hostname1: 'I bum -- komputer {% name_genitive %} właśnie się rebootował!'
+    hostname2: 'I bum -- komputer {% name_genitive %} właśnie się rebootował!'
+  ai:
+    hostname1: 'Ogłoś krótko i z humorem, że komputer {% name_genitive %} właśnie się rebootował.'
+    hostname2: 'Ogłoś krótko i z humorem, że komputer {% name_genitive %} właśnie się rebootował.'

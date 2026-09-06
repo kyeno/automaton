@@ -204,6 +204,33 @@ class SDatabaseService {
     }
 
     /**
+     * How long (ms) the subject sat in its state immediately preceding the current one --
+     * i.e., the interval between this subject's two most recent transitions. Because
+     * recordTransition() only inserts when the value changes, consecutive rows always
+     * differ, so the second-newest row is by definition the previous state. The duration
+     * is measured up to the newest transition's timestamp (not wall-clock "now"), which
+     * keeps it stable for callers evaluating shortly after the event. Returns null when
+     * fewer than two transitions are recorded or the store is unavailable. Powers
+     * absence/presence windowing (e.g., the greeter's reboot vs welcome-back decision).
+     * @param {string} domain - Domain identifier.
+     * @param {string} subject - Subject identifier.
+     * @returns {Promise<number|null>} Duration in milliseconds, or null.
+     */
+    async priorStateDurationMs(domain, subject) {
+        if (!this.isAvailable()) return null
+        try {
+            const rows = this.#db.prepare(
+                'SELECT ts_ms FROM state_events WHERE domain = ? AND subject = ? ORDER BY id DESC LIMIT 2'
+            ).all(String(domain), String(subject))
+            if (rows.length < 2) return null
+            const duration = Number(rows[0].ts_ms) - Number(rows[1].ts_ms)
+            return Number.isFinite(duration) && duration >= 0 ? duration : null
+        } catch {
+            return null
+        }
+    }
+
+    /**
      * Recent transitions (newest first), optionally filtered by domain and/or subject.
      * Intended for debugging, UI history views, and AI tools.
      * @param {{domain?: string, subject?: string, limit?: number}} [filter] - Optional filters.

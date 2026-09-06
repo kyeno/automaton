@@ -112,6 +112,7 @@ const testScripts = [
   'test-video-player-suppression.js',
   'test-database-service.js',
   'test-rule-react-on-change.js',
+  'test-tts-greeter.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',
   'test-mqtt-publish-hook.js',

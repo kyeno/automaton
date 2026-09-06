@@ -1,0 +1,40 @@
+# Greeter -- English Language Bundle (Template)
+# ---------------------------------------------
+# Speech templates for the ttsGreeter automation (greetings on computer return).
+# Each section holds per-host lines split by output path:
+#   <bucket>.tts.<host> -- spoken verbatim when use_ai is off / AI unavailable
+#   <bucket>.ai.<host>  -- instruction sent to the model; it speaks its own greeting
+# Placeholders: {% name_vocative %} and {% name_genitive %} are filled from names.<host>.
+# English has no grammatical cases, so both slots carry the same plain name here --
+# keep both keys anyway so bundles stay structurally identical across locales.
+# Add more buckets freely and reference them from greeting_windows in tts-greeter.yaml.
+#
+# Copy this file to "greeter.yaml" and customize sentences + host names for your home.
+
+names:
+  hostname1: { vocative: 'John', genitive: 'John' }
+  hostname2: { vocative: 'Alice', genitive: 'Alice' }
+
+welcome:
+  tts:
+    hostname1: 'Welcome back, {% name_vocative %}!'
+    hostname2: 'Welcome back, {% name_vocative %}!'
+  ai:
+    hostname1: 'Give a warm, brief welcome to {% name_genitive %}, who just got home.'
+    hostname2: 'Give a warm, brief welcome to {% name_genitive %}, who just got home.'
+
+forgot:
+  tts:
+    hostname1: 'Welcome again, {% name_vocative %}. Did you forget something?'
+    hostname2: 'Welcome again, {% name_vocative %}. Did you forget something?'
+  ai:
+    hostname1: 'Say briefly and with a wink that {% name_genitive %} probably forgot something. Greet them warmly.'
+    hostname2: 'Say briefly and with a wink that {% name_genitive %} probably forgot something. Greet them warmly.'
+
+reboot:
+  tts:
+    hostname1: "And boom -- {% name_genitive %}'s computer just rebooted!"
+    hostname2: "And boom -- {% name_genitive %}'s computer just rebooted!"
+  ai:
+    hostname1: "Announce briefly and with humor that {% name_genitive %}'s computer just rebooted."
+    hostname2: "Announce briefly and with humor that {% name_genitive %}'s computer just rebooted."
