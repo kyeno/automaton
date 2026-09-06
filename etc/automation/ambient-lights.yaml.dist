@@ -1,6 +1,6 @@
 # Ambient Lights Automation Configuration
 # Morning: turns off leftover lights once natural light becomes sufficient.
-# Evening: turns on ambient lamps (socket-powered) once dusk settles.
+# Evening/night: turns on ambient lamps (socket-powered) once it gets dark enough.
 # Each rule acts at most once per day ("once: true"), then stands down until
 # the next window opens -- humans keep full control of the lights in between.
 #
@@ -23,6 +23,13 @@ triggers_zigbee:
 
 timer_interval: "30s"
 
+# Stand-down guard: while either player is actively playing, Home Theater Mode owns
+# the lights and we stand down so we do not fight it over the same devices. Replace
+# these host names with your own video-player host names from network.yaml.
+video_player_suppression:
+  my-pc: [playing]
+  laptop: [playing]
+
 rules:
   - name: 'Bright morning - turn off leftover lights'
     once: true
@@ -34,10 +41,10 @@ rules:
       Hallway_Outlet: OFF
       Living_Room_Switch: OFF
 
-  - name: 'Settled dusk - turn on ambient lamps'
+  - name: 'Settled dusk / night - turn on ambient lamps'
     once: true
     conditions:
-      time-of-day: [evening]
+      time-of-day: [evening, night]
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON

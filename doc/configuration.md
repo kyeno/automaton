@@ -366,6 +366,27 @@ video_player_suppression:
 
 With `restore_state_aware: true` (automation level), restore commands are filtered through pre-command snapshots so an automation only undoes changes it made itself; a rule can mark its targets as unconditional with `force_restore: true`. Full snapshot, ownership, and no-op suppression semantics are covered in [Rule Engine Restore & Ownership](architecture/rule-engine-restore-semantics.md).
 
+### Delegating to Other Automations (`invoke_automation`)
+
+A rule can hand control to another loaded automation instead of -- or alongside -- issuing device commands itself. This is how [Home Theater Mode](automations/home-theater-mode.md) hands rollers back to their room's owner when a player goes offline, and delegates light-restore decisions to the ambient-lights automation on pause:
+
+```yaml
+rules:
+  - name: 'HTPC: player gone - hand Salon rollers back'
+    conditions: { video-player: { htpc: [unknown, unreachable] } }
+    invoke_automation: { name: HomeOfficeRollersAutomation, force: true }
+```
+
+- `name` must match an automation registered by the container exactly; unknown names log a warning and are skipped without aborting the run.
+- The bare-string form (`invoke_automation: SomeName`) is equivalent to `{ name: SomeName }`.
+- Invocations fire **after** a rule matches but **before** any device dispatch, so a rule whose only action is invoking still works even though it issues no device command of its own (the automation just needs at least one device in scope for `execute()` to proceed).
+- If several matched rules reference the same target within one run, that automation fires **once**; `force: true` is OR-merged across those references.
+- A mutual `A -> B -> A` chain is capped at a fixed nesting depth (5) to break accidental cycles.
+
+### Force Semantics and Once Markers
+
+`/automation force <n>` -- and any forced `invoke_automation` -- bypasses both the *checking* and the *writing/updating* of per-rule once-per-day markers as well as the silent-period guard. In other words a forced or delegated poke never consumes an automation's daily budget, so repeated forced runs stay safe. Human-interaction cooldowns are intentionally **not** bypassed either way, and the top-level `video_player_suppression` stand-down guard is also never bypassed by force.
+
 ### Daily Once Markers (`once`)
 
 Adding `once: true` to a rule makes it act **at most once per local calendar day**. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a daily marker in Redis and stands down for the rest of that day; humans then have full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. The marker self-resets each day; storage failures fail open.

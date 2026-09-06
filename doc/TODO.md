@@ -1,10 +1,11 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- CONSIDER: "ZigbeeMonitor" sharing the same "state change" logic as other monitors and populate that via local EventBus. Log real Zigbee state changes ONLY as trace; every higher level - via EventBus.
+- CONSIDER: Dropping db's shm and wal to original DB more often, not just on quit?
 - Create "greeter" TTS/AI automation that will work in tandem with network monitor and greet people when their computers go online; add "off period guard" on launching, so you don't greet person on reboot. Consider goodbye logic not to do the same.
 - Add WiFi and WiFi devices support
 - Add crypto price monitor
-- LATER: Add timeseries database for state history (sensors, monitors)
 - LATER: Postpone automations so they don't fire all at once
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix

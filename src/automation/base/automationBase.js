@@ -33,6 +33,9 @@ const DEFAULT_TIMER_INTERVAL_MS = 0
 /** Maximum acceptable timer interval -- setInterval clamps silently above 32 bits (~24.8 days). */
 const MAX_SETTABLE_INTERVAL_MS = 0x7FFFFFFF
 
+/** Quiescence window (ms) for coalescing near-simultaneous EventBus trigger events into a single run. */
+const TRIGGER_COALESCE_MS = 250
+
 // ---------------------------------------------------------------------------
 // AutomationBase (abstract)
 // ---------------------------------------------------------------------------
@@ -52,6 +55,15 @@ export default class AutomationBase {
      * @type {boolean}
      */
     #overrideHumanInteraction = false
+
+    /** EventBus topics awaiting a consolidated {@link execute} run (trigger coalescing). */
+    #triggerQueue = []
+
+    /** Active setTimeout handle used to schedule a trailing-edge trigger flush. */
+    #flushTimer = null
+
+    /** True while a consolidated event-triggered {@link execute} is in flight. */
+    #flushing = false
 
     // -- Constructor --------------------------------------------------------
 
@@ -117,11 +129,9 @@ export default class AutomationBase {
         if (triggers && triggers.length > 0) {
             for (const topic of triggers) {
                 const unsub = EventBus.subscribe(topic, () => {
-                    try {
-                        this.execute({ trigger: topic })
-                    } catch (error) {
-                        LoggerService.error(`Error executing event trigger "${topic}" for ${this.name}: ${error.message}`, `Auto:${this.name}`)
-                    }
+                    // Route through the coalescing queue so several hosts changing state at once
+                    // collapse into a single rule evaluation instead of one execution per event.
+                    this.#enqueueTrigger(topic)
                 })
                 if (unsub) {
                     this._unsubscribes.push(unsub)
@@ -255,6 +265,67 @@ export default class AutomationBase {
         }
     }
 
+    /**
+     * Enqueue an EventBus-triggered run. Near-simultaneous trigger events are coalesced into a
+     * single {@link execute} call so that several hosts changing state together (e.g., all going
+     * offline at boot) do not each re-run the whole rule set and re-invoke shared downstream
+     * automations. Manual runs, timer ticks and `invoke_automation` calls bypass this path and stay immediate.
+     *
+     * @param {string} topic - The triggering EventBus topic
+     */
+    #enqueueTrigger(topic) {
+        this.#triggerQueue.push(topic)
+        if (this.#flushTimer != null || this.#flushing) return   // already scheduled / draining
+        this.#scheduleTriggerFlush()
+    }
+
+    /**
+     * Schedule a trailing-edge flush of queued triggers after a short quiescence window.
+     * @private
+     */
+    #scheduleTriggerFlush() {
+        this.#flushTimer = setTimeout(() => {
+            this.#flushTimer = null
+            void this.#runQueuedTriggers()
+        }, TRIGGER_COALESCE_MS)
+        if (typeof this.#flushTimer.unref === 'function') this.#flushTimer.unref()
+    }
+
+    /**
+     * Drain the trigger queue: run one consolidated {@link execute} per batch, picking up any topics
+     * that arrive while an execution is in flight so nothing is dropped.
+     * @private
+     */
+    async #runQueuedTriggers() {
+        this.#flushing = true
+        try {
+            for (;;) {
+                const batch = this.#triggerQueue.splice(0)
+                if (batch.length === 0) break
+                await this.execute({ trigger: batch.join(',') })
+            }
+        } catch (error) {
+            LoggerService.error(`Error executing coalesced event trigger(s) for ${this.name}: ${error.message}`, `Auto:${this.name}`)
+        } finally {
+            this.#flushing = false
+            // Topics may have arrived during the drain; schedule another pass if needed.
+            if (this.#triggerQueue.length > 0 && this.#flushTimer == null) this.#scheduleTriggerFlush()
+        }
+    }
+
+    /**
+     * Reset trigger-coalescing state (used on cleanup / re-init).
+     * @private
+     */
+    #resetTriggerCoalescing() {
+        if (this.#flushTimer != null) {
+            clearTimeout(this.#flushTimer)
+            this.#flushTimer = null
+        }
+        this.#triggerQueue.length = 0
+        this.#flushing = false
+    }
+
     // -- Cleanup ------------------------------------------------------------
 
     /**
@@ -263,6 +334,7 @@ export default class AutomationBase {
      */
     cleanup() {
         this.stopTimer()
+        this.#resetTriggerCoalescing()
         for (const unsub of this._unsubscribes) {
             try {
                 unsub()

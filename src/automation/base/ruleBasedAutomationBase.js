@@ -21,6 +21,7 @@ import fs from 'node:fs'
 import temporal from '../../lib/date.js'
 
 import CacheService from '../../service/cacheService.js'
+import DatabaseService from '../../service/databaseService.js'
 import LoggerService from '../../service/loggerService.js'
 import { parseDocument as yamlParseDocument } from 'yaml'
 import { slugify, toTargetKey } from '../../lib/string.js'
@@ -28,6 +29,7 @@ import { slugify, toTargetKey } from '../../lib/string.js'
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import networkPresence from '../../monitor/networkPresence.js'
 import videoPlayerMonitor from '../../monitor/videoPlayerMonitor.js'
+import AutomationContainer from '../container/automationContainer.js'
 
 import AutomationBase from './automationBase.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
@@ -44,14 +46,6 @@ const CONTEXT_FAILURE_ESCALATION_THRESHOLD = 5
  * @type {number}
  */
 const ONCE_MARKER_TTL_SECONDS = 172_800
-
-/**
- * TTL for state-aware-restore snapshots in Redis (12 hours, seconds). A
- * snapshot records that a device was on when this automation turned it off;
- * the TTL only keeps forgotten entries self-cleaning.
- * @type {number}
- */
-const RESTORE_SNAPSHOT_TTL_SECONDS = 43_200
 
 /**
  * Explicit condition token for an unknown player state (host offline, or the
@@ -71,20 +65,35 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     #contextFailCount = 0
 
     /**
-     * In-memory restore snapshots for state-aware restore, keyed by target id.
-     * Redis mirrors them so snapshots survive a restart; the map is the
-     * authoritative fast path.
-     * @type {Map<string, boolean>}
-     */
-    #restoreMemory = new Map()
-
-    /**
      * Config object already validated by {@link validateTargets} -- warnings are
      * emitted at most once per config instance instead of on every tick; a
      * replaced config object (tests, reloads) re-triggers validation.
      * @type {{targets?: unknown, rules?: unknown}|null}
      */
     #validatedConfig = null
+
+    /**
+     * Epoch-ms timestamp up to which monitored-state transitions have been consumed by this
+     * automation's evaluations. Used by the opt-in react-on-change gate so scheduled ticks stay
+     * quiet until a new transition occurs; initialized at construction time so changes recorded
+     * before this process started are not re-acted on by timers.
+     * @type {number}
+     */
+    #lastEvaluatedAtMs = Date.now()
+
+    /**
+     * Cached list of {domain, subject} pairs this automation monitors, derived from its rules'
+     * presence / video-player conditions. Recomputed when the config object is replaced (tests,
+     * reloads).
+     * @type {Array<{domain: string, subject: string}>|null}
+     */
+    #monitoredSubjects = null
+
+    /**
+     * Config reference that the cached #monitoredSubjects was computed against.
+     * @type {{rules?: unknown}|null}
+     */
+    #monitoredConfigRef = null
 
     /**
      * Construct a rule-based automation.
@@ -231,11 +240,27 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
+        // state-change recency check -- require that the last recorded transition for each
+        // listed "<domain>:<subject>" was at least N minutes ago. Backed by
+        // DatabaseService.lastTransitionTs(). A subject with no history satisfies any bound;
+        // an unavailable store fails open so a downed database never blocks an automation.
+        if (conditions['state-changed-ago-minutes'] !== undefined) {
+            const expected = conditions['state-changed-ago-minutes']
+            for (const [ref, bounds] of Object.entries(expected ?? {})) {
+                const minMinutes = typeof bounds === 'number' ? bounds : Number(bounds?.gte ?? bounds?.min ?? NaN)
+                if (!Number.isFinite(minMinutes)) continue   // malformed -> ignore rather than fail closed
+                const { domain, subject } = this.#parseSubjectRef(ref)
+                const ts = await DatabaseService.lastTransitionTs(domain, subject)
+                if (ts == null) continue                       // never changed -> satisfies "at least N ago"
+                if ((Date.now() - ts) < minMinutes * 60_000) return false
+            }
+        }
+
         // Dynamic: any remaining condition key -> numeric range check against context.
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'season' || key === 'presence' || key === 'video-player') continue // handled above
+            if (key === 'time-of-day' || key === 'season' || key === 'presence' || key === 'video-player' || key === 'state-changed-ago-minutes') continue // handled above
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -259,13 +284,31 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * 
      * @param {Object} [triggerData] - Info about what triggered this run
      * @param {string} [triggerData.trigger] - Trigger source identifier
-     * @param {boolean} [triggerData.force] - When true (e.g., "/automation force"), bypasses the
-     *   silent-period suppression and per-rule once-per-day markers; human-interaction cooldowns still
+     * @param {boolean} [triggerData.force] - When true (e.g., "/automation force" or an `invoke_automation` action), bypasses both checks and writes of
+     *   silent-period suppression and per-rule once-per-day markers (both checking and writing them); human-interaction cooldowns still
      *   apply, and the top-level video_player_suppression stand-down guard is never bypassed
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
+        const forced = triggerData?.force === true
         this.log(`Triggered by: ${triggerSource}`, 'info')
+
+        // Opt-in react-on-change gating (config.trigger_on_change_only). When enabled,
+        // scheduled ('timer') safety-net ticks are skipped entirely unless one of this
+        // automation's monitored subjects actually transitioned since our last evaluation.
+        // Event-driven runs (a real EventBus topic) and forced runs always proceed -- they
+        // already represent an explicit reason to act. This is what stops a sticky
+        // automation from re-firing on every timer tick while its conditions still hold.
+        if (this.config.trigger_on_change_only === true && !forced && triggerSource === 'timer') {
+            if (!await this.#changedSinceLastEvaluation()) {
+                this.log('No monitored state change since last run -- skipping scheduled tick', 'debug')
+                return
+            }
+        }
+
+        // Reached here => we will evaluate now; advance the consumed-changes baseline so
+        // subsequent scheduled ticks stay quiet until a new transition occurs.
+        this.#lastEvaluatedAtMs = Date.now()
 
         // Suppress execution during configured silent period (before any work begins),
         // unless explicitly forced from outside (e.g., "/automation force")
@@ -351,8 +394,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 if (!match) continue
 
                 // Per-rule daily "once" marker -- at most one action per calendar day.
-                // A forced manual run may still act after the slot was used today; when it
-                // does, #markActedToday() refreshes the marker so later natural runs skip.
+                // A forced run bypasses this check entirely and also skips writing the
+                // marker afterwards, so it can re-fire an already-consumed rule without
+                // consuming anyone else's once-per-day budget.
                 if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule)) {
                     this.log(`Rule "${rule.name}" already acted today, skipping`, 'debug')
                     continue
@@ -368,6 +412,31 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         if (matchingRules.length === 0) {
             this.log('No rules matched, no action', 'debug')
             return
+        }
+
+        // Fire any `invoke_automation` actions declared by matched rules -- e.g., hand a
+        // room's rollers back to their owner when the player goes offline, or delegate
+        // light restore to the ambient-lights automation on pause. Runs before device
+        // dispatch so an automation whose only action is invoking still works; each unique
+        // target fires exactly once per run regardless of how many rules referenced it.
+        {
+            const invocations = new Map()   // name -> force (OR-merged across referencing rules)
+            for (const rule of matchingRules) {
+                const spec = rule.invoke_automation
+                if (!spec) continue
+                const name = typeof spec === 'string' ? spec : spec.name
+                if (!name || typeof name !== 'string') continue
+                const force = typeof spec === 'object' && spec.force === true
+                invocations.set(name, (invocations.get(name) ?? false) || force)
+            }
+            for (const [name, force] of invocations.entries()) {
+                try {
+                    this.log(`Invoking automation "${name}"${force ? ' (forced)' : ''}`, 'info')
+                    await AutomationContainer.callAutomation(name, { trigger: this.name, ...(force ? { force: true } : {}) })
+                } catch (error) {
+                    this.log(`Failed to invoke automation "${name}": ${error.message}`, 'warn')
+                }
+            }
         }
 
         // Resolve a single consolidated command per device from ALL matching rules,
@@ -426,17 +495,6 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 if (!result || result.skip) return
 
                 let payload = result.payload
-                // State-aware restore (opt-in via `restore_state_aware`): only
-                // re-assert ON for lights this automation turned off from an
-                // on-state; skip everything else it does not remember.
-                if (this.getRestoreStateAware()) {
-                    // The first matching rule that commands this target owns the
-                    // decision; its `force_restore` flag marks "always on" lights.
-                    const owner = matchingRules.find((rule) => rule.targets?.[tk] !== undefined)
-                    payload = await this.#applyRestoreAwareness(dev, tk, payload, owner?.force_restore === true)
-                    if (!payload) return
-                }
-
                 this.log(`${dev.getName()} -> ${JSON.stringify(payload)}`)
                 dev.receiveCommand(payload, DeviceCommandSource.AUTOMATION)
                 dispatchedCount++
@@ -453,8 +511,10 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         // Consume the daily slot for `once` rules when we either acted or deferred to
         // recent human interaction -- after that, humans have full control until the next
-        // day. If nothing happened at all, keep retrying on later ticks.
-        if (dispatchedCount > 0 || humanSkippedCount > 0) {
+        // day. If nothing happened at all, keep retrying on later ticks. A forced run
+        // neither checks nor writes these markers, so a manual/delegated poke never
+        // consumes an automation's once-per-day budget.
+        if ((dispatchedCount > 0 || humanSkippedCount > 0) && triggerData?.force !== true) {
             for (const rule of matchingRules) {
                 if (rule.once) {
                     await this.#markActedToday(rule)
@@ -679,192 +739,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         return { payload: { position: Number(command) } }
     }
 
-    /**
-     * Whether this automation uses state-aware restore: lights are only
-     * re-asserted ON when this automation itself turned them off from an
-     * on-state. Read live from the `restore_state_aware` config key so the
-     * config can also be injected after construction (tests).
-     * @returns {boolean}
-     */
-    getRestoreStateAware() {
-        return Boolean(this.config?.restore_state_aware)
-    }
-
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
-
-    /**
-     * Read a device's last cached state in a normalized shape.
-     * @private
-     * @param {DeviceBase} device - Target device
-     * @returns {{state: string|null, position: number|null}|null} Normalized
-     *   state, or null when nothing is cached yet
-     */
-    #readDeviceState(device) {
-        const last = typeof device?.getStateLast === 'function' ? device.getStateLast() : null
-        if (!last || typeof last !== 'object') return null
-        if (typeof last.state === 'string') {
-            return {
-                state: last.state.toUpperCase(),
-                position: Number.isFinite(last.position) ? last.position : null
-            }
-        }
-        if (Number.isFinite(last.position)) return { state: null, position: last.position }
-        return null
-    }
-
-    /**
-     * Whether a switch-style device is currently on.
-     * @private
-     * @param {DeviceBase} device - Target device
-     * @returns {boolean}
-     */
-    #deviceIsOn(device) {
-        return this.#readDeviceState(device)?.state === 'ON'
-    }
-
-    /**
-     * Whether a roller device is currently (partially) open.
-     * @private
-     * @param {DeviceBase} device - Target device
-     * @returns {boolean}
-     */
-    #deviceIsOpen(device) {
-        const known = this.#readDeviceState(device)
-        if (!known) return false
-        if (Number.isFinite(known.position)) return known.position > 0
-        return known.state === 'OPEN'
-    }
-
-    /**
-     * Redis key for a target's restore snapshot.
-     * @private
-     * @param {string} targetId - Target identifier
-     * @returns {string}
-     */
-    #restoreSnapshotKey(targetId) {
-        return `auto:${this.name}:restore:${targetId}`
-    }
-
-    /**
-     * Fetch a restore snapshot. The key exists only when the device was on
-     * before this automation turned it off; null means "no memory".
-     * In-memory map first; Redis hydrates it after a restart.
-     * @private
-     * @param {string} targetId - Target identifier
-     * @returns {Promise<boolean|null>} true (was on), or null (no memory)
-     */
-    async #getRestoreSnapshot(targetId) {
-        if (this.#restoreMemory.has(targetId)) return this.#restoreMemory.get(targetId)
-        try {
-            const stored = await CacheService.get(this.#restoreSnapshotKey(targetId))
-            if (stored === true) {
-                this.#restoreMemory.set(targetId, true)
-                return true
-            }
-        } catch (_) {
-            // Cache unavailable -- memory-only snapshots still apply.
-        }
-        return null
-    }
-
-    /**
-     * Record that a device was on when this automation turned it off
-     * (memory + best-effort Redis with a self-cleaning TTL).
-     * @private
-     * @param {string} targetId - Target identifier
-     * @returns {Promise<void>}
-     */
-    async #rememberRestoreSnapshot(targetId) {
-        this.#restoreMemory.set(targetId, true)
-        try {
-            await CacheService.set(this.#restoreSnapshotKey(targetId), true, RESTORE_SNAPSHOT_TTL_SECONDS)
-        } catch (_) {
-            // Best-effort persistence; the in-memory snapshot still applies.
-        }
-    }
-
-    /**
-     * Consume a restore snapshot after it has been acted on.
-     * @private
-     * @param {string} targetId - Target identifier
-     * @returns {Promise<void>}
-     */
-    async #clearRestoreSnapshot(targetId) {
-        this.#restoreMemory.delete(targetId)
-        try {
-            await CacheService.delete(this.#restoreSnapshotKey(targetId))
-        } catch (_) {
-            // Best-effort; the in-memory snapshot is cleared regardless.
-        }
-    }
-
-    /**
-     * State-aware gate for dispatched commands (only active when
-     * `restore_state_aware` is on). Also suppresses provable no-ops so the
-     * sticky re-assert ticks do not spam MQTT with redundant commands.
-     *
-     * Light (switch) payloads:
-     *   - OFF: skipped when the device is already known-off; otherwise
-     *     dispatched, remembering "was on" so a later ON can restore it.
-     *   - ON: dispatched only when the snapshot says this automation turned
-     *     the light off from an on-state (consuming it) -- or when the owning
-     *     rule sets `force_restore: true` ("always on" ambient lights).
-     *     Already-on devices are skipped as no-ops; without memory and
-     *     without force the command is skipped, leaving lights the automation
-     *     did not turn off to the automations that own them.
-     *
-     * Roller payloads:
-     *   - CLOSE: skipped when already known-closed; otherwise dispatched,
-     *     remembering "was open" when it closed from an open state.
-     *   - OPEN: dispatched only to undo a close this automation performed
-     *     itself (ownership hand-back); never opens blinds it found closed.
-     *
-     * @private
-     * @param {DeviceBase} device - Target device
-     * @param {string} targetId - Target identifier
-     * @param {object|string} payload - Resolved command payload
-     * @param {boolean} forceRestore - Owning rule sets `force_restore: true`
-     * @returns {Promise<object|string|null>} Payload to dispatch, or null to skip
-     */
-    async #applyRestoreAwareness(device, targetId, payload, forceRestore) {
-        // Light (switch) payloads.
-        if (payload && typeof payload === 'object' && typeof payload.state === 'string') {
-            const upper = payload.state.toUpperCase()
-            if (upper === 'OFF') {
-                if (this.#readDeviceState(device)?.state === 'OFF') return null // no-op
-                if (this.#deviceIsOn(device)) await this.#rememberRestoreSnapshot(targetId)
-                return payload
-            }
-            if (upper === 'ON') {
-                const wasOn = await this.#getRestoreSnapshot(targetId)
-                if (wasOn === true) await this.#clearRestoreSnapshot(targetId)
-                if (this.#deviceIsOn(device)) return null // no-op
-                if (wasOn === true || forceRestore) return payload
-                this.log(`${device.getName()}: not restoring (was not on before dark mode)`, 'debug')
-                return null
-            }
-            return payload
-        }
-
-        // Roller payloads.
-        if (payload === 'CLOSE' || payload === 'OPEN') {
-            if (payload === 'CLOSE') {
-                const known = this.#readDeviceState(device)
-                if (known && (known.position === 0 || known.state === 'CLOSE')) return null // no-op
-                if (this.#deviceIsOpen(device)) await this.#rememberRestoreSnapshot(targetId)
-                return payload
-            }
-            if ((await this.#getRestoreSnapshot(targetId)) === true) {
-                await this.#clearRestoreSnapshot(targetId)
-                return payload
-            }
-            return null
-        }
-
-        return payload
-    }
 
     /**
      * Check whether an `once` rule has already consumed today's action slot.
@@ -978,6 +855,72 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             result[host] = Array.isArray(value) ? value : [value]
         }
         return result
+    }
+
+    /**
+     * Split a "<domain>:<subject>" reference (e.g., "network:htpc", "videoPlayer:bedroom") into its
+     * domain and subject parts for DatabaseService lookups. A missing/leading colon yields an empty
+     * domain that matches no stored rows (fail-open).
+     * @private
+     * @param {string} ref - Raw subject reference from a condition value
+     * @returns {{domain: string, subject: string}} Parsed domain and subject
+     */
+    #parseSubjectRef(ref) {
+        const str = String(ref ?? '')
+        const idx = str.indexOf(':')
+        if (idx <= 0) return { domain: '', subject: str }
+        return { domain: str.slice(0, idx), subject: str.slice(idx + 1) }
+    }
+
+    /**
+     * Whether any subject this automation monitors recorded a state transition after our last
+     * evaluation -- the signal the react-on-change gate uses to decide whether a scheduled tick
+     * should run at all. Returns true when no subjects are monitored (nothing to watch -> don't
+     * block) and fails open (true) while the database is unavailable so an outage never silences.
+     * @private
+     * @returns {Promise<boolean>} true when a relevant change occurred (or none can be determined)
+     */
+    async #changedSinceLastEvaluation() {
+        const subjects = this.#collectMonitoredSubjects()
+        if (!subjects || subjects.length === 0) return true
+        if (!DatabaseService.isAvailable()) return true   // fail open during an outage
+        const baseline = this.#lastEvaluatedAtMs ?? 0
+        for (const { domain, subject } of subjects) {
+            const ts = await DatabaseService.lastTransitionTs(domain, subject)
+            if (ts != null && ts > baseline) return true
+        }
+        return false
+    }
+
+    /**
+     * Derive the set of {domain, subject} pairs this automation reacts to by scanning its rules'
+     * `presence` (network) and `video-player` conditions. Cached per config object; recomputed only
+     * when the config reference changes (tests / reloads). De-duplicated by "domain:subject".
+     * @private
+     * @returns {Array<{domain: string, subject: string}>} Monitored subjects (may be empty)
+     */
+    #collectMonitoredSubjects() {
+        if (this.#monitoredConfigRef === this.config && Array.isArray(this.#monitoredSubjects)) {
+            return this.#monitoredSubjects
+        }
+        const seen = new Set()
+        const out = []
+        const add = (domain, subject) => {
+            const key = `${domain}:${subject}`
+            if (!seen.has(key)) { seen.add(key); out.push({ domain, subject }) }
+        }
+        for (const rule of (this.config.rules ?? [])) {
+            const conds = rule?.conditions ?? {}
+            if (conds.presence !== undefined) {
+                for (const name of Object.keys(this.#normalizePresenceCondition(conds.presence))) add('network', name)
+            }
+            if (conds['video-player'] !== undefined) {
+                for (const host of Object.keys(this.#normalizeVideoPlayerCondition(conds['video-player']))) add('videoPlayer', host)
+            }
+        }
+        this.#monitoredConfigRef = this.config
+        this.#monitoredSubjects = out
+        return out
     }
 
     /**

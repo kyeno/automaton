@@ -10,9 +10,9 @@
  *   /automation run <n>      Call that automation's execute() now; the log shows
  *                             "Triggered by: manual" under its Auto:<name> context
  *   /automation force <n>    Same as run but bypasses the silent period and any
- *                             once-per-day rule markers; human-interaction cooldowns
- *                             still apply so a manual poke never fights a device
- *                             someone just touched
+ *                             already-consumed once-per-day rule markers without consuming or
+ *                             refreshing them; human-interaction cooldowns still apply so a
+ *                             manual poke never fights a device someone just touched
  *   /automation force <n> first
  *                             As force, but also forces the first-of-day day-position
  *                             so the dated opening time line renders (debug poke)
@@ -284,7 +284,8 @@ class AutomationCmd extends CommandBase {
 
     /**
      * Force-run an automation: identical to run except the dispatch carries force:true,
-     * which lets automations skip their silent period and per-rule once-per-day markers.
+     * which lets automations skip both checking and writing of their silent-period suppression
+     * and per-rule once-per-day markers (a forced/delegated run consumes no daily budget).
      * Human-interaction cooldowns are intentionally NOT bypassed so a manual poke never
      * fights a device someone just physically touched. An optional trailing "first"
      * token (e.g. "force <name> first") additionally carries forceFirst:true so the

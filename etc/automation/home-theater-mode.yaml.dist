@@ -4,8 +4,8 @@
 # room's rollers are closed; when the player is gone (machine off or player
 # closed), they are handed back to their default automations. When a video is
 # actively playing, interfering lights are switched off (dark mode); on
-# pause/stop the ambient lights come back -- the "always on" ones directly,
-# the rest only if they were on before dark mode.
+# pause/stop/gone light restore is delegated to the ambient-lights
+# automation via invoke_automation, which owns those lamps and decides itself.
 #
 # Requires video players defined under `videoPlayers` in etc/device/network.yaml
 # (see the MPC-HC / VLC setup notes there).
@@ -16,10 +16,8 @@
 
 override_human_interaction: true
 
-# Restore lights only when this automation turned them off from an on-state.
-# Lights that were already off before dark mode are never forced back on --
-# the automations that normally own them decide that.
-restore_state_aware: true
+# Light restore is fully delegated via `invoke_automation` to the ambient-lights
+# automation, which owns all ambient lamp devices and re-evaluates its own conditions.
 
 targets:
   # Replace with your own Zigbee device names (must exist in zigbee.yaml).
@@ -40,63 +38,69 @@ triggers_network:
   - my-pc
   - laptop
 
-# Safety net: re-evaluate periodically in case an event trigger is missed.
-timer_interval: '30s'
 
 rules:
-  # Rollers: owned while the player answers HTTP (any state); handed back when
-  # it is gone. Hand-back re-opens only rollers this automation closed itself.
+  # ===========================================================================
+  # Living room -- all four rules grouped together
+  # ===========================================================================
+  # Rollers are owned while the player answers HTTP (any state); handed back to the
+  # room's own roller automation when it goes offline so that owner decides the
+  # post-playback position from its full rule set. `invoke_automation` runs the named
+  # automation now -- replace placeholder names with your installed automations.
+  # `force: true` makes them act even if a once/silent guard would otherwise block
+  # (human cooldowns still apply).
   - name: 'Living room: player reachable - close rollers'
     conditions:
+      presence: { my-pc: true }
       video-player: { my-pc: [playing, paused, stopped] }
     targets:
       Living_Room_Roller_Left: CLOSE
 
-  - name: 'Living room: player gone - hand rollers back'
+  - name: 'Living room: player gone - hand rollers back to their owner'
     conditions:
+      presence: { my-pc: false }
       video-player: { my-pc: [unknown, unreachable] }
-    targets:
-      Living_Room_Roller_Left: OPEN
+    invoke_automation: { name: LivingRoomRollersAutomation, force: true }
 
-  - name: 'Bedroom: player reachable - close rollers'
+  # Light restore is fully delegated via `invoke_automation` to the ambient-lights
+  # automation, which owns all ambient lamp devices and re-evaluates its own
+  # conditions. No `presence` gate here so an offline machine also hands light control back.
+  - name: 'Living room: not playing - delegate light restore to ambient lights'
     conditions:
-      video-player: { laptop: [playing, paused, stopped] }
-    targets:
-      Bedroom_Roller_Left: CLOSE
-
-  - name: 'Bedroom: player gone - hand rollers back'
-    conditions:
-      video-player: { laptop: [unknown, unreachable] }
-    targets:
-      Bedroom_Roller_Left: OPEN
-
-  # Lights: keep `presence` on the light rules -- a machine that is simply
-  # switched off must not restore anything.
-  - name: 'Bedroom: not playing - always-on ambient lights'
-    conditions:
-      presence: { laptop: true }
-      video-player: { laptop: [paused, stopped, unreachable, unknown] }
-    force_restore: true
-    targets:
-      Bedroom_Plug: ON
-
-  - name: 'Bedroom: playing - dark mode'
-    conditions:
-      presence: { laptop: true }
-      video-player: { laptop: [playing] }
-    targets:
-      Bedroom_Plug: OFF
-
-  - name: 'Living room: not playing - restore lights (state-aware)'
-    conditions:
-      presence: { my-pc: true }
       video-player: { my-pc: [paused, stopped, unreachable, unknown] }
-    targets:
-      Living_Room_Plug: ON
+    invoke_automation: { name: AmbientLightsAutomation, force: true }
 
-  - name: 'Living room: playing - dark mode'
+  - name: 'Living room: playing - dark mode (lights off)'
     conditions:
       presence: { my-pc: true }
       video-player: { my-pc: [playing] }
     targets:
       Living_Room_Plug: OFF
+
+  # ===========================================================================
+  # Bedroom -- all four rules grouped together
+  # ===========================================================================
+  - name: 'Bedroom: player reachable - close rollers'
+    conditions:
+      presence: { laptop: true }
+      video-player: { laptop: [playing, paused, stopped] }
+    targets:
+      Bedroom_Roller_Left: CLOSE
+
+  - name: 'Bedroom: player gone - hand rollers back to their owner'
+    conditions:
+      presence: { laptop: false }
+      video-player: { laptop: [unknown, unreachable] }
+    invoke_automation: { name: BedroomRollersAutomation, force: true }
+
+  - name: 'Bedroom: not playing - delegate light restore to ambient lights'
+    conditions:
+      video-player: { laptop: [paused, stopped, unreachable, unknown] }
+    invoke_automation: { name: AmbientLightsAutomation, force: true }
+
+  - name: 'Bedroom: playing - dark mode (lights off)'
+    conditions:
+      presence: { laptop: true }
+      video-player: { laptop: [playing] }
+    targets:
+      Bedroom_Plug: OFF

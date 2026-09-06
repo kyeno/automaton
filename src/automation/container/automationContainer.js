@@ -45,6 +45,9 @@ class SAutomationContainer {
      */
     #automations = new Map()
 
+    /** Nested invocation depth -- guards against A -> B -> A recursion cycles. */
+    #invocationDepth = 0
+
     // -- Singleton --------------------------------------------------------
 
     /**
@@ -198,13 +201,28 @@ class SAutomationContainer {
      */
     async callAutomation(name, data = {}) {
         const automation = this.getAutomation(name)
-        if (automation && typeof automation.execute === 'function') {
-            await automation.execute(data)
-        } else {
+        if (!automation || typeof automation.execute !== 'function') {
             LoggerService.warn(
                 `Automation "${name}" not found or has no execute() method`,
                 'AutomationContainer'
             )
+            return
+        }
+        // Re-entrancy guard: invoke_automation actions run their target through this same
+        // entry point, so cap nesting to break any accidental A -> B -> A loop.
+        const maxDepth = 5
+        if (this.#invocationDepth >= maxDepth) {
+            LoggerService.warn(
+                `Invocation depth limit (${maxDepth}) reached -- skipping "${name}" to break a cycle`,
+                'AutomationContainer'
+            )
+            return
+        }
+        this.#invocationDepth++
+        try {
+            await automation.execute(data)
+        } finally {
+            this.#invocationDepth--
         }
     }
 

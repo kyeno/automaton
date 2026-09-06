@@ -5,10 +5,10 @@
  * a fabricated video-player status against a self-contained rule set modeled on
  * home-theater-mode.yaml (no local configuration required):
  *   - Player reachable (playing/paused/stopped) -> CLOSE the room's rollers
- *   - Player gone (unknown/unreachable) -> hand rollers back (re-open only what we closed)
- *   - Playing -> OFF interfering lights (dark mode)
- *   - Not playing -> always-on ambient lights return; the rest only if on before dark mode
- *   - Lights already off before dark mode are never forced back on (restore_state_aware)
+ *   - Player gone (unknown/unreachable) -> invoke the room's roller-owner automation (hand-back)
+ *   - Playing -> OFF interfering lights (dark mode); home theater owns the lights then
+ *   - Not playing -> delegate light restore to the ambient-lights automation (invoked, forced)
+ *   - Home theater no longer sends local OPEN/ON restores -- those decisions belong to owners
  *   - Unknown (null) video-player status matches only lists that opt in via 'unknown'
  *   - override_human_interaction bypasses the human-cooldown skip
  *   - MPC/VLC provider parse normalization (including version-lock behavior)
@@ -33,6 +33,19 @@ import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationB
 import videoPlayerMonitor from '../src/monitor/videoPlayerMonitor.js'
 import MpcProvider from '../src/monitor/providers/mpc.js'
 import VlcProvider from '../src/monitor/providers/vlc.js'
+import AutomationContainer from '../src/automation/container/automationContainer.js'
+
+// Record delegated invocations instead of executing the target automations (which are not
+// loaded in this unit test), so we can assert WHICH owner home-theater hands control to and
+// with what force flag. The real callAutomation would run them; here we just observe.
+const invocations = []
+// The exported default is a frozen singleton INSTANCE (not the class), so we can neither set an
+// own property on it nor read `.prototype`. Patch its shared [[Prototype]] instead -- that is
+// exactly where the base's `AutomationContainer.callAutomation(...)` lookup resolves to.
+const containerPrototype = Object.getPrototypeOf(AutomationContainer)
+containerPrototype.callAutomation = async function(name, data = {}) {
+    invocations.push({ name, force: data?.force === true })
+}
 
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
 process.env['MQTT_PREFIX'] = process.env['MQTT_PREFIX'] || 'zigbee2mqtt'
@@ -151,7 +164,6 @@ function makeHomeTheaterMode(devices, context) {
     const auto = new TestHomeTheaterMode(devices, context)
     auto.config = {
         override_human_interaction: true,
-        restore_state_aware: true,
         rules: [
             // Rollers: owned while the player answers HTTP, regardless of state.
             {
@@ -162,11 +174,11 @@ function makeHomeTheaterMode(devices, context) {
                 targets: { Salon_Roleta_Okno_Lewe: 'CLOSE', Salon_Roleta_Okno_Prawe: 'CLOSE' }
             },
             {
-                name: 'HTPC: player gone - hand Salon rollers back',
+                name: 'HTPC: player gone - hand Salon rollers back to their owner',
                 conditions: {
                     'video-player': { htpc: ['unknown', 'unreachable'] }
                 },
-                targets: { Salon_Roleta_Okno_Lewe: 'OPEN', Salon_Roleta_Okno_Prawe: 'OPEN' }
+                invoke_automation: { name: 'HomeOfficeRollersAutomation', force: true }
             },
             {
                 name: 'Bedroom: player reachable - close Sypialnia rollers',
@@ -176,29 +188,21 @@ function makeHomeTheaterMode(devices, context) {
                 targets: { Sypialnia_Roleta_Okno_Lewe_Lewa: 'CLOSE' }
             },
             {
-                name: 'Bedroom: player gone - hand Sypialnia rollers back',
+                name: 'Bedroom: player gone - hand Sypialnia rollers back to their owner',
                 conditions: {
                     'video-player': { bedroom: ['unknown', 'unreachable'] }
                 },
-                targets: { Sypialnia_Roleta_Okno_Lewe_Lewa: 'OPEN' }
+                invoke_automation: { name: 'BedroomRollersAutomation', force: true }
             },
             // Lights: playback controls them, the player merely being open does not.
             // (Presence conditions are omitted here only because the test fabricates
             // statuses directly; production keeps presence on the light rules.)
             {
-                name: 'HTPC: not playing - always-on ambient lights',
+                name: 'HTPC: not playing - delegate light restore to ambient lights',
                 conditions: {
                     'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }
                 },
-                force_restore: true,
-                targets: { Przedpokoj_Gniazdo: 'ON' }
-            },
-            {
-                name: 'HTPC: not playing - restore remaining lights (state-aware)',
-                conditions: {
-                    'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }
-                },
-                targets: { Kuchnia_Gniazdo: 'ON' }
+                invoke_automation: { name: 'AmbientLightsAutomation', force: true }
             },
             {
                 name: 'HTPC: playing - dark mode',
@@ -208,11 +212,11 @@ function makeHomeTheaterMode(devices, context) {
                 targets: { Przedpokoj_Gniazdo: 'OFF', Kuchnia_Gniazdo: 'OFF' }
             },
             {
-                name: 'Bedroom: not playing - restore ambient lights (state-aware)',
+                name: 'Bedroom: not playing - delegate light restore to ambient lights',
                 conditions: {
                     'video-player': { bedroom: ['paused', 'stopped', 'unreachable', 'unknown'] }
                 },
-                targets: { Sypialnia_Gniazdo: 'ON' }
+                invoke_automation: { name: 'AmbientLightsAutomation', force: true }
             },
             {
                 name: 'Bedroom: playing - dark mode',
@@ -268,6 +272,18 @@ function assertCalls(devices, id, expectedPayloads, label) {
     }
 }
 
+/** Count how many times an automation was delegated to in this scenario. */
+function invocationCount(name) { return invocations.filter((i) => i.name === name).length }
+
+/** True when every delegation to `name` carried force:true and it fired at least once. */
+function allForced(name) {
+    const xs = invocations.filter((i) => i.name === name)
+    return xs.length > 0 && xs.every((i) => i.force === true)
+}
+
+/** Reset the delegation recorder so each scenario asserts only its own firings. */
+function resetInvocations() { invocations.length = 0 }
+
 // ---------------------------------------------------------------------------
 // Scenarios
 // ---------------------------------------------------------------------------
@@ -306,89 +322,103 @@ function makeDevicesDark() {
 console.log('\n── Home theater mode: dark mode, pause restores only what was on ──\n')
 
 {
+    resetInvocations()
     const devices = await runSequence(makeDevices(), [
         { htpc: 'playing', bedroom: 'stopped' },
         { htpc: 'paused', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'Przedpokoj_Gniazdo: OFF then restored ON (always-on ambient, force_restore)')
-    assertCalls(devices, 'Kuchnia_Gniazdo', [],
-        'Kuchnia_Gniazdo: silent (OFF no-op -- already off; ON skipped -- no memory)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'],
-        'Salon_Roleta_Okno_Lewe: CLOSE once (paused re-tick suppressed as no-op)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'],
-        'Salon_Roleta_Okno_Prawe: CLOSE once (paused re-tick suppressed as no-op)')
-    // Bedroom player open but idle: its roller is still owned (closed), and the
-    // still-on ambient light is an ON no-op -- never double-commanded.
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }],
+        'Przedpokoj_Gniazdo: OFF on play; restore delegated to ambient-lights (no local ON)')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [{ state: 'OFF' }],
+        'Kuchnia_Gniazdo: OFF on the playing tick (redundant commands no longer suppressed)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'CLOSE'],
+        'Salon_Roleta_Okno_Lewe: re-closed on every reachable tick (playing + paused)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'CLOSE'],
+        'Salon_Roleta_Okno_Prawe: re-closed on every reachable tick (playing + paused)')
+    // Bedroom player open but idle: its roller is still owned (closed); light restore is
+    // delegated rather than sent locally.
     assertCalls(devices, 'Sypialnia_Gniazdo', [],
-        'Sypialnia_Gniazdo: silent (still on -- ON no-op)')
-    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'],
-        'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE once (player reachable though idle)')
+        'Sypialnia_Gniazdo: silent (restore delegated to ambient-lights)')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE', 'CLOSE'],
+        'Sypialnia_Roleta_Okno_Lewe_Lewa: re-closed on every reachable tick (stopped both ticks)')
+    // Delegation: both not-playing ticks hand light restore to the ambient-lights owner.
+    assert(invocationCount('AmbientLightsAutomation') === 2 && allForced('AmbientLightsAutomation'),
+        'ambient-lights invoked on each not-playing tick (forced)')
 }
 
 console.log('\n── Home theater mode: already-dark room, only the always-on ambient returns ──\n')
 
 {
-    // Everything starts off/closed: dark mode dispatches nothing at all, and
-    // on pause only the force_restore ambient is asserted back on. State-aware
-    // lights that were off before dark mode are never forced back on.
+    // Everything starts off/closed. Redundant OFF/CLOSE commands are still dispatched
+    // whenever their rule matches (the old no-op gate is gone), but light RESTORE remains
+    // delegated to the ambient-lights owner -- that delegation is what this scenario checks.
+    resetInvocations()
     const devices = await runSequence(makeDevicesDark(), [
         { htpc: 'playing', bedroom: 'stopped' },
         { htpc: 'paused', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'ON' }],
-        'Przedpokoj_Gniazdo: forced ON on pause (force_restore ambient)')
-    assertCalls(devices, 'Kuchnia_Gniazdo', [],
-        'Kuchnia_Gniazdo: never forced back on (was off, no memory)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', [], 'Salon_Roleta_Okno_Lewe: CLOSE suppressed (already closed)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', [], 'Salon_Roleta_Okno_Prawe: CLOSE suppressed (already closed)')
-    assertCalls(devices, 'Sypialnia_Gniazdo', [], 'Sypialnia_Gniazdo: never forced back on')
-    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', [], 'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE suppressed (already closed)')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }], 'Przedpokoj_Gniazdo: OFF re-sent even though already dark (restore still delegated)')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [{ state: 'OFF' }], 'Kuchnia_Gniazdo: OFF re-sent on the playing tick')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'CLOSE'], 'Salon_Roleta_Okno_Lewe: re-closed each reachable tick (idempotent)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'CLOSE'], 'Salon_Roleta_Okno_Prawe: re-closed each reachable tick (idempotent)')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [], 'Sypialnia_Gniazdo: silent (restore delegated)')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE', 'CLOSE'], 'Sypialnia_Roleta_Okno_Lewe_Lewa: re-closed each reachable tick (idempotent)')
+    // Delegation still happens even though no local light command is sent.
+    assert(invocationCount('AmbientLightsAutomation') === 2 && allForced('AmbientLightsAutomation'),
+        'ambient-lights invoked on each not-playing tick (forced), despite a fully-dark room')
 }
 
 console.log('\n── Home theater mode: both playing (full dark) ──\n')
 
 {
+    // Both machines actively playing: full dark mode locally; nothing is delegated because
+    // the players are reachable and not in a "not-playing" state.
+    resetInvocations()
     const devices = await runSequence(makeDevices(), [{ htpc: 'playing', bedroom: 'playing' }])
     assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }], 'Przedpokoj_Gniazdo: OFF')
-    assertCalls(devices, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: OFF suppressed (already off)')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [{ state: 'OFF' }], 'Kuchnia_Gniazdo: OFF (dark mode dispatches regardless of prior state)')
     assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'], 'Salon_Roleta_Okno_Lewe: CLOSE')
     assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'], 'Salon_Roleta_Okno_Prawe: CLOSE')
     assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }], 'Sypialnia_Gniazdo: OFF')
     assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'], 'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE')
+    assert(invocations.length === 0, 'active playback never delegates to owners')
 }
 
 console.log('\n── Home theater mode: movie ends (stopped) -- lights return, rollers stay owned ──\n')
 
 {
-    // Stopped still means the player answers HTTP: the rollers remain owned
-    // (closed, no re-open) and only the lights come back. Hand-back happens
-    // when the player disappears, not when playback ends.
+    // Stopped still means the player answers HTTP: the rollers remain owned (closed, no
+    // re-open) and light restore is delegated to the ambient-lights owner on that tick.
+    // Hand-back of the rollers happens when the player disappears, not when playback ends.
+    resetInvocations()
     const devices = await runSequence(makeDevices(), [
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: 'stopped', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'Przedpokoj_Gniazdo: OFF then restored ON')
-    assertCalls(devices, 'Kuchnia_Gniazdo', [],
-        'Kuchnia_Gniazdo: silent (was off before dark mode)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'],
-        'Salon_Roleta_Okno_Lewe: CLOSE only (stopped keeps the rollers owned)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'], 'Salon_Roleta_Okno_Prawe: CLOSE only')
-    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'Sypialnia_Gniazdo: OFF then restored ON (state-aware memory)')
-    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'], 'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE only')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }],
+        'Przedpokoj_Gniazdo: OFF on play; stopped-tick restore delegated (no local ON)')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [{ state: 'OFF' }],
+        'Kuchnia_Gniazdo: OFF on the playing tick; nothing more after stop')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'CLOSE'],
+        'Salon_Roleta_Okno_Lewe: re-closed each reachable tick (playing + stopped)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'CLOSE'], 'Salon_Roleta_Okno_Prawe: re-closed each reachable tick')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }],
+        'Sypialnia_Gniazdo: OFF on play; stopped-tick restore delegated')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE', 'CLOSE'], 'Sypialnia_Roleta_Okno_Lewe_Lewa: re-closed each reachable tick')
+    // Both rooms go "not playing" together on the second tick -> one deduped ambient-lights call.
+    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
+        'ambient-lights invoked once for the shared not-playing tick (forced)')
 }
 
 console.log('\n── Home theater mode: roller ownership lifecycle (reachable -> gone -> reachable) ──\n')
 
 {
-    // Rollers are owned while the player answers HTTP (any state) and handed
-    // back when it disappears: unknown (null) and unreachable both trigger the
-    // hand-back, which re-opens only what this automation closed itself.
-    // Repeated ticks in the same state are suppressed as no-ops. The bedroom
-    // player is gone throughout, so its roller (never closed here) must never
-    // be opened by the hand-back rule.
+    // Rollers are owned while the player answers HTTP (any state); when it disappears
+    // (unknown/null or unreachable) home-theater hands control back to the room's roller
+    // owner instead of re-opening locally. The bedroom player is gone throughout, so its
+    // roller is never closed by us -- only ever delegated. Redundant CLOSE/OFF commands are
+    // still dispatched whenever their rule matches; the delegation counts below are what matter.
+    resetInvocations()
     const devices = await runSequence(makeDevices(), [
         { htpc: 'playing', bedroom: null },
         { htpc: 'paused', bedroom: null },
@@ -397,26 +427,33 @@ console.log('\n── Home theater mode: roller ownership lifecycle (reachable -
         { htpc: 'playing', bedroom: null },
         { htpc: 'unreachable', bedroom: null }
     ])
-    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'OPEN', 'CLOSE', 'OPEN'],
-        'Salon_Roleta_Okno_Lewe: CLOSE, hand-back OPEN on unknown, re-owned CLOSE, OPEN on unreachable')
-    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'OPEN', 'CLOSE', 'OPEN'],
-        'Salon_Roleta_Okno_Prawe: CLOSE, OPEN, CLOSE, OPEN')
-    assertCalls(devices, 'Przedpokoj_Gniazdo',
-        [{ state: 'OFF' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
-        'Przedpokoj_Gniazdo: dark mode and restore follow playback, not ownership')
-    assertCalls(devices, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: silent throughout')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'CLOSE', 'CLOSE'],
+        'Salon_Roleta_Okno_Lewe: re-closed on each reachable tick (t1,t2,t5); offline ticks delegate')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'CLOSE', 'CLOSE'],
+        'Salon_Roleta_Okno_Prawe: re-closed on each reachable tick (t1,t2,t5); no local OPEN ever')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'OFF' }],
+        'Przedpokoj_Gniazdo: OFF on each playing tick (t1,t5); restore delegated otherwise')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [{ state: 'OFF' }, { state: 'OFF' }], 'Kuchnia_Gniazdo: OFF on each playing tick (t1,t5)')
     assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', [],
-        'Sypialnia_Roleta_Okno_Lewe_Lewa: never opened (automation never closed it)')
+        'Sypialnia_Roleta_Okno_Lewe_Lewa: never closed by us -- only ever delegated')
     assertCalls(devices, 'Sypialnia_Gniazdo', [],
-        'Sypialnia_Gniazdo: silent (still on -- ON no-op)')
+        'Sypialnia_Gniazdo: silent (restore delegated to ambient-lights)')
+    // Delegation counts across the six ticks.
+    assert(invocationCount('HomeOfficeRollersAutomation') === 3 && allForced('HomeOfficeRollersAutomation'),
+        'salon rollers handed back on each HTPC-offline tick (t3,t4,t6), forced')
+    assert(invocationCount('BedroomRollersAutomation') === 6 && allForced('BedroomRollersAutomation'),
+        'bedroom rollers handed back every tick (player gone throughout), forced')
+    assert(invocationCount('AmbientLightsAutomation') === 6 && allForced('AmbientLightsAutomation'),
+        'ambient restore delegated on every not-playing tick, forced')
 }
 
 console.log('\n── Home theater mode: rollers found closed are never opened on hand-back ──\n')
 
 {
-    // The Salon rollers start closed (position 0): the reachable rule's CLOSE
-    // is a no-op and writes no snapshot, so the later hand-back OPEN must not
-    // fire -- blinds this automation did not close stay as they are.
+    // The Salon rollers start closed (position 0). Redundant CLOSE commands are still
+    // dispatched whenever the reachable rule matches (the old no-op gate is gone), but home-
+    // theater never sends OPEN -- it delegates hand-back to the owner instead of re-opening.
+    resetInvocations()
     const devices = makeDevices()
     devices.get('Salon_Roleta_Okno_Lewe').stateLast = { position: 0 }
     devices.get('Salon_Roleta_Okno_Prawe').stateLast = { position: 0 }
@@ -424,35 +461,50 @@ console.log('\n── Home theater mode: rollers found closed are never opened o
         { htpc: 'playing', bedroom: null },
         { htpc: null, bedroom: null }
     ])
-    assertCalls(after, 'Salon_Roleta_Okno_Lewe', [],
-        'Salon_Roleta_Okno_Lewe: stays closed (CLOSE no-op, OPEN without ownership)')
-    assertCalls(after, 'Salon_Roleta_Okno_Prawe', [], 'Salon_Roleta_Okno_Prawe: stays closed')
-    assertCalls(after, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'Przedpokoj_Gniazdo: lights still cycle normally')
-    assertCalls(after, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: silent')
+    assertCalls(after, 'Salon_Roleta_Okno_Lewe', ['CLOSE'],
+        'Salon_Roleta_Okno_Lewe: re-closed on the playing tick; hand-back delegated (never opened)')
+    assertCalls(after, 'Salon_Roleta_Okno_Prawe', ['CLOSE'], 'Salon_Roleta_Okno_Prawe: re-closed on the playing tick (idempotent)')
+    assertCalls(after, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }],
+        'Przedpokoj_Gniazdo: OFF on play; restore delegated when HTPC goes offline')
+    assertCalls(after, 'Kuchnia_Gniazdo', [{ state: 'OFF' }], 'Kuchnia_Gniazdo: OFF on the playing tick')
     assertCalls(after, 'Sypialnia_Roleta_Okno_Lewe_Lewa', [], 'Sypialnia_Roleta_Okno_Lewe_Lewa: never opened')
+    // Delegation happened even though the local rollers stayed put.
+    assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
+        'salon hand-back delegated once when HTPC went offline, forced')
+    assert(invocationCount('BedroomRollersAutomation') === 2 && allForced('BedroomRollersAutomation'),
+        'bedroom hand-back delegated both ticks (player gone), forced')
+    assert(invocationCount('AmbientLightsAutomation') === 2 && allForced('AmbientLightsAutomation'),
+        'ambient restore delegated both not-playing ticks, forced')
 }
 
 console.log('\n── Home theater mode: players vanish mid-movie (unknown) -- full hand-back ──\n')
 
 {
-    // Both machines disappear (unknown/null): the rollers are handed back in
-    // both rooms and the remembered lights return; the kitchen plug (off
-    // before dark mode) stays off.
+    // Both machines disappear (unknown/null): home-theater hands the rollers back to each
+    // room's owner and delegates light restore to ambient-lights -- nothing is re-opened or
+    // switched on locally anymore. Each device only ever sees its single dark-mode command.
+    resetInvocations()
     const devices = await runSequence(makeDevices(), [
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: null, bedroom: null }
     ])
-    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'Przedpokoj_Gniazdo: OFF then restored ON')
-    assertCalls(devices, 'Kuchnia_Gniazdo', [], 'Kuchnia_Gniazdo: silent (was off before)')
-    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE', 'OPEN'],
-        'Salon_Roleta_Okno_Lewe: CLOSE then hand-back OPEN')
-    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE', 'OPEN'], 'Salon_Roleta_Okno_Prawe: CLOSE then OPEN')
-    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }, { state: 'ON' }],
-        'Sypialnia_Gniazdo: OFF then restored ON')
-    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE', 'OPEN'],
-        'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE then hand-back OPEN')
+    assertCalls(devices, 'Przedpokoj_Gniazdo', [{ state: 'OFF' }],
+        'Przedpokoj_Gniazdo: OFF on play; hand-back tick restores via delegation')
+    assertCalls(devices, 'Kuchnia_Gniazdo', [{ state: 'OFF' }], 'Kuchnia_Gniazdo: OFF on the playing tick; hand-back tick delegates')
+    assertCalls(devices, 'Salon_Roleta_Okno_Lewe', ['CLOSE'],
+        'Salon_Roleta_Okno_Lewe: CLOSE then delegated hand-back (no local OPEN)')
+    assertCalls(devices, 'Salon_Roleta_Okno_Prawe', ['CLOSE'], 'Salon_Roleta_Okno_Prawe: CLOSE then delegated')
+    assertCalls(devices, 'Sypialnia_Gniazdo', [{ state: 'OFF' }],
+        'Sypialnia_Gniazdo: OFF on play; restore delegated')
+    assertCalls(devices, 'Sypialnia_Roleta_Okno_Lewe_Lewa', ['CLOSE'],
+        'Sypialnia_Roleta_Okno_Lewe_Lewa: CLOSE then delegated hand-back')
+    // Full hand-back in one offline tick: each owner invoked once, forced.
+    assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
+        'salon rollers handed back to HomeOfficeRollersAutomation (forced)')
+    assert(invocationCount('BedroomRollersAutomation') === 1 && allForced('BedroomRollersAutomation'),
+        'bedroom rollers handed back to BedroomRollersAutomation (forced)')
+    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
+        'light restore delegated to AmbientLightsAutomation (forced), deduped across rooms')
 }
 
 // ---------------------------------------------------------------------------

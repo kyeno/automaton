@@ -6,7 +6,7 @@
  * patched via its prototype since the singleton itself is frozen):
  *   - natural runs are still suppressed inside the silence window (baseline),
  *   - force:true bypasses the silent period AND an already-consumed once-per-day marker,
- *     while consuming/refreshing the marker when it acts,
+ *     without writing or refreshing any marker (a forced/delegated run never consumes a slot),
  *   - human-interaction cooldowns are intentionally NOT bypassed by force -- even a forced
  *     run defers to a device someone just touched.
  * No MQTT broker or live Redis required; the clock is stubbed like test-silence-between.js.
@@ -153,45 +153,59 @@ try {
         restore()
     }
 
-    // -- S2: force bypasses the silent period ---------------------------------------
+    // -- Force bypasses the silent period and does NOT consume the once-slot ---------
 
     {
         const restore = stubDate(6, 30)   // still inside 0500-0900
-        const fakeDay = temporal.getLocalDayString()   // captured under the SAME stubbed clock the run uses
         await auto.execute({ trigger: 'manual', force: true })
-        assert(auto.loadCalls === 1, 'forced run proceeds past the silent-period guard')
-        assert(auto.resolveCalls >= 1, 'forced run resolves commands for its target device')
+        assert(auto.loadCalls === 1 && auto.resolveCalls >= 1, 'forced run proceeds past the silent-period guard and resolves its target')
         assert(
             auto.device.received.length === 1 && auto.device.received[0].payload === 'on'
                 && auto.device.received[0].source === DeviceCommandSource.AUTOMATION,
             'device receives the automation-sourced command despite the silence window'
         )
-        assert(redisMock.onceStore.size === 1, 'once-marker written after the forced dispatch (slot consumed)')
+        assert(redisMock.onceStore.size === 0, 'forced run does NOT consume the once-slot (marker left unwritten)')
+        restore()
+    }
+
+    // -- Once-per-day markers are owned by natural runs ------------------------------
+
+    console.log('\n\u2500\u2500 Once-per-day markers \u2500\u2500\n')
+
+    {
+        // Outside the silence window; no marker exists yet (the forced run above wrote none).
+        const restore = stubDate(12, 0)
+        const fakeDay = temporal.getLocalDayString(new Date())   // captured under the SAME stubbed clock the run uses
+        const receivedBefore = auto.device.received.length
+        await auto.execute({ trigger: 'manual' })
+        assert(auto.device.received.length === receivedBefore + 1, 'natural run dispatches end-to-end outside the silence window')
+        assert(redisMock.onceStore.size === 1, 'a natural run that acted consumes the once-slot')
         const [markerKey, markerValue] = [...redisMock.onceStore.entries()][0]
         assert(markerKey.includes(':once:') && markerValue.date === fakeDay, "marker carries today's date under the same clock the run used")
         restore()
     }
 
-    // -- S3/S4: once-per-day marker ---------------------------------------------------
-
-    console.log('\n\u2500\u2500 Once-per-day markers \u2500\u2500\n')
-
     {
-        // Outside the silence window; the marker from S2 is still present.
-        const restoresBefore = auto.resolveCalls
+        const receivedBefore = auto.device.received.length
+        const resolveBefore = auto.resolveCalls
         const restore = stubDate(12, 0)
         await auto.execute({ trigger: 'manual' })
-        assert(auto.loadCalls === 2, 'natural run reaches rule evaluation outside the silence window')
-        assert(auto.resolveCalls === restoresBefore, 'consumed once-slot blocks a natural run even when not silenced')
-        assert(auto.device.received.length === 1, 'no second device command without force')
+        assert(auto.loadCalls >= 3, 'blocked natural run still reaches rule evaluation (loadDevices ran)')
+        assert(auto.resolveCalls === resolveBefore, 'consumed once-slot blocks resolution for a later natural run on the same day')
+        assert(auto.device.received.length === receivedBefore, 'no second device command without force')
         restore()
     }
 
     {
+        // A forced run bypasses the consumed-slot check and acts again -- leaving the
+        // existing marker untouched (it neither requires nor rewrites it).
+        const key = [...redisMock.onceStore.keys()][0]
+        const before = JSON.stringify(redisMock.onceStore.get(key))
+        const receivedBefore = auto.device.received.length
         const restore = stubDate(12, 0)
         await auto.execute({ trigger: 'manual', force: true })
-        assert(auto.device.received.length === 2, 'forced run acts despite the already-consumed once-slot')
-        assert(redisMock.onceStore.size === 1, 'marker refreshed in place rather than duplicated')
+        assert(auto.device.received.length === receivedBefore + 1, 'forced run acts despite the already-consumed once-slot')
+        assert(redisMock.onceStore.size === 1 && JSON.stringify(redisMock.onceStore.get(key)) === before, 'marker left exactly as-is by the forced run (not refreshed or duplicated)')
         restore()
     }
 
@@ -202,14 +216,14 @@ try {
     {
         redisMock.onceStore.clear()   // isolate the cooldown guard from the once-marker
         redisMock.cooldownRemainingMs = 60_000   // someone touched this device a minute ago
+        const receivedBefore = auto.device.received.length
 
         const restore = stubDate(12, 0)
         await auto.execute({ trigger: 'manual' })
-        assert(auto.device.received.length === 2, 'baseline: natural run defers to recent human interaction')
+        assert(auto.device.received.length === receivedBefore, 'baseline: natural run defers to recent human interaction')
 
         await auto.execute({ trigger: 'manual', force: true })
-        assert(auto.device.received.length === 2, 'force still respects an active human-interaction cooldown')
-        assert(auto.loadCalls === 5, 'both runs reached rule evaluation; only dispatch was withheld')
+        assert(auto.device.received.length === receivedBefore, 'force still respects an active human-interaction cooldown')
         restore()
 
         redisMock.cooldownRemainingMs = null
@@ -221,9 +235,10 @@ try {
 
     {
         redisMock.onceStore.clear()
+        const receivedBefore = auto.device.received.length
         const restore = stubDate(12, 0)
         await auto.execute({ trigger: 'manual' })
-        assert(auto.device.received.length === 3, 'with all guards clear, a plain natural run dispatches end-to-end')
+        assert(auto.device.received.length === receivedBefore + 1, 'with all guards clear, a plain natural run dispatches end-to-end')
         restore()
     }
 } finally {

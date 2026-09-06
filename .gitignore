@@ -16,6 +16,11 @@ doc/api/
 .env
 var/log/*.log
 
+# Local SQLite state-transition history store (+ WAL/SHM sidecars), stored under var/db/
+/var/db/automaton.db
+/var/db/automaton.db-wal
+/var/db/automaton.db-shm
+
 # Active config files (tracked .dist templates take precedence)
 etc/**/*.yaml
 !etc/**/*.yaml.dist

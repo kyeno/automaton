@@ -17,8 +17,9 @@
  *     guard prevents overlapping sweeps.
  *   - A per-host failure-strike counter (3 strikes) avoids flapping a
  *     transiently failing host to `unreachable`.
- *   - Status is persisted to Redis (`videoPlayer:<host>:status`) and an
- *     EventBus event (`videoPlayer:<host>`) is published only on change.
+ *   - Status transitions are recorded durably in local SQLite via DatabaseService
+ *     (domain 'videoPlayer', subject = host); an EventBus event (`videoPlayer:<host>`)
+ *     is published only when a real transition occurs.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -30,7 +31,7 @@
 
 import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
-import CacheService from '../service/cacheService.js'
+import DatabaseService from '../service/databaseService.js'
 import EventBus from '../service/eventBus.js'
 import NetworkPresence from './networkPresence.js'
 
@@ -111,7 +112,9 @@ class SVideoPlayerMonitor {
     #failCounts = new Map()
 
     /**
-     * In-memory status cache (fallback when Redis is unavailable).
+     * In-process last-known status per host. This process is the sole writer while
+     * running, so this map is authoritative for change-detection and reads; SQLite
+     * (DatabaseService) provides the durable cross-restart history on top of it.
      * @type {Map<string, string|null>}
      */
     #statuses = new Map()
@@ -189,6 +192,16 @@ class SVideoPlayerMonitor {
             }
         }
 
+        // Seed the in-memory cache from durable history so a value that did not change across a
+        // restart does not look like a fresh transition on the very first sweep, and so getStatus()/
+        // log lines reflect the true prior state rather than "unknown".
+        if (DatabaseService.isAvailable()) {
+            await Promise.all(hosts.map(async (host) => {
+                const stored = await DatabaseService.getCurrent('videoPlayer', host)
+                if (stored != null && stored !== 'unknown') this.#statuses.set(host, stored)
+            }))
+        }
+
         this.#timer = setInterval(() => {
             void this.#checkAll()
         }, CHECK_INTERVAL_MS)
@@ -227,23 +240,20 @@ class SVideoPlayerMonitor {
 
     /**
      * Get the current normalized status for a host.
-     * Reads Redis first (fresh), falling back to the in-memory cache.
+     * Reads the in-process cache first (authoritative while running), then falls
+     * back to the durable SQLite history for values recorded by an earlier run.
      *
      * @param {string} host - Host name as configured in network.yaml
      * @returns {Promise<string|null>} `playing`/`paused`/`stopped`/`unreachable`, or null when unknown
      */
     async getStatus(host) {
-        // In-memory map first: while running, this process is the only writer,
-        // so it is always fresher than Redis. Redis serves purely as a fallback
-        // for values recorded before this process knew anything (e.g. right
-        // after a restart, before the first sweep completes). This ordering
-        // also avoids a Redis round-trip (and its disconnected-warn spam) on
-        // every rule evaluation.
+        // In-memory map first: while running, this process is the only writer, so it
+        // is always fresher than the store and skips a disk read on every rule eval.
         if (this.#statuses.has(host)) {
             return this.#statuses.get(host) ?? null
         }
-        const value = await CacheService.get(`videoPlayer:${host}:status`)
-        return value !== undefined ? value : null
+        const value = await DatabaseService.getCurrent('videoPlayer', host)
+        return value && value !== 'unknown' ? value : null
     }
 
     /**
@@ -265,11 +275,11 @@ class SVideoPlayerMonitor {
     /**
      * Directly seed a host's status for testing.
      *
-     * Writes the value to the in-memory cache and, when a Redis broker is
-     * reachable, to the `videoPlayer:<host>:status` key as well. This lets
-     * tests drive {@link getStatus} deterministically without a live player
-     * or a running sweep. Unlike {@link #setStatus} it does not publish an
-     * EventBus event and does not consult the previous value.
+     * Writes the value to the in-process cache and records it durably via SQLite so
+     * that {@link getStatus} resolves deterministically across restarts too. This
+     * lets tests drive status without a live player or a running sweep. Unlike
+     * {@link #setStatus} it does not publish an EventBus event and does not consult
+     * the previous value.
      *
      * @param {string} host - Host name
      * @param {string|null} status - Normalized status (or null for unknown)
@@ -277,7 +287,7 @@ class SVideoPlayerMonitor {
      */
     async setTestStatus(host, status) {
         this.#statuses.set(host, status)
-        await CacheService.set(`videoPlayer:${host}:status`, status)
+        await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: status })
     }
 
     // -- Private helpers --------------------------------------------------
@@ -380,8 +390,11 @@ class SVideoPlayerMonitor {
     }
 
     /**
-     * Record a new status for a host, persist it to Redis, and publish an
-     * EventBus event when it changed.
+     * Record a new status for a host, persist the transition durably via SQLite, and
+     * publish an EventBus event only when the value genuinely changed versus the stored
+     * history. Gating on the store keeps an unchanged-across-restart state from re-firing
+     * subscribers (mirrors NetworkPresence); it still publishes while the database is
+     * temporarily unavailable to preserve fail-open behaviour.
      * @private
      * @param {string} host - Host name
      * @param {string|null} status - New normalized status
@@ -391,7 +404,11 @@ class SVideoPlayerMonitor {
         if (prev === status) return
         this.#statuses.set(host, status)
 
-        await CacheService.set(`videoPlayer:${host}:status`, status)
+        // Persist durably and use the store as the change baseline so an unchanged state across
+        // restarts does not re-fire subscribers (mirrors NetworkPresence); still publish when the
+        // store is unavailable to keep fail-open behaviour.
+        const result = await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: status })
+        if (!result.changed && DatabaseService.isAvailable()) return
 
         LoggerService.info(
             `Video player ${host}: ${prev ?? 'unknown'} -> ${status}`,

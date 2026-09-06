@@ -14,7 +14,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import CacheService from '../service/cacheService.js'
+import DatabaseService from '../service/databaseService.js'
 import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
 import EventBus from '../service/eventBus.js'
@@ -30,12 +30,6 @@ const CHECK_INTERVAL_MS = 5_000
  * @type {number}
  */
 const ARPING_TIMEOUT_MS = 5_000
-
-/**
- * TTL for cached presence state in seconds.
- * @type {number}
- */
-const CACHE_TTL_SECONDS = 60
 
 /**
  * Arping arguments -- exactly one packet, 3 second wait. Passed as an array so
@@ -72,8 +66,9 @@ const STATE_OFFLINE = 0
  * Monitors network devices for presence using double arping.
  *
  * Reads device definitions from a YAML config, periodically pings each IP,
- * stores the result in Redis with a short TTL, and fires EventBus events
- * only on state transitions (online <-> offline).
+ * records every transition durably via DatabaseService (domain 'network', subject =
+ * device name), and fires EventBus events only on real state transitions
+ * (online <-> offline). Last-known state persists across restarts.
  *
  * @see {@link https://linux.die.net/man/8/arping}
  */
@@ -159,16 +154,17 @@ class SNetworkPresence {
     // -- Public API -------------------------------------------------------
 
     /**
-     * Get current device presence state from cache.
+     * Get current device presence state from durable history.
      *
-     * @param {string} category - Category of the device
+     * @param {string} _category - Category of the device (accepted for API compatibility; state is keyed by device name)
      * @param {string} deviceName - Name of the device
      * @returns {Promise<number|null>} 1 if present, 0 if not present, null if not found
      */
-    async getDeviceState(category, deviceName) {
-        const cacheKey = `network:${category}:${deviceName}`
-        const state = await CacheService.get(cacheKey)
-        return state ?? null
+    async getDeviceState(_category, deviceName) {
+        const label = await DatabaseService.getCurrent('network', deviceName)
+        if (label === 'online') return STATE_ONLINE
+        if (label === 'offline') return STATE_OFFLINE
+        return null
     }
 
     /**
@@ -234,8 +230,6 @@ class SNetworkPresence {
      * @private
      */
     async #checkDevice(category, deviceName, ipAddress) {
-        const cacheKey = `network:${category}:${deviceName}`
-        const oldState = await CacheService.get(cacheKey)
 
         // Reject anything that is not a plain IPv4 address or hostname before
         // it can reach a child process (config-sourced value).
@@ -254,34 +248,35 @@ class SNetworkPresence {
         try {
             // First arping attempt -- may fail due to ARP cache suppression.
             await execFilePromise('arping', [...ARPING_ARGS, ipAddress], { timeout: ARPING_TIMEOUT_MS })
-            await this.#markDevice(cacheKey, deviceName, ipAddress, STATE_ONLINE, oldState)
+            await this.#markDevice(deviceName, ipAddress, 'online')
         } catch {
             // Retry once -- second chance for devices that dropped the first packet.
             try {
                 await execFilePromise('arping', [...ARPING_ARGS, ipAddress], { timeout: ARPING_TIMEOUT_MS })
-                await this.#markDevice(cacheKey, deviceName, ipAddress, STATE_ONLINE, oldState)
+                await this.#markDevice(deviceName, ipAddress, 'online')
             } catch {
                 // Device did not respond after two attempts.
-                await this.#markDevice(cacheKey, deviceName, ipAddress, STATE_OFFLINE, oldState)
+                await this.#markDevice(deviceName, ipAddress, 'offline')
             }
         }
     }
 
     /**
-     * Mark a device as online/offline in cache and publish transition event if changed.
+     * Record a device's presence transition durably via DatabaseService and publish an
+     * EventBus event when it is a genuine change. Publishing is driven by the store's
+     * dedupe result so repeated identical sweeps stay silent; while the database is
+     * temporarily unavailable we still notify (matching prior fail-open behaviour).
      *
-     * @param {string} cacheKey - Redis cache key
      * @param {string} deviceName - Human-readable device name
      * @param {string} ipAddress - IP address of the device
-     * @param {number} newState - {@link STATE_ONLINE} or {@link STATE_OFFLINE}
-     * @param {number|undefined} oldState - Previously cached state
+     * @param {'online'|'offline'} newLabel - New normalized presence label
      * @private
      */
-    async #markDevice(cacheKey, deviceName, ipAddress, newState, oldState) {
-        await CacheService.set(cacheKey, newState, CACHE_TTL_SECONDS)
+    async #markDevice(deviceName, ipAddress, newLabel) {
+        const result = await DatabaseService.recordTransition({ domain: 'network', subject: deviceName, toState: newLabel })
 
-        if (oldState !== newState) {
-            const statusLabel = newState === STATE_ONLINE ? 'is online' : 'went offline'
+        if (result.changed || !DatabaseService.isAvailable()) {
+            const statusLabel = newLabel === 'online' ? 'is online' : 'went offline'
             LoggerService.info(
                 `Device ${deviceName} (${ipAddress}) ${statusLabel}`,
                 'NetworkPresence'
@@ -324,8 +319,8 @@ class SNetworkPresence {
 
     /**
      * Presence state for one configured device, looked up case-insensitively across all
-     * categories. Returns null when the device is unknown or no cache entry exists yet
-     * (cold start, expired TTL, Redis unavailable) so callers can render "unknown"
+     * categories. Returns null when the device is unknown or no transition has been
+     * recorded yet (fresh install / store unavailable) so callers can render "unknown"
      * instead of guessing -- never throws.
      * @param {string} name - Device name as configured in network.yaml
      * @returns {Promise<'online'|'offline'|null>} Resolved presence label or null
@@ -335,14 +330,8 @@ class SNetworkPresence {
             (d) => d.name.toLowerCase() === String(name ?? '').toLowerCase()
         )
         if (!match) return null
-        try {
-            const value = await CacheService.get(`network:${match.category}:${match.name}`)
-            if (value === STATE_ONLINE) return 'online'
-            if (value === STATE_OFFLINE) return 'offline'
-            return null
-        } catch {
-            return null
-        }
+        const label = await DatabaseService.getCurrent('network', match.name)
+        return label === 'online' || label === 'offline' ? label : null
     }
 }
 

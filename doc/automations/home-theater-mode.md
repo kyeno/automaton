@@ -8,14 +8,15 @@ The **Home Theater Mode** automation watches the room's video player and stages 
 |--------------|--------|--------|
 | Reachable (playing, paused, or stopped) | **CLOSE** — the automation owns them | unchanged |
 | `playing` | stays closed | **OFF** — dark mode |
-| `paused` / `stopped` | stays closed | restore: "always on" ambient lights directly, the rest only if they were on before dark mode |
-| `unknown` / `unreachable` | **hand back** — re-open only what this automation closed itself | restore, gated by `presence` |
+| `paused` / `stopped` | stays closed | delegated to [Ambient Lights](./ambient-lights.md) via forced `invoke_automation` |
+| `unknown` / `unreachable` | **handed back** to the room's roller owner via forced `invoke_automation` | delegated to [Ambient Lights](./ambient-lights.md), still gated by `presence` |
 
 Key design points:
 
 - **Roller ownership is keyed to reachability, not playback.** A paused movie still means "someone is watching" — blinds stay down until the player disappears (machine off, player closed).
-- **Hand-back never opens blinds it did not close.** Blinds found already closed are left alone; the automations that normally own them decide when they open.
-- **Light rules keep `presence`.** A machine that is simply switched off must not restore anything — nobody is there.
+- **Hand-back and light restore are delegated, not done locally.** When a player goes offline home-theater invokes the room's roller owner ([Home Office Rollers](./home-office-rollers.md) / [Bedroom Rollers](./bedroom-rollers.md)); whenever nothing is playing it delegates ambient-light decisions to [Ambient Lights](./ambient-lights.md) -- each owner applies its full rule set from its own perspective instead of home-theater guessing at positions or lamp states.
+- **Delegated runs are forced but budget-neutral.** Each hand-off carries `force: true` so an owner acts even if a once/silent guard would otherwise block it, yet a forced run neither consumes nor refreshes any once-per-day marker; human-interaction cooldowns still apply.
+- **Light rules keep `presence`.** A machine that is simply switched off must not trigger a restore -- nobody is there.
 - The automation opts into `override_human_interaction`, so it is "sticky" while active: manual changes to its targets are re-corrected on the next tick.
 
 ## Configuration File
@@ -24,7 +25,7 @@ Located at `etc/automation/home-theater-mode.yaml` (template: `home-theater-mode
 
 ```yaml
 override_human_interaction: true   # sticky while active
-restore_state_aware: true           # restore only what this automation changed
+restore_state_aware: true           # keeps dark-mode OFFs and roller CLOSEs idempotent across ticks
 
 targets:                      # Device names exactly as registered in your setup
   - 'Living Room Plug'
@@ -41,27 +42,24 @@ triggers_network:                   # presence hosts
 timer_interval: '30s'               # safety net if an event is missed
 
 rules:
-  # Rollers: owned while the player answers HTTP; handed back when gone
+  # Rollers: owned while the player answers HTTP; handed back to their owner when it goes offline
   - name: 'Living room: player reachable - close rollers'
     conditions:
       video-player: { my-pc: [playing, paused, stopped] }
     targets:
       Living_Room_Roller_Left: CLOSE
 
-  - name: 'Living room: player gone - hand rollers back'
+  - name: 'Living room: player gone - hand rollers back to their owner'
     conditions:
       video-player: { my-pc: [unknown, unreachable] }
-    targets:
-      Living_Room_Roller_Left: OPEN
+    invoke_automation: { name: HomeOfficeRollersAutomation, force: true }
 
-  # Lights: playback drives them; presence gates restores
-  - name: 'Living room: not playing - always-on ambient lights'
+  # Lights: playback drives them locally (dark mode); restore is delegated to ambient lights
+  - name: 'Living room: not playing - delegate light restore to ambient lights'
     conditions:
       presence: { my-pc: true }
       video-player: { my-pc: [paused, stopped, unreachable, unknown] }
-    force_restore: true             # always comes back on pause
-    targets:
-      Living_Room_Plug: ON
+    invoke_automation: { name: AmbientLightsAutomation, force: true }
 
   - name: 'Living room: playing - dark mode'
     conditions:

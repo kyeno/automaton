@@ -18,6 +18,7 @@ import StateService from './service/stateService.js'
 import ConfigService from './service/configService.js'
 import LoggerService from './service/loggerService.js'
 import CacheService from './service/cacheService.js'
+import DatabaseService from './service/databaseService.js'
 import MqttService from './service/mqttService.js'
 import I18nLoader from './service/i18nLoader.js'
 import EventBus from './service/eventBus.js'
@@ -265,6 +266,11 @@ async function gracefulDeath(reason, errorLevel = 0) {
             await CacheService.disconnect()
         }
 
+        if (initialized.has('DatabaseService')) {
+            LoggerService.debug('Closing DatabaseService...', 'Main')
+            await DatabaseService.close()
+        }
+
         if (initialized.has('MqttService')) {
             LoggerService.debug('Disconnecting MqttService...', 'Main')
             await MqttService.disconnect()
@@ -369,6 +375,10 @@ async function bootstrap() {
 
     // Core services (required -- any failure crashes)
     await initService('CacheService', () => CacheService.init())
+    // Durable state-transition history (local SQLite via node:sqlite). Marked optional so a
+    // storage hiccup never blocks startup; monitors fail open to in-memory behaviour when the
+    // store cannot be opened. init() resolves without throwing even on failure.
+    await initService('DatabaseService', () => DatabaseService.init(), true)
     await initService('MqttService', () => MqttService.init())
 
     // I18n Loader must initialize BEFORE the automation/interaction containers so that
