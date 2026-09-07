@@ -38,3 +38,17 @@ reboot:
   ai:
     hostname1: "Announce briefly and with humor that {% name_genitive %}'s computer just rebooted."
     hostname2: "Announce briefly and with humor that {% name_genitive %}'s computer just rebooted."
+
+# Absence note -- appended AFTER the bucket greeting (space-separated) whenever the
+# transition history provides an absence duration. Variant choice by length:
+#   short -- absence <= absence_note_long_after (config default 12h): how long it was off
+#   long  -- above that threshold: calendar date of the moment it went offline
+# Placeholders: {% time_phrase %} -> localized duration incl. unit word ("58 minutes");
+#               {% last_online_date %} -> localized calendar date from the date bundle.
+absence_note:
+  tts:
+    short: 'Your computer was off for {% time_phrase %}.'
+    long:  'It was last on {% last_online_date %}.'
+  ai:
+    short: 'Also mention that the computer was off for {% time_phrase %}.'
+    long:  'Also mention that it was last on {% last_online_date %}.'

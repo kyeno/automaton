@@ -25,18 +25,23 @@ use_ai: false                        # true  -> route each greeting through AI -
                                      #         (warn log + plain TTS sentence if the AI is down);
                                      # false -> direct TTS only, never touches the AI pipeline
 
-greeting_windows:
+greeting_windows:                    # contiguous bands by design: every return is greeted
   - name: 'quick_reboot'             # short blip -> fun "it just rebooted!" line instead of a welcome
-    absent_for: { gte: "5s", lte: "2m" }
+    absent_for: { lte: "2m" }
     sentence: 'reboot'               # greeter bundle section (per-host tts/ai templates inside)
 
   - name: 'short_return'             # came back quickly -> "did you forget something?"
-    absent_for: { gte: "7m", lte: "30m" }
+    absent_for: { gte: "2m", lte: "1h" }
     sentence: 'forgot'
 
   - name: 'welcome_back'             # been gone for real -> proper welcome; open-ended above
-    absent_for: { gte: "4h" }
+    absent_for: { gte: "1h" }
     sentence: 'welcome'
+
+# Optional -- absences longer than this get the "last online on <date>" note appended after
+# the greeting instead of the "off for <duration>" one (see absence_note.* in the i18n bundle).
+# Not required at all: when omitted, notes switch from duration to date after 12 hours.
+#absence_note_long_after: "12h"
 
 # Optional -- suppress execution between these local times ("HHmm-HHmm"); set to null to disable.
 # Not required at all: with no silence_between key the greeter runs whenever it is triggered.

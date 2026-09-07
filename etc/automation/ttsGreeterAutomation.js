@@ -19,7 +19,11 @@
  * Sentences live in the per-locale greeter bundle (etc/i18n/<locale>/greeter.yaml):
  * each bucket holds per-host lines split by output path (tts/ai), with names filled
  * from names.<host> via {% name_vocative %} / {% name_genitive %} placeholders so each
- * template picks the grammatical case it needs.
+ * template picks the grammatical case it needs. When transition history provides an
+ * absence duration, a localized note is appended after the greeting -- "off for <duration>"
+ * up to absence_note_long_after (default 12h), then "last online on <date>" rendered at
+ * the offline transition's own timestamp; both go through lib/date's date-bundle machinery
+ * and degrade silently when data or templates are missing.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -63,6 +67,9 @@ const NETWORK_DOMAIN = 'network'
  * welcome: one extra greeting beats a silent homecoming.
  */
 const UNKNOWN_ABSENCE_BUCKET = 'welcome'
+
+/** Default switch point between the short ("off for ...") and long ("last online on ...") notes. */
+const DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS = 12 * 3_600_000
 
 export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
 
@@ -253,7 +260,8 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
      * Deliver one decided greeting through the configured output path. use_ai=true routes
      * through the model's own voice when it can answer; every other case speaks the plain
      * tts.<host> sentence directly. Missing templates warn and skip instead of speaking
-     * raw {% ... %} tokens.
+     * raw {% ... %} tokens. When history provides an absence duration, the localized
+     * absence note is appended after whichever text goes out (AI instruction or spoken TTS).
      * @private
      * @param {string} host - Host key under names/
      * @param {{bucket: string}} decision - Decision from greetDecisionFor()
@@ -266,10 +274,13 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         }
 
         if (this.config.use_ai === true && AiAssistant.isAvailable()) {
-            const instruction = this.#sentence(decision.bucket, 'ai', host)
+            let instruction = this.#sentence(decision.bucket, 'ai', host)
             if (!instruction) {
                 this.log(`No AI instruction for "${decision.bucket}.ai.${host}" -- speaking the plain TTS sentence instead`, 'warn')
             } else {
+                // Ask the model to include the absence note too when history provides one.
+                const aiNote = await this.#absenceNote(host, 'ai', decision)
+                if (aiNote) instruction = `${instruction} ${aiNote}`
                 // Emit system input to UI with exactly what goes to the model.
                 // Guard against --no-ui runs where no subscribers exist.
                 if (EventBus.hasSubscribers('ai:systemMessage')) {
@@ -283,7 +294,11 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             this.log('use_ai enabled but AI unavailable -- speaking the plain TTS sentence instead', 'warn')
         }
 
-        EventBus.emit('tts:speak', { text: plainText })
+        // Append the localized absence note ("off for ..." / "last online on ...") when
+        // history provides a duration; it never replaces or blocks the main greeting.
+        const ttsNote = await this.#absenceNote(host, 'tts', decision)
+        const spoken = ttsNote ? `${plainText} ${ttsNote}` : plainText
+        EventBus.emit('tts:speak', { text: spoken })
         this.log(`Greeting for "${host}" (${decision.bucket}) sent via direct TTS`, 'debug')
     }
 
@@ -387,6 +402,31 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
     }
 
     /**
+     * Fill {% token %} placeholders in a raw template from a flat token map. Returns the
+     * interpolated text, or '' (with a warning naming the bundle path) when any token is
+     * missing or empty -- callers skip instead of speaking raw {% ... %} tokens.
+     * @private
+     * @param {string} template - Raw YAML template line
+     * @param {Record<string, unknown>} tokens - Token name to replacement string
+     * @param {string} label - Bundle path used in warning messages
+     * @returns {string} Interpolated text, or '' when unresolvable
+     */
+    #fillTemplate(template, tokens, label) {
+        let unresolved = false
+        const text = String(template).replace(/\{%\s*([a-z_]+)\s*%}/g, (_match, key) => {
+            const value = tokens?.[key]
+            if (typeof value === 'string' && value.trim() !== '') return value
+            unresolved = true
+            return _match
+        })
+        if (unresolved) {
+            this.log(`Sentence "${label}" has an unresolvable placeholder -- check the active i18n bundle`, 'warn')
+            return ''
+        }
+        return text
+    }
+
+    /**
      * Resolve one sentence template (bucket + output channel + host) with name-case
      * interpolation. Returns '' when any part is missing or a placeholder cannot be
      * filled, so callers warn and skip instead of speaking raw {% ... %} tokens.
@@ -399,19 +439,77 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
     #sentence(bucket, channel, host) {
         const template = this.#bundle?.[bucket]?.[channel]?.[host]
         if (typeof template !== 'string' || !template.trim()) return ''
-        const names = this.#bundle.names?.[host]
-        let unresolved = false
-        const text = String(template).replace(/\{%\s*name_(vocative|genitive)\s*%\}/g, (_match, caseName) => {
-            const value = (names && typeof names === 'object') ? names[caseName] : undefined
-            if (typeof value === 'string' && value.trim() !== '') return value
-            unresolved = true
-            return _match
-        })
-        if (unresolved) {
-            this.log(`Sentence "${bucket}.${channel}.${host}" has an unresolvable name placeholder -- check names.${host}`, 'warn')
-            return ''
-        }
-        return text
+        const namesHost = (this.#bundle.names && typeof this.#bundle.names === 'object') ? this.#bundle.names[host] : undefined
+        const names = (namesHost && typeof namesHost === 'object') ? namesHost : {}
+        return this.#fillTemplate(template, {
+            name_vocative: typeof names.vocative === 'string' ? names.vocative : '',
+            name_genitive: typeof names.genitive === 'string' ? names.genitive : '',
+        }, `${bucket}.${channel}.${host}`)
     }
 
+
+    /**
+     * Absence duration above which the long ("last online on <date>") note replaces the
+     * short ("off for <duration>") one. Read from optional config key
+     * absence_note_long_after via temporal.parseDurationMs(); missing values use the 12h
+     * default silently, present-but-invalid ones warn and fall back to it (fail-open).
+     * @private
+     * @returns {number} Threshold in milliseconds (> 0)
+     */
+    #longThresholdMs() {
+        const raw = this.config?.absence_note_long_after
+        if (raw == null || raw === '') return DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms != null && Number.isFinite(ms) && ms > 0) return Math.round(ms)
+        this.log(`absence_note_long_after ${JSON.stringify(raw)} is not a valid duration ("5s", "7m", "4h") -- using default (${temporal.millisecondsToHumanReadable(DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS)})`, 'warn')
+        return DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS
+    }
+
+    /**
+     * Build the localized absence note appended after the bucket greeting: how long the
+     * host was off (<= threshold, lib/date's speech-oriented duration phrase + date-bundle
+     * unit words) or since when it was last on (> threshold, calendar date of the offline
+     * transition rendered through the same date_sentence machinery WeatherMan uses).
+     * Returns '' whenever anything is missing -- unknown absence, no template, unresolvable
+     * token -- so the main greeting always stands alone. Never throws.
+     * @private
+     * @param {string} host - Configured network host name
+     * @param {'tts'|'ai'} channel - Output-path section inside absence_note/
+     * @param {{bucket: string, absenceMs: number|null}} decision - Decision record from greetDecisionFor()
+     * @returns {Promise<string>} Interpolated note without leading separator, or '' to omit
+     */
+    async #absenceNote(host, channel, decision) {
+        if (!Number.isFinite(decision?.absenceMs) || !(decision.absenceMs > 0)) return ''
+        const section = this.#bundle?.absence_note?.[channel]
+        if (!section || typeof section !== 'object') return ''
+
+        const variant = decision.absenceMs > this.#longThresholdMs() ? 'long' : 'short'
+        const template = (typeof section[variant] === 'string' && section[variant].trim()) ? section[variant] : null
+        if (!template) return ''   // bundle predates the note feature -- plain greeting only
+
+        let tokens
+        if (variant === 'short') {
+            const phrase = temporal.msToHumanPhrase(decision.absenceMs, temporal.getDurationUnits())
+            if (!phrase) {
+                this.log(`Cannot render a duration phrase for ${Math.round(decision.absenceMs / 1000)}s -- skipping the absence note`, 'debug')
+                return ''
+            }
+            tokens = { time_phrase: phrase }
+        } else {
+            // The offline transition's own timestamp; fall back to now-minus-absence when
+            // history is shorter than expected so date rendering still has a moment.
+            const offlineTs = await DatabaseService.priorTransitionTs(NETWORK_DOMAIN, host) ?? Math.max(0, Date.now() - decision.absenceMs)
+            const dateTemplate = temporal.loadDateBundle()?.date_sentence
+            const fragment = (typeof dateTemplate === 'string' && dateTemplate.trim())
+                ? this.#fillTemplate(dateTemplate, temporal.getDateParts(new Date(offlineTs)), `absence_note.${channel}.${variant} date`)
+                : ''
+            if (!fragment) {
+                this.log('No localized calendar date available -- skipping the last-online note', 'warn')
+                return ''
+            }
+            tokens = { last_online_date: fragment }
+        }
+
+        return this.#fillTemplate(template, tokens, `absence_note.${channel}.${variant}`)
+    }
 }

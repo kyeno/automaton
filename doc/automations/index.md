@@ -18,7 +18,7 @@ A rule-based weather announcer that builds a speech message from locale-specific
 
 ## TTS Greeter
 
-Greets people when their computers come back online — but only in proportion to how long they were actually gone. Absence duration comes from the transition history, and YAML-defined greeting windows map it to message buckets (reboot joke / "did you forget something?" / proper welcome), with an explicit AI-vs-TTS switch per deployment. Demonstrates data-driven condition windows, dual-case name interpolation (`{% name_vocative %}` / `{% name_genitive %}`), and warn-only AI fallback without double-speak.
+Greets people when their computers come back online — but only in proportion to how long they were actually gone. Absence duration comes from the transition history, and YAML-defined greeting windows map it to message buckets (reboot joke / "did you forget something?" / proper welcome), appending a localized absence note ("off for <duration>" or "last online on <date>") whenever the history provides one. Explicit AI-vs-TTS switch per deployment. Demonstrates data-driven condition windows, dual-case name interpolation (`{% name_vocative %}` / `{% name_genitive %}`), calendar-date rendering through lib/date, and warn-only AI fallback without double-speak.
 
 → [Full documentation](./greeter.md)
 

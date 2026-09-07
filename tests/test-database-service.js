@@ -2,8 +2,9 @@
  * Unit tests for DatabaseService (local SQLite state-transition history).
  *
  * Covers: init/close availability, record + dedupe semantics, current-state reads,
- * lastTransitionTs timing, null->unknown normalization, history filtering/ordering,
- * and fail-open behaviour when the store cannot be opened.
+ * lastTransitionTs / priorStateDurationMs / priorTransitionTs timing, null->unknown
+ * normalization, history filtering/ordering, and fail-open behaviour when the store
+ * cannot be opened.
  *
  * Uses an isolated temp database so the real project store is never touched.
  *
@@ -61,6 +62,7 @@ async function main() {
     assert.equal(await DatabaseService.getCurrent('network', 'ghost'), null, 'absent subject current is null')
     assert.equal(await DatabaseService.lastTransitionTs('network', 'ghost'), null, 'absent subject ts is null')
     assert.equal(await DatabaseService.priorStateDurationMs('network', 'ghost'), null, 'absent subject duration is null')
+    assert.equal(await DatabaseService.priorTransitionTs('network', 'ghost'), null, 'absent subject prior ts is null')
 
     // -- priorStateDurationMs ----------------------------------------------
     let p = await DatabaseService.recordTransition({ domain: 'network', subject: 'solo', toState: 'online' })
@@ -72,6 +74,13 @@ async function main() {
         await DatabaseService.priorStateDurationMs('network', 'solo'),
         q.ts - p.ts,
         'two transitions -> exact interval between them (prior-state duration)'
+    )
+
+    // -- priorTransitionTs ---------------------------------------------------
+    assert.equal(
+        await DatabaseService.priorTransitionTs('network', 'solo'),
+        p.ts,
+        'two transitions -> second-newest timestamp (the moment it left its prior state)'
     )
 
     // -- History filtering + ordering ------------------------------------
@@ -91,6 +100,7 @@ async function main() {
     r = await DatabaseService.recordTransition({ domain: 'network', subject: 'tv', toState: 'online' })
     assert.equal(r.changed, false, 'writes are no-ops when unavailable')
     assert.equal(await DatabaseService.priorStateDurationMs('network', 'solo'), null, 'duration reads fail open after close')
+    assert.equal(await DatabaseService.priorTransitionTs('network', 'solo'), null, 'prior-ts reads fail open after close')
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`)
 }

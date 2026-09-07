@@ -231,6 +231,28 @@ class SDatabaseService {
     }
 
     /**
+     * Timestamp (epoch milliseconds) of the subject's second-most-recent transition --
+     * i.e., the moment it left its previous state. For a host that just came back online
+     * this is when it went offline; paired with priorStateDurationMs() it lets callers
+     * render both how long AND since when an absence lasted ("last online on ...").
+     * Returns null when fewer than two transitions are recorded or the store is unavailable.
+     * @param {string} domain - Domain identifier.
+     * @param {string} subject - Subject identifier.
+     * @returns {Promise<number|null>} Transition timestamp in ms, or null.
+     */
+    async priorTransitionTs(domain, subject) {
+        if (!this.isAvailable()) return null
+        try {
+            const row = this.#db.prepare(
+                'SELECT ts_ms FROM state_events WHERE domain = ? AND subject = ? ORDER BY id DESC LIMIT 1 OFFSET 1'
+            ).get(String(domain), String(subject))
+            return row ? Number(row.ts_ms) : null
+        } catch {
+            return null
+        }
+    }
+
+    /**
      * Recent transitions (newest first), optionally filtered by domain and/or subject.
      * Intended for debugging, UI history views, and AI tools.
      * @param {{domain?: string, subject?: string, limit?: number}} [filter] - Optional filters.
