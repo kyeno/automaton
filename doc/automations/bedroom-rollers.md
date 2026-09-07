@@ -5,17 +5,13 @@ The **Bedroom Rollers** automation is a minimal rule-based roller-shutter contro
 ## How It Works
 
 1. On each timer tick and whenever the outdoor illuminance sensor publishes, the base class builds context from `sensors:` plus time-of-day.
-2. The single shipped rule (*Night - close all*) matches in the evening/night period when illuminance falls below the dark threshold and commands `CLOSE` for every listed target. With "most-closed-wins" merging inherited from the base class, any rules you add later will always resolve to the most closed position per shutter.
+2. The single shipped rule (*Night - close all*) matches in the evening/night period when illuminance falls below the dark threshold and commands `CLOSE` for every target in that rule. With "most-closed-wins" merging inherited from the base class, any rules you add later will always resolve to the most closed position per shutter.
 
 ## Configuration File
 
 Located at `etc/automation/bedroom-rollers.yaml` (template: `bedroom-rollers.yaml.dist`). Key fields:
 
 ```yaml
-targets:                      # Device names exactly as registered in your setup
-  - 'Bedroom Roller Left'
-  - 'Bedroom Roller Right'
-
 sensors:
   illuminance: 'Outdoor Luminance'
   temperature: 'Outdoor Temperature'
@@ -34,10 +30,12 @@ rules:
     conditions:
       time-of-day: [evening, night]
       illuminance: { lt: 15 }
-    targets:                    # Keys are the declared names with spaces replaced by underscores
+    targets:                    # Key = registered device name with spaces replaced by underscores
       Bedroom_Roller_Left: CLOSE
       Bedroom_Roller_Right: CLOSE
 ```
+
+**Target devices:** there is no separate declaration section -- each rule's `targets:` key addresses a device directly (registered friendly name with spaces -> underscores). Keys are validated against the live device container at startup; unknown or non-actuator resolutions warn and stay inert.
 
 > **Tuning note:** Raise/lower the `illuminance: { lt: 15 }` cutoff so shutters close when you'd normally pull them down yourself; add further rules (morning open, presence presets) using the same target keys.
 

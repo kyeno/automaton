@@ -271,6 +271,7 @@ export default class AutomationBase {
      * offline at boot) do not each re-run the whole rule set and re-invoke shared downstream
      * automations. Manual runs, timer ticks and `invoke_automation` calls bypass this path and stay immediate.
      *
+     * @private
      * @param {string} topic - The triggering EventBus topic
      */
     #enqueueTrigger(topic) {

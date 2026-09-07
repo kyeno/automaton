@@ -255,7 +255,13 @@ class SDatabaseService {
 
     // -- Internal ---------------------------------------------------------
 
-    /** Read the latest stored label for a subject without availability guards. @private @returns {string|undefined} */
+    /**
+     * Read the latest stored label for a subject without availability guards.
+     * @private
+     * @param {string} domain - State-change domain
+     * @param {string} subject - Subject identifier within the domain
+     * @returns {string|undefined} Latest stored label, or undefined when absent
+     */
     #rawCurrent(domain, subject) {
         const row = this.#db.prepare(
             'SELECT to_state FROM state_events WHERE domain = ? AND subject = ? ORDER BY id DESC LIMIT 1'
@@ -309,7 +315,12 @@ class SDatabaseService {
         this.#log('warn', 'State history store is not available -- transitions will not be persisted')
     }
 
-    /** Route logs through LoggerService with a console fallback so logging never throws. @private @param {'info'|'warn'|'error'|'debug'} level @param {string} message */
+    /**
+     * Route logs through LoggerService with a console fallback so logging never throws.
+     * @private
+     * @param {'info'|'warn'|'error'|'debug'} level - Log level
+     * @param {string} message - Message body
+     */
     #log(level, message) {
         const fn = typeof LoggerService !== 'undefined' ? LoggerService?.[level] : undefined
         if (typeof fn === 'function') {

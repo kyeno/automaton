@@ -10,11 +10,8 @@
 # Each automation also needs a companion JavaScript class that extends
 # RuleBasedAutomationBase (see homeOfficeRollersAutomation.js or exampleAutomation.js.dist).
 
-# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
-# keys are these same names with spaces replaced by underscores (casing kept).
-targets:
-  - 'Home Office Roller Left'
-  - 'Home Office Roller Right'
+# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:
   illuminance: 'Outdoor Luminance'

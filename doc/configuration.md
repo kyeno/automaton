@@ -254,10 +254,6 @@ Automations are YAML files paired with optional JavaScript classes: the `.yaml` 
 ### YAML Structure
 
 ```yaml
-targets:                  # Device friendly names, exactly as registered in the container
-  - 'Device Name A'
-  - 'Device Name B'
-
 sensors:                  # Sensor references for condition evaluation
   illuminance: 'Light Sensor Name'
   temperature: 'Temp Sensor Name'
@@ -286,16 +282,16 @@ rules:
       illuminance: { gte: 20 }          # Sensor threshold
       temperature: { lt: 25 }
       presence: hostname1               # Network host present
-    targets:                            # Per-target actions; keys are declared names
+    targets:                            # Per-target actions; key = registered device name
       Device_Name_A: OPEN               # with spaces replaced by underscores, casing kept
       Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
 ```
 
 ### Target Keys (`targets:`)
 
-The top-level `targets:` section is an explicit list of device friendly names — exactly as they appear in your Zigbee setup / device container. Rule `targets:` maps address those devices by **target key**: the same name trimmed, whitespace runs collapsed to single underscores, original casing preserved (`Salon Roleta Okno Lewe` → `Salon_Roleta_Okno_Lewe`). There are no separate aliases to invent or keep in sync — the key is mechanically derived from the registered name.
+There is no separate declaration section: each rule's `targets:` map addresses devices directly by **target key** — the registered friendly name trimmed, whitespace runs collapsed to single underscores, original casing preserved (`Salon Roleta Okno Lewe` → `Salon_Roleta_Okno_Lewe`). The union of all rule-level keys defines an automation's addressable set; there are no separate aliases to invent or keep in sync.
 
-Each automation validates this wiring once at startup and logs warnings for problems that would otherwise be silently inert: duplicate keys (two friendly names collapsing onto one key, so only one of the devices is addressable) and rule target keys matching no declared target (usually typos or renamed devices). Devices listed under `targets:` but missing from the container are skipped with a warning on every run.
+Every automation validates this wiring at activation time against the live device container and logs warnings for problems that would otherwise be silently inert: unknown keys (typos or renamed devices), keys resolving to non-actuator device types (sensors, remotes...), and duplicate keys (two friendly names collapsing onto one key, so only one of the devices is addressable). An automation whose declared targets ALL fail validation fails fast -- the container skips registering just that instance instead of running it silently inert. Automations that declare no targets at all (speech-only or pure `invoke_automation` flows) are valid and simply skip device dispatch.
 
 ### Timer Interval (`timer_interval`)
 

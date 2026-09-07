@@ -103,6 +103,13 @@ class ForceProbeAutomation extends RuleBasedAutomationBase {
         this.device = new ProbeDevice()
         this.loadCalls = 0
         this.resolveCalls = 0
+        this.conditionEvals = 0
+    }
+
+    /** Count how often rule evaluation was actually reached (bypass guards aside). */
+    async conditionsMatch(conditions, context) {
+        this.conditionEvals++
+        return super.conditionsMatch(conditions, context)
     }
 
     loadDevices() {
@@ -188,9 +195,10 @@ try {
     {
         const receivedBefore = auto.device.received.length
         const resolveBefore = auto.resolveCalls
+        const evalsBefore = auto.conditionEvals
         const restore = stubDate(12, 0)
         await auto.execute({ trigger: 'manual' })
-        assert(auto.loadCalls >= 3, 'blocked natural run still reaches rule evaluation (loadDevices ran)')
+        assert(auto.conditionEvals >= evalsBefore + 1, 'blocked natural run still reaches rule evaluation')
         assert(auto.resolveCalls === resolveBefore, 'consumed once-slot blocks resolution for a later natural run on the same day')
         assert(auto.device.received.length === receivedBefore, 'no second device command without force')
         restore()

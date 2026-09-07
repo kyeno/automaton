@@ -12,14 +12,14 @@ The **Ambient lights** automation manages ambient lighting across two daily wind
 
 ## Asymmetric Target Sets
 
-Each rule carries its own per-target command map, so the ON and OFF sets can differ even though they share one target list:
+Each rule carries its own per-target command map, so the ON and OFF sets can differ:
 
 | Rule | Conditions | Devices commanded |
 |------|------------|-------------------|
-| Bright morning → `OFF` | `time-of-day: [morning]`, `illuminance: { gte: 20 }` | Every listed target (sockets and wall switches) |
+| Bright morning → `OFF` | `time-of-day: [morning]`, `illuminance: { gte: 20 }` | Every target in that rule (sockets and wall switches) |
 | Settled dusk → `ON` | `time-of-day: [evening]`, `illuminance: { lt: <threshold> }` | Only the socket-powered lamps |
 
-The top-level `targets:` section lists device friendly names exactly as registered; each rule's `targets:` map addresses them by their derived **target key** -- the name trimmed with whitespace collapsed to underscores, casing preserved (`Kitchen Outlet` -> `Kitchen_Outlet`). Simple automations may instead use a single flat `action:` field applied uniformly to every listed device.
+There is no top-level declaration section: each rule's `targets:` map addresses devices directly by their derived **target key** -- the registered friendly name trimmed with whitespace collapsed to underscores, casing preserved (`Kitchen Outlet` -> `Kitchen_Outlet`). Keys are validated against the live device container at startup: unknown keys or non-actuator resolutions warn and stay inert; an automation whose declared targets all fail validation fails fast instead of running silently inert. Simple automations may instead use a single flat `action:` field applied uniformly to every resolved device.
 
 ## Configuration File
 
@@ -40,7 +40,7 @@ rules:
     conditions:
       time-of-day: [morning]
       illuminance: { gte: 20 }
-    targets:                    # Per-target actions (keys = declared names, spaces -> _)
+    targets:                    # Per-target actions (key = registered device name, spaces -> _)
       Kitchen_Outlet: OFF
       ...
 ```

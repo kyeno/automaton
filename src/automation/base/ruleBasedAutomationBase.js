@@ -5,8 +5,10 @@
  * time-of-day periods, network presence), YAML config parsing, condition
  * evaluation (including optional `season` conditions and per-rule daily `once`
  * markers), an optional top-level `video_player_suppression` stand-down guard,
- * and a template-method `execute()` flow. Subclasses implement
- * {@link loadDevices} and {@link resolveCommand} hooks.
+ * and a template-method `execute()` flow. Target devices are derived from the
+ * rules' own "targets:" maps and resolved against the live DeviceContainer;
+ * subclasses may override {@link loadDevices} for custom device structures and
+ * implement the {@link resolveCommand} hook.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -27,6 +29,7 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 import { slugify, toTargetKey } from '../../lib/string.js'
 
 import DeviceContainer from '../../device/container/deviceContainer.js'
+import Mechanism from '../../device/type/mechanism.js'
 import networkPresence from '../../monitor/networkPresence.js'
 import videoPlayerMonitor from '../../monitor/videoPlayerMonitor.js'
 import AutomationContainer from '../container/automationContainer.js'
@@ -63,14 +66,6 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @type {number}
      */
     #contextFailCount = 0
-
-    /**
-     * Config object already validated by {@link validateTargets} -- warnings are
-     * emitted at most once per config instance instead of on every tick; a
-     * replaced config object (tests, reloads) re-triggers validation.
-     * @type {{targets?: unknown, rules?: unknown}|null}
-     */
-    #validatedConfig = null
 
     /**
      * Epoch-ms timestamp up to which monitored-state transitions have been consumed by this
@@ -127,6 +122,30 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     #logConfigLoaded() {
         this.log(`Config loaded: ${this.config.rules?.length ?? 0} rules defined`, 'debug')
+    }
+
+    /**
+     * Lifecycle hook -- fail-fast target validation before this automation becomes active.
+     *
+     * Runs BEFORE super.init() subscribes triggers / starts timers, so an instance whose
+     * declared targets all failed validation dies cleanly with no dangling subscriptions.
+     * Validation goes through the virtual loadDevices() seam: subclasses supplying their own
+     * device structure (or declaring no device targets at all -- e.g., speech-only or pure
+     * invoke_automation automations) are unaffected and simply pass through.
+     *
+     * @throws {Error} When rules declare target devices but none of them resolves to a valid
+     *   mechanism in the live container (per-key warnings were already logged by loadDevices())
+     */
+    async init() {
+        const devices = this.loadDevices()
+        const declared = this.#declaredTargetKeys()
+        if (devices.size === 0 && declared.length > 0) {
+            throw new Error(
+                `All ${declared.length} declared target key(s) failed validation [${declared.join(', ')}] ` +
+                '-- no addressable mechanisms remain; see warnings above'
+            )
+        }
+        await super.init()
     }
 
     /**
@@ -367,22 +386,6 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         const rules = this.config.rules ?? []
 
-        // Surface target-key misconfigurations exactly once per config object --
-        // an unknown rule key would otherwise be silently inert on every tick.
-        if (this.#validatedConfig !== this.config) {
-            this.#validatedConfig = this.config
-            for (const warning of this.validateTargets()) {
-                this.log(warning, 'warn')
-            }
-        }
-
-        // Build device map via subclass hook
-        const devices = this.loadDevices()
-        if (devices.size === 0) {
-            this.log('No valid target devices found, skipping', 'warn')
-            return
-        }
-
         // Collect all matching rules
         const matchingRules = []
         for (const rule of rules) {
@@ -419,6 +422,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // light restore to the ambient-lights automation on pause. Runs before device
         // dispatch so an automation whose only action is invoking still works; each unique
         // target fires exactly once per run regardless of how many rules referenced it.
+        let invokedCount = 0   // successful invoke_automation firings this run
         {
             const invocations = new Map()   // name -> force (OR-merged across referencing rules)
             for (const rule of matchingRules) {
@@ -433,16 +437,56 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 try {
                     this.log(`Invoking automation "${name}"${force ? ' (forced)' : ''}`, 'info')
                     await AutomationContainer.callAutomation(name, { trigger: this.name, ...(force ? { force: true } : {}) })
+                    invokedCount++
                 } catch (error) {
                     this.log(`Failed to invoke automation "${name}": ${error.message}`, 'warn')
                 }
             }
         }
 
-        // Resolve a single consolidated command per device from ALL matching rules,
-        // then dispatch exactly one command per device. This prevents duplicate MQTT
-        // publishes when multiple rules match simultaneously targeting the same device.
-        // "Lowest position wins" semantics are applied by subclasses (e.g., blindsResolveCommand).
+        // Device targets are resolved here -- AFTER rule matching and invocations fired -- so
+        // automations declaring no device targets skip dispatch while their side-effect actions
+        // above still ran. Startup validation guarantees instances whose declared targets all
+        // failed never reach execute() in the first place.
+        let dispatchedCount = 0    // devices that actually received a command
+        let humanSkippedCount = 0  // devices deferred to recent human interaction
+
+        const devices = this.loadDevices()
+        if (devices.size === 0) {
+            this.log('No target devices declared or resolvable -- only non-device actions applied', 'debug')
+        } else {
+            const outcome = await this.#dispatchDeviceCommands(devices, matchingRules)
+            dispatchedCount = outcome.dispatchedCount
+            humanSkippedCount = outcome.humanSkippedCount
+        }
+
+        // Consume the daily slot for `once` rules when we either acted on a device, deferred to
+        // recent human interaction, or fired an invoke_automation action -- after that, humans
+        // keep full control until the next day. If nothing happened at all, keep retrying on
+        // later ticks. A forced run neither checks nor writes these markers, so a manual/
+        // delegated poke never consumes an automation's once-per-day budget.
+        if ((dispatchedCount > 0 || humanSkippedCount > 0 || invokedCount > 0) && triggerData?.force !== true) {
+            for (const rule of matchingRules) {
+                if (rule.once) {
+                    await this.#markActedToday(rule)
+                }
+            }
+        }
+    }
+
+    /**
+     * Dispatch exactly one consolidated command per resolved device, collecting candidate
+     * commands from ALL matching rules (subclasses apply merge semantics such as "lowest
+     * position wins" via resolveCommand). Prevents duplicate MQTT publishes when multiple
+     * rules match simultaneously targeting the same device; recently-touched devices are
+     * deferred unless this automation overrides the human-interaction cooldown.
+     *
+     * @private
+     * @param {Map<string, DeviceBase>} devices - Resolved target key -> mechanism map
+     * @param {{}[]} matchingRules - Rules whose conditions matched
+     * @returns {Promise<{dispatchedCount: number, humanSkippedCount: number}>} Outcome counters
+     */
+    async #dispatchDeviceCommands(devices, matchingRules) {
         const tasks = []
         let dispatchedCount = 0   // devices that actually received a command
         let humanSkippedCount = 0 // devices deferred to recent human interaction
@@ -502,60 +546,102 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         // Run all tasks in parallel - MqttService queue handles global rate-limiting.
-        // Await completion so daily "once" markers can be consumed afterwards.
+        // Await completion so callers can consume daily "once" markers afterwards.
         try {
             await Promise.allSettled(tasks.map(t => t()))
         } catch (error) {
             this.log(`Task execution error: ${error.message}`, 'error')
         }
 
-        // Consume the daily slot for `once` rules when we either acted or deferred to
-        // recent human interaction -- after that, humans have full control until the next
-        // day. If nothing happened at all, keep retrying on later ticks. A forced run
-        // neither checks nor writes these markers, so a manual/delegated poke never
-        // consumes an automation's once-per-day budget.
-        if ((dispatchedCount > 0 || humanSkippedCount > 0) && triggerData?.force !== true) {
-            for (const rule of matchingRules) {
-                if (rule.once) {
-                    await this.#markActedToday(rule)
-                }
-            }
-        }
+        return { dispatchedCount, humanSkippedCount }
     }
 
     /**
-     * Load target devices from config and return as a Map keyed by each
-     * device's rule-target key (see toTargetKey in lib/string.js: friendly name
-     * trimmed, whitespace collapsed to underscores, casing preserved). The
-     * top-level "targets:" section is an array of DeviceContainer friendly
-     * names; rules reference those same keys under their own "targets:" maps.
+     * Resolve this automation's target devices from its rules' own "targets:" maps --
+     * there is no separate top-level declaration; the union of every key declared under
+     * any rule defines the addressable set. Each key is looked up against the live
+     * DeviceContainer registry via toTargetKey(name) (friendly name trimmed, whitespace
+     * collapsed to underscores, casing preserved):
+     *   - unknown keys -> warning naming the offending key, excluded from dispatch
+     *   - keys resolving to a non-mechanism (sensor / remote / bridge) -> warning with
+     *     the actual type class, excluded from dispatch
+     *   - duplicate keys (two registered names collapsing onto one key) -> warning;
+     *     the first registration wins
+     * Rules declaring no targets at all yield an empty Map -- speech-only or pure
+     * invoke_automation automations are valid and simply skip device dispatch.
      * Subclasses may override for custom device structures.
      * 
-     * @returns {Map<string, DeviceBase>} map of target key -> device
+     * @returns {Map<string, DeviceBase>} map of target key -> mechanism
      */
     loadDevices() {
         const result = new Map()
-        const targets = this.config.targets
-        if (!Array.isArray(targets)) return result
+        const declared = this.#declaredTargetKeys()
+        if (declared.length === 0) return result
 
-        for (const target of targets) {
-            if (typeof target !== 'string' || target.trim().length === 0) {
+        // Build key -> [device] index over the live container once per call.
+        const byKey = new Map()
+        for (const [name, dev] of Object.entries(DeviceContainer.getAll({ includeBridge: false }))) {
+            const key = toTargetKey(name)
+            if (!byKey.has(key)) byKey.set(key, [])
+            byKey.get(key).push(dev)
+        }
+        for (const [key, devs] of byKey) {
+            if (devs.length > 1) {
                 this.log(
-                    `Invalid entry in "targets" -- expected a device name string, got ${JSON.stringify(target)} ` +
-                    '(legacy "{name, id}" objects are no longer supported)',
+                    `Duplicate target key "${key}": ${devs.map(d => `"${d.getName()}"`).join(' and ')} collapse onto it -- only one can be addressed`,
+                    'warn'
+                )
+            }
+        }
+
+        let resolvedCount = 0
+        for (const key of declared) {
+            const candidates = byKey.get(key) ?? []
+            if (candidates.length === 0) {
+                this.log(`Declared target "${key}" not found in device container -- rules referencing it stay inert`, 'warn')
+                continue
+            }
+            const device = candidates[0]
+            if (!(device instanceof Mechanism)) {
+                this.log(
+                    `Declared target "${key}" resolves to a ${device.constructor.name}, expected a mechanism -- excluded from dispatch`,
                     'warn'
                 )
                 continue
             }
-            const device = this.findDevice(target)
-            if (device) {
-                result.set(toTargetKey(target), device)
-            } else {
-                this.log(`Target device "${target}" not found`, 'warn')
-            }
+            result.set(key, device)
+            resolvedCount++
         }
 
+        if (resolvedCount < declared.length) {
+            this.log(`${resolvedCount}/${declared.length} declared targets resolved; see warnings above`, 'warn')
+        } else {
+            this.log(`${resolvedCount} target device(s) resolved: [${[...result.keys()].join(', ')}]`, 'debug')
+        }
         return result
+    }
+
+    /**
+     * Collect the union of target keys declared across all rules' "targets:" maps,
+     * preserving first-seen order. Pure read of this.config -- safe any time after
+     * construction and independent of DeviceContainer state.
+     * @private
+     * @returns {string[]} Declared target keys (empty when no rule declares any)
+     */
+    #declaredTargetKeys() {
+        const out = []
+        const seen = new Set()
+        for (const rule of (this.config?.rules ?? [])) {
+            const targets = rule?.targets
+            if (!targets || typeof targets !== 'object') continue
+            for (const key of Object.keys(targets)) {
+                if (key && !seen.has(key)) {
+                    seen.add(key)
+                    out.push(key)
+                }
+            }
+        }
+        return out
     }
 
     /**
@@ -565,60 +651,6 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     findDevice(name) {
         return DeviceContainer.findByName(name)
-    }
-
-    /**
-     * Check the top-level "targets:" list against rule usage and report config
-     * problems as human-readable warnings (returned, not logged -- callers
-     * decide when to surface them):
-     *   - duplicate keys: two friendly names collapsing onto one target key, so
-     *     only one of the devices is addressable from rules;
-     *   - unknown rule keys: a rule's "targets:" map references a key no
-     *     declared target maps to -- such commands are silently inert (usually a
-     *     typo or a renamed device).
-     * Pure with respect to this.config; safe to call repeatedly.
-     *
-     * @returns {string[]} Warning messages (empty when the config is consistent)
-     */
-    validateTargets() {
-        const warnings = []
-        const config = this.config ?? {}
-        const targets = Array.isArray(config.targets) ? config.targets : []
-
-        // Map each target key back to the friendly name(s) producing it.
-        const namesByKey = new Map()
-        for (const target of targets) {
-            if (typeof target !== 'string' || target.trim().length === 0) continue
-            const key = toTargetKey(target)
-            namesByKey.set(key, [...(namesByKey.get(key) ?? []), target])
-        }
-
-        for (const [key, names] of namesByKey) {
-            if (names.length > 1) {
-                warnings.push(
-                    `Duplicate target key "${key}": both ${names.map(n => `"${n}"`).join(' and ')} map to it -- only one device can be addressed by that key`
-                )
-            }
-        }
-
-        const rules = Array.isArray(config.rules) ? config.rules : []
-        const unknownKeys = new Set()
-        for (const rule of rules) {
-            const ruleTargets = rule?.targets
-            if (!ruleTargets || typeof ruleTargets !== 'object') continue
-            for (const key of Object.keys(ruleTargets)) {
-                if (!namesByKey.has(key)) unknownKeys.add(key)
-            }
-        }
-        if (unknownKeys.size > 0) {
-            warnings.push(
-                `Rule "targets:" reference undeclared keys: ${[...unknownKeys].map(k => `"${k}"`).join(', ')}. ` +
-                `Expected the declared target names with spaces replaced by underscores; valid keys: ` +
-                `[${[...namesByKey.keys()].map(k => `"${k}"`).join(', ')}]`
-            )
-        }
-
-        return warnings
     }
 
     /**

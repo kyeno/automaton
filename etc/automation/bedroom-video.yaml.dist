@@ -19,11 +19,8 @@
 
 override_human_interaction: true
 
-targets:
-  # Replace with your own Zigbee device names (must exist in zigbee.yaml).
-  # Rule "targets:" keys are these same names with spaces replaced by underscores.
-  - 'Bedroom Plug'
-  - 'Bedroom Roller Left'
+# Rule "targets:" keys are your own Zigbee device names (must exist in zigbee.yaml)
+# with spaces replaced by underscores -- no separate declaration list needed.
 
 triggers_video:
   - laptop

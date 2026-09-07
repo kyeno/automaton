@@ -3,11 +3,8 @@
 #
 # Copy this file to "bedroom-rollers.yaml" (or your own name) and customize.
 
-# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
-# keys are these same names with spaces replaced by underscores (casing kept).
-targets:
-  - 'Bedroom Roller Left'
-  - 'Bedroom Roller Right'
+# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:
   illuminance: 'Outdoor Luminance'

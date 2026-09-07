@@ -35,10 +35,6 @@ Both require video players defined under `videoPlayers` in `etc/device/network.y
 ```yaml
 override_human_interaction: true   # sticky while active
 
-targets:                      # Device names exactly as registered in your setup
-  - 'Living Room Plug'
-  - 'Living Room Roller Left'
-
 triggers_video:               # THIS room's player hosts only (videoPlayers keys)
   - my-pc
 
@@ -73,6 +69,8 @@ rules:
     targets:
       Living_Room_Plug: OFF
 ```
+
+**Target devices:** there is no separate declaration section -- each rule's `targets:` key addresses a device directly by its derived target key (registered friendly name with spaces replaced by underscores, casing kept). Keys are validated against the live device container at startup: unknown or non-actuator resolutions warn and stay inert; an automation whose declared targets all fail validation fails fast instead of running silently inert.
 
 **Creating your own split:** copy one of the wrapper files (`homeOfficeVideoAutomation.js` / `bedroomVideoAutomation.js`), give it a distinct class + instance name and point its config path at a new YAML with *your* room's hosts, devices and rules. The container auto-discovers any `.js` under `etc/automation/` whose file name contains "Automation", so no registration step is needed -- and the execution test suite discovers every subclass of `HomeTheaterAutomation` on its own and validates each configured instance against its triggers. Keeping the shared base's file name free of "Automation" is what keeps it from being instantiated as a phantom third automation.
 

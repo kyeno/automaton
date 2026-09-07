@@ -10,7 +10,9 @@
 - Build entire speech-to-text (SST) architecture based on whisper-cpp
 
 ## Architecture
-- Refactor automations so "targets:" section is read entirely from rules "on load"
+- Lift shared TTS pipeline into RuleBasedAutomationBase: availability guard, AI->TTS routing fallback, i18n sentence resolution + interpolation, silent-period gate deduplication; drop parity-only loadDevices()/resolveCommand() overrides from both TTS classes afterwards
+- Add use_ai flag to weatherman config (default true) while greeter keeps false
+- Support per-rule speech/action alongside targets: and invoke_automation, enabling one rule to drive devices AND speak
 - CONSIDER: naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
 - Same about monitor names. networkPresence doesn't have the Monitor suffix. Decide if we want those there or not.
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases

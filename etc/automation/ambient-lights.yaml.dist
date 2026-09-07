@@ -6,14 +6,8 @@
 #
 # Copy this file to "ambient-lights.yaml" and customize device names/thresholds.
 
-# Device friendly names must exist in your zigbee2mqtt setup. Rule "targets:"
-# keys are these same names with spaces replaced by underscores (casing kept).
-targets:
-  # --- Ambient lamps (sockets) -- morning OFF + evening ON ---
-  - 'Kitchen Outlet'
-  - 'Hallway Outlet'
-  # --- Wall switches driving main room lights -- morning OFF only ---
-  - 'Living Room Switch'
+# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:
   illuminance: 'Outdoor Luminance'

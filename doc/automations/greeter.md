@@ -1,6 +1,6 @@
 # TTS Greeter
 
-The **ttsGreeter** automation greets people when their computers come back online. Instead of greeting every blip, it measures *how long the host was absent* from the transition history (`DatabaseService.priorStateDurationMs()` — the interval between the host's two most recent state changes) and picks a message bucket from pure YAML data — quick reboots get a joke, short returns get *"did you forget something?"*, real absences get a proper welcome. Adding a new condition is a config change, not a code change.
+The **ttsGreeter** automation greets people when their computers come back online. Instead of greeting every blip, it measures *how long the host was absent* from the transition history (`DatabaseService.priorStateDurationMs()` — the interval between the host's two most recent state changes) and picks a message bucket from pure YAML data — quick reboots get a joke, short returns get *"did you forget something?"*, real absences get a proper welcome. Adding a new condition is a config change, not a code change. It speaks instead of commanding devices: its rules declare no `targets:` maps, so the base class has nothing to resolve against the device container.
 
 ## How It Works
 

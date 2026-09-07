@@ -1,16 +1,17 @@
 /**
- * Rule-based target-key rewrite tests.
+ * Rule-based target derivation & validation tests.
  *
- * Covers the parts of the rule engine touched by the "targets:" format change
- * that other suites bypass with hand-built device maps:
+ * Covers the parts of the rule engine other suites bypass with hand-built device maps:
  *   - toTargetKey(): trim + whitespace->underscore, casing preserved
- *   - loadDevices(): top-level targets list of friendly names -> Map keyed by
- *     toTargetKey(name); missing devices skipped; legacy "{name, id}" objects
- *     and non-string entries rejected gracefully instead of throwing
- *   - validateTargets(): duplicate key detection and unknown rule-key
- *     detection (the previously silently-inert typo class)
- *   - execute() integration: real YAML parse -> dispatch through the base
- *     class, with misconfiguration warnings logged exactly once per config
+ *   - loadDevices() default implementation: derives the addressable set from the union of
+ *     per-rule "targets:" keys and resolves each key against the live DeviceContainer;
+ *     unknown keys warn and are excluded, non-mechanism resolutions warn (actual type named)
+ *     and are excluded, duplicate-key collisions warn (first registration wins)
+ *   - init() fail-fast: an instance whose declared targets ALL failed validation throws before
+ *     triggers/timers are wired (the container catches this and skips that automation only);
+ *     an empty declaration is valid -- speech-only / invoke_automation-only automations pass
+ *     through untouched
+ *   - execute(): rules match and invocations fire even when no device targets exist at all
  * Redis/MQTT are not required -- unavailable services fail open by design.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -28,8 +29,12 @@ import { join } from 'node:path'
 
 import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
-import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
+import AutomationContainer from '../src/automation/container/automationContainer.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
+import DeviceContainer from '../src/device/container/deviceContainer.js'
+import Mechanism from '../src/device/type/mechanism.js'
+import Sensor from '../src/device/type/sensor.js'
+import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 import { toTargetKey } from '../src/lib/string.js'
 
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
@@ -72,46 +77,75 @@ function writeConfig(file, lines) {
 }
 
 /**
- * Create a stub device that records received commands and mimics the base
- * class's cached-state reads so cooldown checks fail open like in other suites.
- * @param {string} name - Device display name
- * @returns {Object} Stub device
+ * A mechanism that records dispatched commands and short-circuits the cached-state reads
+ * used by human-interaction cooldown checks so they fail open without Redis.
  */
-function makeStubDevice(name) {
-    return {
-        name,
-        calls: [],
-        stateLast: null,
-        getName() { return name },
-        receiveCommand(payload, source) { this.calls.push({ payload, source }) },
-        getStateLast() { return this.stateLast },
-        getStateOrigin() { return 'unknown' },
-        getStateLastAt() { return null }
+class TestMechanism extends Mechanism {
+    /**
+     * @param {string} name - Device display name
+     */
+    constructor(name) {
+        super(name, `test-id-${name.replace(/\s+/g, '-')}`, {})
+        this.calls = []
     }
+
+    /**
+     * Record instead of publishing to MQTT.
+     * @param {*} payload - Command payload
+     * @param {*} source - Command origin tag
+     */
+    receiveCommand(payload, source) {
+        this.calls.push({ payload, source })
+    }
+
+    /** No cached state -> cooldown check fails open. @returns {null} */
+    getStateLast() { return null }
+
+    /** Unknown origin -> cooldown check fails open. @returns {'unknown'} */
+    getStateOrigin() { return 'unknown' }
+
+    /** Never updated -> cooldown check fails open. @returns {null} */
+    getStateLastAt() { return null }
 }
 
 /**
- * Minimal concrete automation over the real base-class target logic.
- * findDevice() is backed by an injectable name->stub map instead of the live
- * DeviceContainer; resolveCommand delegates to the shared first-rule-wins
- * resolver exactly like production light automations do.
+ * Register a device in the live container under its friendly name (same idiom as the AI suites).
+ * @param {string} name - Friendly name
+ * @param {Object} dev - Device instance
+ * @returns {Object} The registered device
+ */
+function register(name, dev) {
+    Object.assign(DeviceContainer.getAll(), { [name]: dev })
+    return dev
+}
+
+let caseSeq = 0
+
+/**
+ * Minimal concrete automation over the real base-class target logic; each config gets a
+ * distinct instance name for log clarity.
  */
 class TestTargetsAutomation extends RuleBasedAutomationBase {
-    /** @type {Map<string, Object>} */ devicesByName = new Map()
-
     /**
-     * @param {string} configPath - Path to a temp YAML config
+     * @param {string} configPath - Path to a YAML config file
      */
     constructor(configPath) {
-        super({ name: 'TestTargetsAutomation', configPath })
+        super({ name: `TestTargets${++caseSeq}`, configPath })
     }
 
-    async buildContext() { return {} }
-
-    findDevice(name) { return this.devicesByName.get(name) ?? null }
-
-    resolveCommand(device, targetId, matchingRules) {
-        return this.simpleResolveCommand(device, targetId, matchingRules)
+    /**
+     * Simplest possible resolution: apply the first declared command for this target key.
+     * @param {*} device - Resolved mechanism
+     * @param {string} targetKey - Target key from the rule map
+     * @param {{}[]} matchingRules - Matched rules
+     * @returns {{payload?: *, skip?: boolean}} Command payload or explicit skip
+     */
+    resolveCommand(device, targetKey, matchingRules) {
+        for (const rule of matchingRules) {
+            const cmd = rule.targets?.[targetKey]
+            if (cmd !== undefined) return { payload: cmd }
+        }
+        return { skip: true }
     }
 }
 
@@ -120,136 +154,179 @@ class TestTargetsAutomation extends RuleBasedAutomationBase {
 // ---------------------------------------------------------------------------
 
 console.log('\n── toTargetKey ──\n')
-
-assert(toTargetKey('Kuchnia Gniazdo LED') === 'Kuchnia_Gniazdo_LED',
-    'spaces -> underscores, casing preserved')
-assert(toTargetKey('  Salon   Roleta Okno Lewe ') === 'Salon_Roleta_Okno_Lewe',
-    'trims and collapses whitespace runs')
-assert(toTargetKey('LED Strip') !== 'led_strip',
-    'does not lowercase (unlike slugify)')
+assert(toTargetKey('Living Room Light') === 'Living_Room_Light', 'spaces collapse to underscores')
+assert(toTargetKey('  Kitchen   Outlet  ') === 'Kitchen_Outlet', 'leading/trailing + repeated whitespace trimmed/collapsed')
+assert(toTargetKey('Sypialnia Roleta Okno Lewe Lewa') === 'Sypialnia_Roleta_Okno_Lewe_Lewa', 'multi-word names keep casing and word order')
+assert(toTargetKey('BalkonSwiatlo') === 'BalkonSwiatlo', 'single token passes through unchanged')
 
 // ---------------------------------------------------------------------------
-// loadDevices(): real base-class path over the new targets list format
+// Empty declaration set is valid (speech-only / invoke-only automations)
 // ---------------------------------------------------------------------------
 
-console.log('\n── loadDevices() with mixed/legacy entries ──\n')
-
+console.log('\n── empty target union survives construction & init ──\n')
 {
-    const cfg = writeConfig('mixed.yaml', [
-        'targets:',
-        "  - 'Kitchen Outlet'",
-        "  - 'Missing Device'",
-        "  - name: 'Legacy Name'",
-        '    id: legacy_id',
-        '  - 42',
-        'rules: []'
+    // A rule with no "targets:" map at all -- the TTS/greeter shape.
+    const cfg = writeConfig('empty-union.yaml', [
+        'rules:',
+        "  - name: 'No device targets'",
+        "    invoke_automation: 'SideEffect'"
     ])
     const auto = new TestTargetsAutomation(cfg)
-    auto.devicesByName.set('Kitchen Outlet', makeStubDevice('Kitchen Outlet'))
+    assert(auto.loadDevices().size === 0, 'loadDevices() returns an empty Map when no rule declares targets')
+    let initOk = true
+    try { await auto.init() } catch { initOk = false }
+    assert(initOk, 'init() does not throw for a zero-target automation')
 
+    // The old landmine: execute() used to abort before rule matching when no devices existed.
+    // Now invocations must still fire even though there are zero device targets.
+    const containerPrototype = Object.getPrototypeOf(AutomationContainer)
+    const origCallAuto = containerPrototype.callAutomation
+    /** @type {{name: string}[]} */
+    const invocations = []
+    containerPrototype.callAutomation = async function(name) { invocations.push({ name }) }
+    let execThrew = null
+    try { await auto.execute({ trigger: 'test' }) } catch (e) { execThrew = e.message }
+    containerPrototype.callAutomation = origCallAuto
+    assert(execThrew === null, `execute() completes with zero device targets (threw: ${execThrew ?? 'nothing'})`)
+    assert(invocations.length === 1 && invocations[0].name === 'SideEffect',
+        'invoke_automation fires despite the absence of any device target')
+}
+{
+    // Even more extreme: no rules at all (closest shape to tts-greeter.yaml).
+    const cfg = writeConfig('no-rules.yaml', [
+        '# speech-only automation -- no rules section whatsoever'
+    ])
+    const auto = new TestTargetsAutomation(cfg)
+    let initOk = true
+    try { await auto.init() } catch { initOk = false }
+    assert(initOk, 'init() does not throw when the config has no rules either')
+}
+
+// ---------------------------------------------------------------------------
+// Partial invalidity: valid mechanisms survive alongside warned bogus keys
+// ---------------------------------------------------------------------------
+
+console.log('\n── partial invalid targets ──\n')
+{
+    const outlet = register('Valid Outlet', new TestMechanism('Valid Outlet'))
+    const cfg = writeConfig('partial-invalid.yaml', [
+        'rules:',
+        "  - name: 'Mixed validity'",
+        '    targets:',
+        '      Valid_Outlet: ON',
+        '      Bogus_Key: OFF'
+    ])
+    const auto = new TestTargetsAutomation(cfg)
     const devices = auto.loadDevices()
-    assert(devices.size === 1, 'only resolvable string entries land in the map')
-    assert(devices.has('Kitchen_Outlet'), 'map keyed by toTargetKey(name), casing kept')
-    assert(devices.get('Kitchen_Outlet').getName() === 'Kitchen Outlet',
-        'key resolves back to the exact registered device')
+    assert(devices.size === 1 && devices.has('Valid_Outlet'),
+        'valid key resolves; unknown key excluded from the device map')
+    assert(devices.get('Valid_Outlet') === outlet, 'resolved entry is the registered mechanism instance')
+
+    let initOk = true
+    try { await auto.init() } catch { initOk = false }
+    assert(initOk, 'init() passes while at least one declared target is a valid mechanism')
+
+    await auto.execute({ trigger: 'test' })
+    assert(outlet.calls.length === 1 && outlet.calls[0].payload === 'ON',
+        'execute() dispatches only to the resolved device with its rule command')
+    assert(outlet.calls[0]?.source === DeviceCommandSource.AUTOMATION,
+        'dispatch carries the AUTOMATION origin tag')
 }
 
 // ---------------------------------------------------------------------------
-// validateTargets(): duplicate keys and unknown rule keys
+// Total invalidity: construction survives, init() throws (container kills this automation only)
 // ---------------------------------------------------------------------------
 
-console.log('\n── validateTargets() ──\n')
-
+console.log('\n── all declared targets invalid ──\n')
 {
-    // Consistent config -> no warnings.
-    const clean = new TestTargetsAutomation(writeConfig('clean.yaml', [
-        'targets:',
-        "  - 'A B'",
-        "  - 'C D'",
+    const cfg = writeConfig('all-invalid.yaml', [
         'rules:',
-        "  - name: 'r'",
+        "  - name: 'Nothing resolvable'",
         '    targets:',
-        '      A_B: ON',
-        '      C_D: OFF'
-    ]))
-    assert(clean.validateTargets().length === 0, 'consistent config reports no issues')
-    assert(clean.validateTargets().length === 0, 'pure -- repeated calls agree')
-
-    // Two names collapsing onto one key (differ only by a whitespace run).
-    const dup = new TestTargetsAutomation(writeConfig('dup.yaml', [
-        'targets:',
-        "  - 'Kuchnia Gniazdo'",
-        "  - 'Kuchnia  Gniazdo'"
-    ]))
-    const dupWarnings = dup.validateTargets()
-    assert(dupWarnings.length === 1 && dupWarnings[0].includes('Duplicate target key'),
-        'duplicate keys detected')
-    assert(dupWarnings[0].includes('"Kuchnia Gniazdo"') && dupWarnings[0].includes('"Kuchnia  Gniazdo"'),
-        'both colliding names are named in the warning')
-
-    // Rule references a key no declared target maps to.
-    const unknown = new TestTargetsAutomation(writeConfig('unknown.yaml', [
-        'targets:',
-        "  - 'A B'",
-        'rules:',
-        "  - name: 'r'",
-        '    targets:',
-        '      A_B: ON',
-        '      Typo_Key: OFF'
-    ]))
-    const warnings = unknown.validateTargets()
-    assert(warnings.some(w => w.includes('Typo_Key')), 'unknown rule key reported')
-    assert(warnings.some(w => w.includes('"A_B"')), 'valid keys listed for correction')
+        '      Missing_A: ON',
+        '      Missing_B: OFF'
+    ])
+    // Construction itself must not throw -- fail-fast happens at activation time.
+    const auto = new TestTargetsAutomation(cfg)
+    assert(auto.loadDevices().size === 0, 'loadDevices() yields an empty Map when nothing resolves')
+    let rejection = null
+    try { await auto.init() } catch (e) { rejection = e.message }
+    assert(rejection !== null && /failed validation/.test(rejection),
+        `init() rejects naming every offending key (got: ${rejection ?? 'no error'})`)
 }
 
 // ---------------------------------------------------------------------------
-// execute(): real YAML -> dispatch, warnings exactly once per config object
+// Non-mechanism resolutions are warned about and excluded
 // ---------------------------------------------------------------------------
 
-console.log('\n── execute() end-to-end with a typo in one rule ──\n')
-
+console.log('\n── non-mechanism target types ──\n')
 {
-    const cfg = writeConfig('e2e.yaml', [
-        'targets:',
-        "  - 'Kitchen Outlet'",
-        "  - 'Hallway Outlet'",
+    register('Balkon Swiatlo', new Sensor('Balkon Swiatlo', 'test-id-sensor-1', {}))
+    const cfgOnlySensor = writeConfig('sensor-only.yaml', [
         'rules:',
-        "  - name: 'all off'",
+        "  - name: 'Sensors are not actuators'",
         '    targets:',
-        '      Kitchen_Outlet: OFF',
-        '      Hallway_Outlet: OFF',
-        "  - name: 'typo rule (should warn once and stay inert)'",
+        '      Balkon_Swiatlo: ON'
+    ])
+    const auto = new TestTargetsAutomation(cfgOnlySensor)
+    assert(auto.loadDevices().size === 0, 'a sensor resolving a declared key is excluded from the map')
+    let rejection = null
+    try { await auto.init() } catch (e) { rejection = e.message }
+    assert(rejection !== null && /failed validation/.test(rejection),
+        'all-non-mechanism declarations reject at init like all-missing ones')
+}
+{
+    const plug = register('Kuchnia Gniazdo', new TestMechanism('Kuchnia Gniazdo'))
+    register('Balkon Temperatura', new Sensor('Balkon Temperatura', 'test-id-sensor-2', {}))
+    const cfgMixed = writeConfig('mixed-types.yaml', [
+        'rules:',
+        "  - name: 'Actuator plus sensor'",
         '    targets:',
-        '      Kitchen_Oulet: ON'
+        '      Kuchnia_Gniazdo: OFF',
+        '      Balkon_Temperatura: OFF'
+    ])
+    const auto = new TestTargetsAutomation(cfgMixed)
+    const devices = auto.loadDevices()
+    assert(devices.size === 1 && devices.has('Kuchnia_Gniazdo'),
+        'mechanism kept, sensor excluded when both are declared')
+    let initOk = true
+    try { await auto.init() } catch { initOk = false }
+    assert(initOk, 'init() passes with a valid mechanism alongside an excluded sensor')
+    await auto.execute({ trigger: 'test' })
+    assert(plug.calls.length === 1 && plug.calls[0].payload === 'OFF', 'only the actuator receives the command')
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate-key collisions warn; first registration wins
+// ---------------------------------------------------------------------------
+
+console.log('\n── duplicate target keys ──\n')
+{
+    // Two registered names collapsing onto one key (single vs double space).
+    const first = register('Living Room Light', new TestMechanism('Living Room Light'))
+    register('Living  Room Light', new TestMechanism('Living  Room Light'))
+    const cfg = writeConfig('duplicate-keys.yaml', [
+        'rules:',
+        "  - name: 'Collision'",
+        '    targets:',
+        '      Living_Room_Light: CLOSE'
     ])
     const auto = new TestTargetsAutomation(cfg)
-    const kitchen = makeStubDevice('Kitchen Outlet')
-    const hallway = makeStubDevice('Hallway Outlet')
-    auto.devicesByName.set('Kitchen Outlet', kitchen)
-    auto.devicesByName.set('Hallway Outlet', hallway)
-
-    // Count only the misconfiguration warning so unrelated log noise cannot skew it.
-    let undeclaredWarns = 0
-    const originalLog = auto.log.bind(auto)
-    auto.log = function (message, level) {
-        if (level === 'warn' && String(message).includes('undeclared keys')) undeclaredWarns++
-        return originalLog(message, level)
-    }
-
-    await auto.execute({ trigger: 'test' })
-    await auto.execute({ trigger: 'test' })
-
-    assert(undeclaredWarns === 1, 'unknown-key warning logged exactly once across two runs')
-    for (const dev of [kitchen, hallway]) {
-        assert(dev.calls.length === 2 && dev.calls.every(c => JSON.stringify(c.payload) === '{"state":"OFF"}'),
-            `${dev.name}: OFF dispatched on every run despite the typo rule`)
-        assert(dev.calls.every(c => c.source === DeviceCommandSource.AUTOMATION),
-            `${dev.name}: commands marked automation-originated`)
-    }
+    const devices = auto.loadDevices()
+    assert(devices.size === 1 && devices.has('Living_Room_Light'), 'colliding declaration resolves to exactly one device')
+    assert(devices.get('Living_Room_Light') === first, 'first-registered device wins the collision')
+    let initOk = true
+    try { await auto.init() } catch { initOk = false }
+    assert(initOk, 'init() passes despite a warned-about key collision')
 }
 
-console.log(`\n${'═'.repeat(50)}`)
-console.log(`  Results: ${passed}/${passed + failed} passed${failed > 0 ? `, ${failed} failed` : ''}`)
-console.log(`${'═'.repeat(50)}\n`)
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+
+const total = passed + failed
+console.log(`\n${'═'.repeat(42)}`)
+console.log(`  Results: ${passed}/${total} passed${failed > 0 ? `, ${failed} failed` : ''}`)
+console.log(`${'═'.repeat(42)}\n`)
 
 process.exit(failed > 0 ? 1 : 0)

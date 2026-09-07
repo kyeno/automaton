@@ -24,10 +24,6 @@ Because many rules can be true at once ("warm & not bright → open" while someo
 Located at `etc/automation/home-office-rollers.yaml` (template: `home-office-rollers.yaml.dist`). Key fields:
 
 ```yaml
-targets:                      # Device names exactly as registered; rule keys = these with spaces -> _
-  - 'Home Office Roller Left'
-  - 'Home Office Roller Right'
-
 sensors:                      # Logical key -> Zigbee device feeding the context
   illuminance: 'Outdoor Luminance'
   temperature: 'Outdoor Temperature'
@@ -51,10 +47,12 @@ rules:
       time-of-day: [morning, noon, afternoon]
       illuminance: { lte: 11000 }
       presence: my-laptop
-    targets:                  # Per-target actions for this rule (keys = declared names, spaces -> _)
+    targets:                  # Per-target actions for this rule (key = registered device name, spaces -> _)
       Home_Office_Roller_Left: 40
       Home_Office_Roller_Right: 12
 ```
+
+**Target devices:** there is no separate declaration section -- each rule's `targets:` key addresses a device directly (registered friendly name with spaces -> underscores). Keys are validated against the live device container at startup; unknown or non-actuator resolutions warn and stay inert.
 
 > **Tuning note:** The illuminance thresholds (`11000`, `12700`) and position presets (`40`, `12`, …) are starting points. Watch your outdoor sensor's real readings through a day and adjust so shutters park where you'd set them by hand. Presence hostnames must match entries in `etc/device/network.yaml`.
 
