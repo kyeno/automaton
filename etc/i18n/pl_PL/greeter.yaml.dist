@@ -42,12 +42,17 @@ reboot:
 # transition history provides an absence duration. Variant choice by length:
 #   short -- absence <= absence_note_long_after (config default 12h): how long it was off
 #   long  -- above that threshold: calendar date of the moment it went offline
+# TTS variants come in _named / _anonymous pairs: the possessive form is spoken only when
+# this host's welcome.tts line addresses them by name ({% name_vocative %}/{% name_genitive %});
+# machines without a personal greeting get the neutral "Komputer ..." form instead.
 # Placeholders: {% time_phrase %} -> localized duration incl. unit word ("58 minut");
 #               {% last_online_date %} -> localized calendar date from the date bundle.
 absence_note:
   tts:
-    short: 'Twój komputer był wyłączony przez {% time_phrase %}'
-    long:  'Twój komputer ostatnio był włączony {% last_online_date %}'
+    short_named:     'Twój komputer był wyłączony przez {% time_phrase %}'
+    short_anonymous: 'Komputer był wyłączony przez {% time_phrase %}'
+    long_named:      'Twój komputer ostatnio był włączony {% last_online_date %}'
+    long_anonymous:  'Komputer ostatnio był włączony {% last_online_date %}'
   ai:
     short: 'Dodatkowo wspomnij, że komputer był wyłączony przez {% time_phrase %}.'
     long:  'Dodatkowo wspomnij, że komputer ostatnio był włączony {% last_online_date %}.'

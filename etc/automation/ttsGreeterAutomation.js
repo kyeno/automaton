@@ -19,11 +19,15 @@
  * Sentences live in the per-locale greeter bundle (etc/i18n/<locale>/greeter.yaml):
  * each bucket holds per-host lines split by output path (tts/ai), with names filled
  * from names.<host> via {% name_vocative %} / {% name_genitive %} placeholders so each
- * template picks the grammatical case it needs. When transition history provides an
- * absence duration, a localized note is appended after the greeting -- "off for <duration>"
- * up to absence_note_long_after (default 12h), then "last online on <date>" rendered at
- * the offline transition's own timestamp; both go through lib/date's date-bundle machinery
- * and degrade silently when data or templates are missing.
+ * template picks the grammatical case it needs. A host that has no line in a given
+ * bucket on either channel simply does not require a greeting there (e.g., a shared HTPC)
+ * and those returns skip silently instead of warning. When transition history provides
+ * an absence duration, a localized note is appended after the greeting -- "off for
+ * <duration>" up to absence_note_long_after (default 12h), then "last online on <date>"
+ * rendered at the offline transition's own timestamp; both go through lib/date's
+ * date-bundle machinery and degrade silently when data or templates are missing. TTS
+ * notes ship as _named/_anonymous pairs: the possessive form ("Twój komputer ...") is
+ * spoken only when the host's welcome TTS line addresses them by name.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -259,14 +263,29 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
     /**
      * Deliver one decided greeting through the configured output path. use_ai=true routes
      * through the model's own voice when it can answer; every other case speaks the plain
-     * tts.<host> sentence directly. Missing templates warn and skip instead of speaking
-     * raw {% ... %} tokens. When history provides an absence duration, the localized
-     * absence note is appended after whichever text goes out (AI instruction or spoken TTS).
+     * tts.<host> sentence directly. A bucket missing from the bundle entirely warns (a
+     * window "sentence" typo); a host with no line in that bucket on EITHER channel is
+     * treated as not requiring a greeting there and skips silently at debug level instead.
+     * Missing single-channel templates still warn rather than speak raw {% ... %} tokens.
+     * When history provides an absence duration, the localized absence note is appended
+     * after whichever text goes out (AI instruction or spoken TTS).
      * @private
      * @param {string} host - Host key under names/
      * @param {{bucket: string}} decision - Decision from greetDecisionFor()
      */
     async #deliver(host, decision) {
+        const section = this.#bundle?.[decision.bucket]
+        if (!section || typeof section !== 'object' || Array.isArray(section)) {
+            this.log(`Greeting bucket "${decision.bucket}" not found in active bundle -- check greeting_windows`, 'warn')
+            return
+        }
+        if (!this.#hasLine(section, 'tts', host) && !this.#hasLine(section, 'ai', host)) {
+            // Deliberate per-host opt-out (e.g., a shared HTPC only needs some buckets):
+            // nothing to say for this machine here, so no warning either.
+            this.log(`No greeting configured for "${host}" in bucket "${decision.bucket}" -- treating as not required`, 'debug')
+            return
+        }
+
         const plainText = this.#sentence(decision.bucket, 'tts', host)
         if (!plainText) {
             this.log(`No TTS sentence for "${decision.bucket}.tts.${host}" in active bundle -- skipping`, 'warn')
@@ -447,6 +466,37 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         }, `${bucket}.${channel}.${host}`)
     }
 
+    /**
+     * Whether a non-empty template line exists for one output channel of a bucket+host
+     * pair; lets #deliver() tell an intentional per-host omission (no lines at all ->
+     * "greeting not required", skip silently) from a partial configuration (one channel
+     * missing -> warn and fall back as before).
+     * @private
+     * @param {{tts?: Record<string, unknown>, ai?: Record<string, unknown>}} section - Parsed bundle bucket section
+     * @param {'tts'|'ai'} channel - Output-path key inside the section
+     * @param {string} host - Host name
+     * @returns {boolean} true when a usable string line is present
+     */
+    #hasLine(section, channel, host) {
+        const value = section?.[channel]?.[host]
+        return typeof value === 'string' && value.trim() !== ''
+    }
+
+    /**
+     * Whether the host's canonical welcome TTS line addresses them by name (contains a
+     * {% name_vocative %} / {% name_genitive %} placeholder); chooses between the possessive
+     * (_named) and neutral (_anonymous) absence-note variants -- "Twój komputer ..." only
+     * makes sense after a greeting that named the person. A missing line counts as
+     * anonymous so shared machines never get a possessive note.
+     * @private
+     * @param {string} host - Host key under names/
+     * @returns {boolean} true when the welcome TTS line uses a name placeholder
+     */
+    #greetingUsesName(host) {
+        const line = this.#bundle?.welcome?.tts?.[host]
+        return typeof line === 'string' && /\{%\s*name_(?:vocative|genitive)\s*%\}/.test(line)
+    }
+
 
     /**
      * Absence duration above which the long ("last online on <date>") note replaces the
@@ -469,9 +519,12 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
      * Build the localized absence note appended after the bucket greeting: how long the
      * host was off (<= threshold, lib/date's speech-oriented duration phrase + date-bundle
      * unit words) or since when it was last on (> threshold, calendar date of the offline
-     * transition rendered through the same date_sentence machinery WeatherMan uses).
-     * Returns '' whenever anything is missing -- unknown absence, no template, unresolvable
-     * token -- so the main greeting always stands alone. Never throws.
+     * transition rendered through the same date_sentence machinery WeatherMan uses). The
+     * tts channel prefers the _named / _anonymous variant pair -- possessive only when the
+     * host's welcome line addresses them by name -- and falls back to the legacy single
+     * short/long keys for older bundles. Returns '' whenever anything is missing -- unknown
+     * absence, no template, unresolvable token -- so the main greeting always stands alone.
+     * Never throws.
      * @private
      * @param {string} host - Configured network host name
      * @param {'tts'|'ai'} channel - Output-path section inside absence_note/
@@ -484,7 +537,15 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         if (!section || typeof section !== 'object') return ''
 
         const variant = decision.absenceMs > this.#longThresholdMs() ? 'long' : 'short'
-        const template = (typeof section[variant] === 'string' && section[variant].trim()) ? section[variant] : null
+        const pick = (key) => (typeof section[key] === 'string' && String(section[key]).trim()) ? section[key] : null
+        let template
+        if (channel === 'tts') {
+            // The possessive form ("Twój komputer ...") only fits a greeting that named the
+            // person; machines without one get the neutral anonymous variant instead.
+            template = pick(`${variant}_${this.#greetingUsesName(host) ? 'named' : 'anonymous'}`) ?? pick(variant)
+        } else {
+            template = pick(variant)
+        }
         if (!template) return ''   // bundle predates the note feature -- plain greeting only
 
         let tokens

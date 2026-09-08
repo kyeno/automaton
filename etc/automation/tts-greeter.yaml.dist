@@ -41,7 +41,7 @@ greeting_windows:                    # contiguous bands by design: every return 
 # Optional -- absences longer than this get the "last online on <date>" note appended after
 # the greeting instead of the "off for <duration>" one (see absence_note.* in the i18n bundle).
 # Not required at all: when omitted, notes switch from duration to date after 12 hours.
-#absence_note_long_after: "12h"
+absence_note_long_after: "12h"
 
 # Optional -- suppress execution between these local times ("HHmm-HHmm"); set to null to disable.
 # Not required at all: with no silence_between key the greeter runs whenever it is triggered.

@@ -11,7 +11,9 @@ The **ttsGreeter** automation greets people when their computers come back onlin
    - `use_ai: false` → speak the bucket's `tts.<host>` sentence directly;
    - `use_ai: true` + AI available → send the bucket's `ai.<host>` instruction to the model, which speaks its own greeting (`AiAssistant` fires `tts:speak` for it);
    - `use_ai: true` + AI down / empty reply / provider error → warn in logs and speak the plain TTS sentence instead. There is deliberately **no spoken fallback notice** here — a missed greeting must not be announced twice.
-5. When history provides an absence duration, a localized note from the bundle's `absence_note.*` section is appended after the greeting -- *"off for <duration>"* up to `absence_note_long_after` (default 12h), then *"last online on <date>"* rendered at the offline transition's own timestamp (`DatabaseService.priorTransitionTs()`); both go through lib/date's date-bundle machinery and degrade silently when data or templates are missing.
+5. When history provides an absence duration, a localized note from the bundle's `absence_note.*` section is appended after the greeting -- *"off for <duration>"* up to `absence_note_long_after` (default 12h), then *"last online on <date>"* rendered at the offline transition's own timestamp (`DatabaseService.priorTransitionTs()`); both go through lib/date's date-bundle machinery and degrade silently when data or templates are missing. TTS notes ship as `_named` / `_anonymous` pairs: the possessive form (*"Twój komputer ..."*) is spoken only when the host's `welcome.tts` line addresses them by name; machines without a personal greeting get the neutral one.
+
+A host may deliberately omit lines for some buckets — e.g., a shared HTPC only needs the *welcome* line. Returns landing in a bucket where that host has no `tts`/`ai` line are treated as *"greeting not required"* and skip silently (debug log, nothing spoken). A window whose `sentence` names a section missing from the bundle entirely still warns so typos stay visible; partial configurations (one channel present) keep the existing warn-and-fallback behavior.
 
 If **neither** the AI pipeline nor the TTS server is available, the run is skipped entirely before any evaluation work. A configured `silence_between` window suppresses runs unless forced.
 
@@ -66,8 +68,12 @@ Beyond bucket greetings, bundles carry an optional **absence note** appended aft
 ```yaml
 absence_note:
   tts:
-    short: 'Twój komputer był wyłączony przez {% time_phrase %}'         # <= threshold
-    long:  'Twój komputer ostatnio był włączony {% last_online_date %}'  # >  threshold
+    # Possessive variant only fits hosts whose welcome.tts line addresses them by name;
+    # machines without a personal greeting (e.g., htpc) get the neutral form instead.
+    short_named:     'Twój komputer był wyłączony przez {% time_phrase %}'         # <= threshold
+    short_anonymous: 'Komputer był wyłączony przez {% time_phrase %}'             # <= threshold
+    long_named:      'Twój komputer ostatnio był włączony {% last_online_date %}'  # >  threshold
+    long_anonymous:  'Komputer ostatnio był włączony {% last_online_date %}'       # >  threshold
   ai:
     short: 'Dodatkowo wspomnij, że komputer był wyłączony przez {% time_phrase %}.'
     long:  'Dodatkowo wspomnij, że komputer ostatnio był włączony {% last_online_date %}.'
@@ -75,6 +81,7 @@ absence_note:
 
 - `{% time_phrase %}` → localized duration including unit word ("58 minut"), via lib/date's speech-oriented formatter and the date bundle's `duration_units`
 - `{% last_online_date %}` → localized calendar date of the moment the host went offline (the same `date_sentence` machinery WeatherMan uses)
+- `_named` / `_anonymous` TTS variants are chosen per host at runtime — possessive only when that host's `welcome.tts` line contains a `{% name_vocative %}` / `{% name_genitive %}` placeholder. Older bundles with plain `short`/`long` keys keep working; they are used for everyone as before.
 
 Missing sections or unresolvable tokens simply drop the note — the main greeting always stands alone.
 
