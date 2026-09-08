@@ -3,8 +3,9 @@
  *
  * Covers: unknown-history fail-open (full welcome, no absence note without data), each
  * configured window band (reboot / short-return / welcome-back -- contiguous bands so
- * every return speaks), absence-note variants ("off for <duration>" vs "last online on
- * <date>", threshold override via absence_note_long_after), hosts without a bundle line in
+ * every return speaks), absence-note tiers ("off for <duration>" up to the threshold,
+ * "last online at HH:MM" while within the last day, full date beyond; threshold override
+ * via absence_note_long_after), hosts without a bundle line in
  * a bucket staying silent there ("greeting not required" instead of missing-template
  * warnings), the possessive (_named) vs neutral (_anonymous) absence-note selection keyed
  * off whether the host's welcome line uses their name, offline events being ignored,
@@ -95,27 +96,46 @@ function greetingUsesName(host) {
     return typeof line === 'string' && /\{%\s*name_(?:vocative|genitive)\s*%\}/.test(line)
 }
 
+/** Upper bound of the time-only ("last online at HH:MM") note tier -- mirrors ABSENCE_NOTE_RECENT_MAX_MS. */
+const NOTE_RECENT_MAX_MS = 24 * 3_600_000
+
 /** Expected absence note appended to a greeting for a known duration ('' when none applies). */
 function expectedNote(absenceMs, channel = 'tts', thresholdMs = 12 * HOUR, host = null) {
     if (!Number.isFinite(absenceMs) || !(absenceMs > 0)) return ''
     const section = bundle.absence_note?.[channel]
     if (!section) return ''
-    const variant = absenceMs > thresholdMs ? 'long' : 'short'
-    // Mirror of #absenceNote(): tts notes prefer _named/_anonymous variants keyed off the
-    // host's welcome line; bundles without the split fall back to the legacy single keys.
-    let key = variant
-    if (channel === 'tts' && host != null) {
-        const personalKey = `${variant}_${greetingUsesName(host) ? 'named' : 'anonymous'}`
-        if (typeof section[personalKey] === 'string' && section[personalKey].trim()) key = personalKey
+    // Mirror of #absenceNote(): short up to the configured threshold, time-only while within
+    // the last day, full date beyond; tts notes prefer _named/_anonymous variants keyed off
+    // the host's welcome line; bundles without the split fall back to the legacy single keys,
+    // and bundles predating the recent tier degrade to the calendar-date line.
+    let variant
+    if (absenceMs <= thresholdMs) variant = 'short'
+    else if (absenceMs <= NOTE_RECENT_MAX_MS) variant = 'recent'
+    else variant = 'long'
+    const candidates = variant === 'recent' ? ['recent', 'long'] : [variant]
+    const has = (keyName) => typeof section[keyName] === 'string' && section[keyName].trim() !== ''
+    let key = null
+    let usedVariant = variant
+    for (const v of candidates) {
+        let candidateKey = v
+        if (channel === 'tts' && host != null) {
+            const personalKey = `${v}_${greetingUsesName(host) ? 'named' : 'anonymous'}`
+            if (has(personalKey)) candidateKey = personalKey
+        }
+        if (has(candidateKey)) { key = candidateKey; usedVariant = v; break }
     }
-    const tpl = typeof section[key] === 'string' && section[key].trim() ? section[key] : null
-    if (!tpl) return ''
-    if (variant === 'short') {
+    if (!key) return ''
+    const tpl = section[key]
+    if (usedVariant === 'short') {
         const phrase = temporal.msToHumanPhrase(absenceMs, temporal.getDurationUnits())
         return phrase ? tpl.replace(/\{%\s*time_phrase\s*%}/g, phrase) : ''
     }
-    // long: the offline moment is seeded as NOW - absenceMs in every case below.
-    const fragment = expectedDateFragment(new Date(NOW - absenceMs))
+    // recent / long: the offline moment is seeded as NOW - absenceMs in every case below.
+    const moment = new Date(NOW - absenceMs)
+    if (usedVariant === 'recent') {
+        return tpl.replace(/\{%\s*last_online_time\s*%}/g, temporal.formatClockTime(moment))
+    }
+    const fragment = expectedDateFragment(moment)
     return fragment ? tpl.replace(/\{%\s*last_online_date\s*%}/g, fragment) : ''
 }
 
@@ -265,7 +285,8 @@ try {
         '30h absence -> welcome bucket + last-online-on-date note'
     )
 
-    // Config override moves the switch point: with a 6h threshold an 8h absence is "long".
+    // Config override moves the switch point: with a 6h threshold an 8h absence leaves the
+    // duration tier and lands in the time-only ("last online at HH:MM") band instead.
     greeter.config = { ...shippedConfig, use_ai: false, absence_note_long_after: '6h' }
     await seedHistory('meerkat', [
         { state: 'offline', atMs: NOW - 8 * HOUR },
@@ -273,9 +294,29 @@ try {
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:meerkat' })
+    const recentOverrideNote = expectedNote(8 * HOUR, 'tts', 6 * HOUR, 'meerkat')
+    assert(recentOverrideNote !== '', 'time-only note resolves for an 8h absence under a 6h threshold')
+    assert(/\d{2}:\d{2}/.test(recentOverrideNote), 'time-only note carries a zero-padded HH:MM clock time')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(8 * HOUR, 'tts', 6 * HOUR, 'meerkat')}`,
-        'threshold override (6h): 8h absence renders the date variant instead of a duration'
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${recentOverrideNote}`,
+        'threshold override (6h): 8h absence renders the time-of-day variant instead of a duration'
+    )
+
+    // Default tiers: a 13h absence is just past the 12h short tier but still within the last
+    // day -- it speaks "last online at HH:MM" rather than jumping straight to a full date.
+    greeter.config = { ...shippedConfig, use_ai: false }
+    await seedHistory('kyeno', [
+        { state: 'offline', atMs: NOW - 13 * HOUR },
+        { state: 'online', atMs: NOW }
+    ])
+    resetSeen()
+    await greeter.execute({ trigger: 'network:kyeno' })
+    const recentDefaultNote = expectedNote(13 * HOUR, 'tts', 12 * HOUR, 'kyeno')
+    assert(recentDefaultNote !== '', 'default threshold: 13h absence resolves the time-only note')
+    assert(/\d{2}:\d{2}/.test(recentDefaultNote), 'time-only note carries a zero-padded HH:MM clock time')
+    assert(
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${recentDefaultNote}`,
+        '13h absence (default tiers) renders "last online at HH:MM", not a calendar date'
     )
 
     // -----------------------------------------------------------------------

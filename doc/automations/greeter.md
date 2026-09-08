@@ -1,6 +1,6 @@
 # TTS Greeter
 
-The **ttsGreeter** automation greets people when their computers come back online. Instead of greeting every blip, it measures *how long the host was absent* from the transition history (`DatabaseService.priorStateDurationMs()` — the interval between the host's two most recent state changes) and picks a message bucket from pure YAML data — quick reboots get a joke, short returns get *"did you forget something?"*, real absences get a proper welcome -- plus an optional localized absence note (*"off for <duration>"* or *"last online on <date>"*) whenever transition history knows how long the host was away. Adding a new condition is a config change, not a code change. It speaks instead of commanding devices: its rules declare no `targets:` maps, so the base class has nothing to resolve against the device container.
+The **ttsGreeter** automation greets people when their computers come back online. Instead of greeting every blip, it measures *how long the host was absent* from the transition history (`DatabaseService.priorStateDurationMs()` — the interval between the host's two most recent state changes) and picks a message bucket from pure YAML data — quick reboots get a joke, short returns get *"did you forget something?"*, real absences get a proper welcome -- plus an optional localized absence note (*"off for <duration>"*, *"last online at HH:MM"*, or *"last online on <date>"* depending on length) whenever transition history knows how long the host was away. Adding a new condition is a config change, not a code change. It speaks instead of commanding devices: its rules declare no `targets:` maps, so the base class has nothing to resolve against the device container.
 
 ## How It Works
 
@@ -11,7 +11,7 @@ The **ttsGreeter** automation greets people when their computers come back onlin
    - `use_ai: false` → speak the bucket's `tts.<host>` sentence directly;
    - `use_ai: true` + AI available → send the bucket's `ai.<host>` instruction to the model, which speaks its own greeting (`AiAssistant` fires `tts:speak` for it);
    - `use_ai: true` + AI down / empty reply / provider error → warn in logs and speak the plain TTS sentence instead. There is deliberately **no spoken fallback notice** here — a missed greeting must not be announced twice.
-5. When history provides an absence duration, a localized note from the bundle's `absence_note.*` section is appended after the greeting -- *"off for <duration>"* up to `absence_note_long_after` (default 12h), then *"last online on <date>"* rendered at the offline transition's own timestamp (`DatabaseService.priorTransitionTs()`); both go through lib/date's date-bundle machinery and degrade silently when data or templates are missing. TTS notes ship as `_named` / `_anonymous` pairs: the possessive form (*"Twój komputer ..."*) is spoken only when the host's `welcome.tts` line addresses them by name; machines without a personal greeting get the neutral one.
+5. When history provides an absence duration, a localized note from the bundle's `absence_note.*` section is appended after the greeting in three tiers -- *"off for <duration>"* up to `absence_note_long_after` (default 12h), *"last online at HH:MM"* (zero-padded 24-hour clock time) while that moment is still within the last day, and beyond 24h *"last online on <date>"* rendered at the offline transition's own timestamp (`DatabaseService.priorTransitionTs()`); all three go through lib/date's date/time machinery and degrade silently when data or templates are missing. TTS notes ship as `_named` / `_anonymous` pairs: the possessive form (*"Twój komputer ..."*) is spoken only when the host's `welcome.tts` line addresses them by name; machines without a personal greeting get the neutral one.
 
 A host may deliberately omit lines for some buckets — e.g., a shared HTPC only needs the *welcome* line. Returns landing in a bucket where that host has no `tts`/`ai` line are treated as *"greeting not required"* and skip silently (debug log, nothing spoken). A window whose `sentence` names a section missing from the bundle entirely still warns so typos stay visible; partial configurations (one channel present) keep the existing warn-and-fallback behavior.
 
@@ -24,7 +24,7 @@ Windows are evaluated in YAML order; bounds accept human-readable durations or p
 ```yaml
 triggers_network: [kyeno, meerkat]    # hosts to greet on return
 use_ai: false                         # precise AI/TTS switch (default off)
-absence_note_long_after: "12h"        # optional -- duration-vs-date absence-note switch point
+absence_note_long_after: "12h"        # optional -- where the note leaves the duration tier (time-of-day tier caps at 24h)
 
 greeting_windows:                     # contiguous bands by design: every return is greeted
   - name: 'quick_reboot'              # short blip -> fun "it just rebooted!" line
@@ -40,7 +40,7 @@ greeting_windows:                     # contiguous bands by design: every return
 
 Add new buckets freely — e.g., a *"long weekend"* window with its own line. The `sentence` value names a section of the i18n bundle; any number of windows can point at shared or unique sections.
 
-The optional `absence_note_long_after` key (e.g., `"6h"`) moves the switch point where the appended absence note changes from a duration phrase to a calendar date; omit it entirely to keep the 12-hour default.
+The optional `absence_note_long_after` key (e.g., `"6h"`) moves the switch point where the appended absence note leaves the duration-phrase tier; above it, absences still within the last day speak *"last online at HH:MM"* and anything older speaks the full calendar date. Omit it entirely to keep the 12-hour default.
 
 ## Language Bundles
 
@@ -72,16 +72,20 @@ absence_note:
     # machines without a personal greeting (e.g., htpc) get the neutral form instead.
     short_named:     'Twój komputer był wyłączony przez {% time_phrase %}'         # <= threshold
     short_anonymous: 'Komputer był wyłączony przez {% time_phrase %}'             # <= threshold
-    long_named:      'Twój komputer ostatnio był włączony {% last_online_date %}'  # >  threshold
-    long_anonymous:  'Komputer ostatnio był włączony {% last_online_date %}'       # >  threshold
+    recent_named:    'Twój komputer ostatnio był włączony o godzinie {% last_online_time %}'   # within last day
+    recent_anonymous: 'Komputer ostatnio był włączony o godzinie {% last_online_time %}'      # within last day
+    long_named:      'Twój komputer ostatnio był włączony {% last_online_date %}'  # > 24h
+    long_anonymous:  'Komputer ostatnio był włączony {% last_online_date %}'       # > 24h
   ai:
     short: 'Dodatkowo wspomnij, że komputer był wyłączony przez {% time_phrase %}.'
+    recent: 'Dodatkowo wspomnij, że komputer ostatnio był włączony o godzinie {% last_online_time %}.'
     long:  'Dodatkowo wspomnij, że komputer ostatnio był włączony {% last_online_date %}.'
 ```
 
 - `{% time_phrase %}` → localized duration including unit word ("58 minut"), via lib/date's speech-oriented formatter and the date bundle's `duration_units`
+- `{% last_online_time %}` → zero-padded 24-hour clock time ("07:35") of the moment the host went offline, via lib/date's `formatClockTime()` — always 24h so TTS voices never disambiguate AM/PM
 - `{% last_online_date %}` → localized calendar date of the moment the host went offline (the same `date_sentence` machinery WeatherMan uses)
-- `_named` / `_anonymous` TTS variants are chosen per host at runtime — possessive only when that host's `welcome.tts` line contains a `{% name_vocative %}` / `{% name_genitive %}` placeholder. Older bundles with plain `short`/`long` keys keep working; they are used for everyone as before.
+- `_named` / `_anonymous` TTS variants are chosen per host at runtime — possessive only when that host's `welcome.tts` line contains a `{% name_vocative %}` / `{% name_genitive %}` placeholder. Older bundles with plain `short`/`long` keys keep working; they are used for everyone as before, and bundles predating the `recent_*` tier fall back to the calendar-date line instead of dropping the note.
 
 Missing sections or unresolvable tokens simply drop the note — the main greeting always stands alone.
 

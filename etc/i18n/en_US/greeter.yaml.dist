@@ -41,19 +41,24 @@ reboot:
 
 # Absence note -- appended AFTER the bucket greeting (space-separated) whenever the
 # transition history provides an absence duration. Variant choice by length:
-#   short -- absence <= absence_note_long_after (config default 12h): how long it was off
-#   long  -- above that threshold: calendar date of the moment it went offline
+#   short  -- absence <= absence_note_long_after (config default 12h): how long it was off
+#   recent -- above that threshold but within the last day: clock time (HH:MM) it went offline
+#   long   -- beyond 24h: calendar date of the moment it went offline
 # TTS variants come in _named / _anonymous pairs: the possessive form is spoken only when
 # this host's welcome.tts line addresses them by name ({% name_vocative %}/{% name_genitive %});
 # machines without a personal greeting get the neutral "The computer ..." form instead.
 # Placeholders: {% time_phrase %} -> localized duration incl. unit word ("58 minutes");
+#               {% last_online_time %} -> zero-padded 24-hour clock time ("07:35") via lib/date;
 #               {% last_online_date %} -> localized calendar date from the date bundle.
 absence_note:
   tts:
     short_named:     'Your computer was off for {% time_phrase %}.'
     short_anonymous: 'The computer was off for {% time_phrase %}.'
+    recent_named:    'Your computer was last online at {% last_online_time %}.'
+    recent_anonymous: 'The computer was last online at {% last_online_time %}.'
     long_named:      'It was last on {% last_online_date %}.'
     long_anonymous:  'The computer was last on {% last_online_date %}.'
   ai:
     short: 'Also mention that the computer was off for {% time_phrase %}.'
+    recent: 'Also mention that the computer was last online at {% last_online_time %}.'
     long:  'Also mention that it was last on {% last_online_date %}.'

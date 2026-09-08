@@ -138,6 +138,15 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
+        // Stand down while a configured player is actively playing -- do not interrupt an active
+        // movie with weather chatter. WeatherMan overrides execute(), so apply the same
+        // video_player_suppression gate here that the parent's shared flow would otherwise run;
+        // like the parent, this is NOT bypassed by a forced run.
+        if (await this.isVideoPlayerSuppressionActive()) {
+            this.log(`Suppressed by video_player_suppression (${triggerSource})`, 'debug')
+            return
+        }
+
         // Reload bundle fresh each run (interpolation is runtime, not cached)
         this.#bundle = this.#loadWeathermanBundle()
         if (!this.#bundle) {

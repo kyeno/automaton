@@ -48,6 +48,7 @@ warning_humid_night: 'UWAGA: Wilgotność na zewnątrz jest zbyt duża, by swobo
 warning_chill_night: 'Wychodząc na spacer załóż bluzę lub lekką kurtkę.'
 
 soothing_warm_day: 'Pogoda jest doskonała! Idealna na spacer, lub pracę na zewnątrz!'
+soothing_warm_evening: 'Piękny wieczór za oknem! Idealny na orzeźwiający spacer.'
 soothing_warm_night: 'Jest przepiękna noc. Można wyjść w krótkich spodenkach i koszulce by podziwiać gwiazdy.'
 
 # TODO: Other seasons of the year

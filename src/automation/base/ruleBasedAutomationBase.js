@@ -981,4 +981,16 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
         return false
     }
+
+    /**
+     * Public accessor so subclasses that override execute() can honor the same
+     * video_player_suppression stand-down guard without duplicating its logic. Returns true
+     * while any configured player reports one of its listed suppression statuses; returns
+     * false when no video_player_suppression block is configured at all.
+     * @returns {Promise<boolean>} true while the automation should stand down
+     */
+    async isVideoPlayerSuppressionActive() {
+        if (!this.config.video_player_suppression) return false
+        return await this.#evaluateVideoPlayerSuppression()
+    }
 }

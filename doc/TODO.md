@@ -1,10 +1,6 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Move afternoon/evening zones so that evening does not start before 7pm
-- Update weatherman TTS so it doesn't say about watching the stars during the evening; only at night
-- Make sure playing a movie suppresses TTS WeatherMan
-- BUG: DatabaService is *silent*, doesn't produce any lifecycle logs.
 - LATER: Add crypto price monitor and TTS automation
 - LATER: Add flowers moisture TTS automation (warnings)
 - LATER (when WiFi is here): Consider monitoring WiFi devices so you can greet our friends by their mobile phone presence

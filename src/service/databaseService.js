@@ -89,6 +89,7 @@ class SDatabaseService {
         const resolved = dbPath ?? process.env.DB_PATH ?? path.join(PROJECT_ROOT, DEFAULT_DB_FILE)
 
         try {
+            this.#log('info', `Opening state history store at ${resolved}...`)
             if (resolved !== ':memory:') {
                 fs.mkdirSync(path.dirname(resolved), { recursive: true })
             }
@@ -102,7 +103,8 @@ class SDatabaseService {
 
             this.#ready = true
             this.#warnedUnavailable = false
-            this.#log('info', `State history store ready at ${resolved}`)
+            const rows = this.#rowCount()
+            this.#log('info', `State history store ready at ${resolved} -- ${rows} row(s) retained`)
             return true
         } catch (error) {
             this.#ready = false
@@ -119,7 +121,7 @@ class SDatabaseService {
     async close() {
         const had = this.#ready || this.#db != null
         this.#closeHandle()
-        if (had) this.#log('debug', 'State history store closed')
+        if (had) this.#log('info', 'State history store closed')
     }
 
     // -- Availability -----------------------------------------------------
@@ -160,6 +162,7 @@ class SDatabaseService {
                 'INSERT INTO state_events (ts_ms, domain, subject, from_state, to_state, source) VALUES (?, ?, ?, ?, ?, ?)'
             ).run(ts, String(domain), String(subject), current ?? null, label, String(source))
 
+            this.#log('debug', `Recorded state transition ${String(domain)}/${String(subject)}: ${current ?? '(none)'} -> ${label}`)
             return { changed: true, ts }
         } catch (error) {
             this.#log('error', `Failed to record transition ${domain}:${subject}: ${error.message}`)
@@ -179,7 +182,8 @@ class SDatabaseService {
         if (!this.isAvailable()) return null
         try {
             return this.#rawCurrent(domain, subject) ?? null
-        } catch {
+        } catch (error) {
+            this.#log('trace', `getCurrent(${String(domain)}, ${String(subject)}) failed: ${error.message}`)
             return null
         }
     }
@@ -198,7 +202,8 @@ class SDatabaseService {
                 'SELECT ts_ms FROM state_events WHERE domain = ? AND subject = ? ORDER BY id DESC LIMIT 1'
             ).get(String(domain), String(subject))
             return row ? Number(row.ts_ms) : null
-        } catch {
+        } catch (error) {
+            this.#log('trace', `lastTransitionTs(${String(domain)}, ${String(subject)}) failed: ${error.message}`)
             return null
         }
     }
@@ -225,7 +230,8 @@ class SDatabaseService {
             if (rows.length < 2) return null
             const duration = Number(rows[0].ts_ms) - Number(rows[1].ts_ms)
             return Number.isFinite(duration) && duration >= 0 ? duration : null
-        } catch {
+        } catch (error) {
+            this.#log('trace', `priorStateDurationMs(${String(domain)}, ${String(subject)}) failed: ${error.message}`)
             return null
         }
     }
@@ -247,7 +253,8 @@ class SDatabaseService {
                 'SELECT ts_ms FROM state_events WHERE domain = ? AND subject = ? ORDER BY id DESC LIMIT 1 OFFSET 1'
             ).get(String(domain), String(subject))
             return row ? Number(row.ts_ms) : null
-        } catch {
+        } catch (error) {
+            this.#log('trace', `priorTransitionTs(${String(domain)}, ${String(subject)}) failed: ${error.message}`)
             return null
         }
     }
@@ -270,12 +277,24 @@ class SDatabaseService {
                 `SELECT ts_ms AS ts, domain, subject, from_state AS fromState, to_state AS toState, source FROM state_events${where} ORDER BY id DESC LIMIT ?`
             ).all(...params, Math.max(1, Number(limit)))
             return rows.map((r) => ({ ...r, ts: Number(r.ts), fromState: r.fromState ?? null }))
-        } catch {
+        } catch (error) {
+            this.#log('trace', `getTransitions() failed: ${error.message}`)
             return []
         }
     }
 
     // -- Internal ---------------------------------------------------------
+
+    /** Total number of stored transition rows (0 when unavailable or unreadable). @private */
+    #rowCount() {
+        if (!this.isAvailable()) return 0
+        try {
+            const row = this.#db.prepare('SELECT COUNT(*) AS n FROM state_events').get()
+            return Number(row?.n ?? 0)
+        } catch {
+            return 0
+        }
+    }
 
     /**
      * Read the latest stored label for a subject without availability guards.
@@ -315,7 +334,7 @@ class SDatabaseService {
         try {
             const result = this.#db.prepare('DELETE FROM state_events WHERE ts_ms < ?').run(cutoffMs)
             if (result.changes > 0) {
-                this.#log('debug', `Pruned ${result.changes} history row(s) older than ${days} day(s)`)
+                this.#log('info', `Pruned ${result.changes} history row(s) older than ${days} day(s)`)
             }
         } catch (error) {
             this.#log('warn', `History retention prune skipped: ${error.message}`)
@@ -340,7 +359,7 @@ class SDatabaseService {
     /**
      * Route logs through LoggerService with a console fallback so logging never throws.
      * @private
-     * @param {'info'|'warn'|'error'|'debug'} level - Log level
+     * @param {'trace'|'debug'|'info'|'warn'|'error'} level - Log level
      * @param {string} message - Message body
      */
     #log(level, message) {

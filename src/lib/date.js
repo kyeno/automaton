@@ -1,10 +1,11 @@
 /**
  * Temporal utilities for time-of-day and season detection.
  *
- * Day-period boundaries (morning, noon, afternoon, evening, night) are
- * computed from average sunrise / sunset times for Central Europe (CET),
- * divided into four equal quarters of daylight. Evening is extended past
- * sunset by 2 h to account for twilight; night then spans until next sunrise.
+ * Day periods (morning, noon, afternoon, evening, night) use fixed round-clock
+ * boundaries identical year-round ({@link DAY_PERIODS}): morning starts at 06:00,
+ * evening runs 19:00-23:59 so it never begins before 7pm, and night covers only true
+ * deep night (midnight through pre-dawn). Clock-based zones keep rule behavior
+ * predictable across seasons instead of tracking sunrise/sunset.
  * Every hour 0-23 maps to exactly one period -- no gaps, no overlaps.
  *
  * The module exports a frozen singleton carrying:
@@ -15,7 +16,7 @@
  *   `secondsToHumanReadable()`, `msToHuman()`, `msToHumanPhrase()`
  * - **Duration parsing**: `humanToMs()`, `parseDurationMs()`
  * - **Convenience**: `getCurrentTimePeriod()`, `getCurrentSeason()`,
- *   `getLocalDayString()`
+ *   `getLocalDayString()`, `formatClockTime()`
  * - **Date i18n**: `loadDateBundle()`, `getDateParts()`, `getPeriodWords()`,
  *   `getDurationUnits()` -- the module owns the per-locale `date.yaml` bundle
  *   (day/month names, period words, duration units) that speech automations
@@ -66,55 +67,36 @@ const SEASONS = {
 }
 
 // ---------------------------------------------------------------------------
-// Monthly sunrise / sunset (average hours, Central Europe)
+// Day-period partition (fixed round-clock boundaries)
 // ---------------------------------------------------------------------------
 
 /**
- * Average sunrise and sunset hours per month for Central Europe.
+ * Fixed day-period partition of hours 0-23 -- identical every month of the year.
  *
- * Indexed by month (0 = January). Values are whole-hour approximations
- * based on long-term averages for ~52degN latitude (Central Europe).
+ * Round-clock boundaries were chosen deliberately instead of tracking sunrise/sunset:
+ * "evening" never starts before 19:00 and stays long (19:00-23:59), while "night"
+ * covers only true deep night (midnight through pre-dawn). Morning begins at 06:00
+ * regardless of actual dawn time. The five ranges form a continuous partition:
+ * each period's `from` equals the previous period's `to + 1`, so no hour falls
+ * through a gap or matches two periods.
  *
- * Daylight is divided into four equal quarters to derive the boundaries
- * for morning, noon, afternoon, and evening. Night spans sunset -> sunrise.
+ * | Period    | Hours   |
+ * |-----------|---------|
+ * | morning   | 06-09   |
+ * | noon      | 10-13   |
+ * | afternoon | 14-18   |
+ * | evening   | 19-23   |
+ * | night     | 00-05   |
  *
- * | Month   | Sunrise | Sunset | Daylight | Quarter |
- * |---------|---------|--------|----------|---------|
- * | January |    8:00 |  16:00 |    8 h   |   2 h   |
- * | February|    7:00 |  17:00 |   10 h   |   2.5 h |
- * | March   |    6:00 |  18:00 |   12 h   |   3 h   |
- * | April   |    6:00 |  19:00 |   13 h   |   3.25h |
- * | May     |    5:00 |  21:00 |   16 h   |   4 h   |
- * | June    |    5:00 |  21:00 |   16 h   |   4 h   |
- * | July    |    5:00 |  21:00 |   16 h   |   4 h   |
- * | August  |    5:00 |  20:00 |   15 h   |   3.75h |
- * | September|   6:00 |  19:00 |   13 h   |   3.25h |
- * | October |    7:00 |  17:00 |   10 h   |   2.5 h |
- * | November|    7:00 |  16:00 |    9 h   |   2.25h |
- * | December|    8:00 |  16:00 |    8 h   |   2 h   |
- *
- * @type {Array}
+ * @type {Record<string, [number, number]>}
  */
-const SUN_TIMES = [
-    [8, 16],   // January
-    [7, 17],   // February
-    [6, 18],   // March
-    [6, 19],   // April
-    [5, 21],   // May
-    [5, 21],   // June
-    [5, 21],   // July
-    [5, 20],   // August
-    [6, 19],   // September
-    [7, 17],   // October
-    [7, 16],   // November
-    [8, 16],   // December
-]
-
-/**
- * Hours to extend evening past sunset before night begins.
- * Accounts for twilight/dusk period when it's still partially light.
- */
-const EVENING_EXTENSION_HOURS = 2
+const DAY_PERIODS = Object.freeze({
+    morning:   [6, 9],
+    noon:      [10, 13],
+    afternoon: [14, 18],
+    evening:   [19, 23],
+    night:     [0, 5],
+})
 
 // ---------------------------------------------------------------------------
 // Duration unit factors (shared by msToHumanPhrase / humanToMs)
@@ -143,14 +125,14 @@ const DURATION_UNIT_MS = Object.freeze({
  * Provides predicate methods for checking the current
  * time-of-day period and season.
  *
- * Day-period boundaries adapt to the current month based on
- * average sunrise / sunset for Central Europe.
+ * Day-period boundaries are fixed round-clock ranges ({@link DAY_PERIODS}),
+ * identical year-round -- see that constant for the exact partition table.
  *
  * All predicates are defined explicitly below so they show up in IDE
  * autocompletion, survive minification, and get individual pages in the
  * generated API docs. Each one delegates to the private #checkPeriod() or
  * #checkSeason() helper which reads the {@link SEASONS} configuration and
- * {@link SUN_TIMES} data.
+ * {@link DAY_PERIODS} data.
  */
 class STemporal {
     /** @type {Record<string, unknown>|null} Cached date.yaml bundle (null = not loaded / failed). */
@@ -160,42 +142,6 @@ class STemporal {
     #dateBundleLocale = null
 
     // -- Private helpers ----------------------------------------------------
-
-    /**
-     * Derives period boundaries from sunrise and sunset by dividing
-     * daylight into four equal quarters.
-     * Evening is extended past sunset by {@link EVENING_EXTENSION_HOURS}
-     * to account for twilight; night starts after the extension.
-     *
-     * The five periods form a continuous partition of hours 0-23:
-     * each period's `from` equals the previous period's `to + 1`, so no
-     * hour falls through a gap or matches two periods.
-     *
-     * @param {number} sunrise - Sunrise hour (0-23).
-     * @param {number} sunset  - Sunset hour (0-23), must be > sunrise.
-     * @returns {Object} Period map with morning, noon, afternoon, evening, night ranges
-     * @private
-     */
-    #computePeriods(sunrise, sunset) {
-        const daylight = sunset - sunrise
-        const q = daylight / 4
-        const nightStart = (sunset + EVENING_EXTENSION_HOURS) % 24
-
-        // Continuous ranges -- no gaps between consecutive periods.
-        // Each period's "from" equals the previous period's "to" + 1,
-        // ensuring every hour 0-23 maps to exactly one period.
-        const morningEnd = Math.round(sunrise + q)
-        const noonEnd = Math.round(sunrise + 2 * q)
-        const afternoonEnd = Math.round(sunrise + 3 * q)
-
-        return {
-            morning:   [sunrise, morningEnd],
-            noon:      [morningEnd + 1, noonEnd],
-            afternoon: [noonEnd + 1, afternoonEnd],
-            evening:   [afternoonEnd + 1, nightStart - 1],
-            night:     [nightStart, sunrise - 1],
-        }
-    }
 
     /**
      * Checks whether a given hour falls within a range,
@@ -285,12 +231,10 @@ class STemporal {
      * @private
      */
     #checkPeriod(period, now = new Date()) {
-        const h = now.getHours()
-        const m = now.getMonth()
-        const [sunrise, sunset] = SUN_TIMES[m]
-        const periods = this.#computePeriods(sunrise, sunset)
-        const [from, to] = periods[period]
-        return this.#inHourRange(h, from, to)
+        const range = DAY_PERIODS[period]
+        if (!range) return false
+        const [from, to] = range
+        return this.#inHourRange(now.getHours(), from, to)
     }
 
     // -- Season predicates --------------------------------------------------
@@ -563,6 +507,21 @@ class STemporal {
         const m = String(date.getMonth() + 1).padStart(2, '0')
         const d = String(date.getDate()).padStart(2, '0')
         return `${y}-${m}-${d}`
+    }
+
+    /**
+     * Render a moment as a zero-padded 24-hour clock string ("HH:MM").
+     * Used by speech automations (the TTS greeter's absence note) when the referenced
+     * moment is recent enough that a bare time reads more naturally than a full calendar
+     * date. Always 24h regardless of the locale's 12/24 preference, so tiny TTS voices
+     * never have to disambiguate AM/PM from context.
+     * @param {Date} [date=new Date()] - Moment to render
+     * @returns {string} Zero-padded "HH:MM" (e.g., "07:35", "23:10")
+     */
+    formatClockTime(date = new Date()) {
+        const h = String(date.getHours()).padStart(2, '0')
+        const m = String(date.getMinutes()).padStart(2, '0')
+        return `${h}:${m}`
     }
 
     // -- Date i18n ----------------------------------------------------------

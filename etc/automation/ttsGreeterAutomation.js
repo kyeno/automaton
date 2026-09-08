@@ -23,9 +23,11 @@
  * bucket on either channel simply does not require a greeting there (e.g., a shared HTPC)
  * and those returns skip silently instead of warning. When transition history provides
  * an absence duration, a localized note is appended after the greeting -- "off for
- * <duration>" up to absence_note_long_after (default 12h), then "last online on <date>"
- * rendered at the offline transition's own timestamp; both go through lib/date's
- * date-bundle machinery and degrade silently when data or templates are missing. TTS
+ * <duration>" up to absence_note_long_after (default 12h), "last online at HH:MM"
+ * (zero-padded 24-hour clock time) while that moment is still within the last day, and
+ * beyond that "last online on <date>" rendered at the offline transition's own
+ * timestamp; all three go through lib/date's date/time machinery and degrade silently
+ * when data or templates are missing. TTS
  * notes ship as _named/_anonymous pairs: the possessive form ("Twój komputer ...") is
  * spoken only when the host's welcome TTS line addresses them by name.
  *
@@ -72,8 +74,14 @@ const NETWORK_DOMAIN = 'network'
  */
 const UNKNOWN_ABSENCE_BUCKET = 'welcome'
 
-/** Default switch point between the short ("off for ...") and long ("last online on ...") notes. */
+/** Default switch point between the short ("off for ...") and recent/long absence notes. */
 const DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS = 12 * 3_600_000
+
+/**
+ * Upper bound of the time-only ("last online at HH:MM") note tier: absences above this
+ * fall back to the full calendar-date line instead of a bare clock time.
+ */
+const ABSENCE_NOTE_RECENT_MAX_MS = 24 * 3_600_000
 
 export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
 
@@ -516,15 +524,17 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
     }
 
     /**
-     * Build the localized absence note appended after the bucket greeting: how long the
-     * host was off (<= threshold, lib/date's speech-oriented duration phrase + date-bundle
-     * unit words) or since when it was last on (> threshold, calendar date of the offline
-     * transition rendered through the same date_sentence machinery WeatherMan uses). The
-     * tts channel prefers the _named / _anonymous variant pair -- possessive only when the
-     * host's welcome line addresses them by name -- and falls back to the legacy single
-     * short/long keys for older bundles. Returns '' whenever anything is missing -- unknown
-     * absence, no template, unresolvable token -- so the main greeting always stands alone.
-     * Never throws.
+     * Build the localized absence note appended after the bucket greeting. Three tiers by
+     * how long the host was off: <= threshold -> "off for <duration>" (lib/date's speech-
+     * oriented duration phrase + date-bundle unit words); above that but within the last
+     * day -> "last online at HH:MM" in zero-padded 24-hour clock time; beyond 24h -> full
+     * calendar date of the offline transition via the same date_sentence machinery
+     * WeatherMan uses. The tts channel prefers the _named / _anonymous variant pair --
+     * possessive only when the host's welcome line addresses them by name -- and falls
+     * back to the legacy single short/recent/long keys for older bundles; a bundle without
+     * the recent tier degrades to the calendar-date line rather than dropping the note.
+     * Returns '' whenever anything is missing -- unknown absence, no template, unresolvable
+     * token -- so the main greeting always stands alone. Never throws.
      * @private
      * @param {string} host - Configured network host name
      * @param {'tts'|'ai'} channel - Output-path section inside absence_note/
@@ -536,20 +546,33 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         const section = this.#bundle?.absence_note?.[channel]
         if (!section || typeof section !== 'object') return ''
 
-        const variant = decision.absenceMs > this.#longThresholdMs() ? 'long' : 'short'
+        // Tier selection: duration phrase up to the configured threshold, bare clock time
+        // while the offline moment is still within the last day, full date beyond that.
+        let variant
+        if (decision.absenceMs <= this.#longThresholdMs()) variant = 'short'
+        else if (decision.absenceMs <= ABSENCE_NOTE_RECENT_MAX_MS) variant = 'recent'
+        else variant = 'long'
+
         const pick = (key) => (typeof section[key] === 'string' && String(section[key]).trim()) ? section[key] : null
-        let template
-        if (channel === 'tts') {
+        const resolveTemplate = (v) => (channel === 'tts')
             // The possessive form ("Twój komputer ...") only fits a greeting that named the
             // person; machines without one get the neutral anonymous variant instead.
-            template = pick(`${variant}_${this.#greetingUsesName(host) ? 'named' : 'anonymous'}`) ?? pick(variant)
-        } else {
-            template = pick(variant)
+            ? pick(`${v}_${this.#greetingUsesName(host) ? 'named' : 'anonymous'}`) ?? pick(v)
+            : pick(v)
+
+        // Bundles predating the time-only tier have no recent_* lines -- degrade to the
+        // calendar-date note so the information survives in older bundles.
+        const candidates = variant === 'recent' ? ['recent', 'long'] : [variant]
+        let template = null
+        let usedVariant = variant
+        for (const v of candidates) {
+            template = resolveTemplate(v)
+            if (template) { usedVariant = v; break }
         }
         if (!template) return ''   // bundle predates the note feature -- plain greeting only
 
         let tokens
-        if (variant === 'short') {
+        if (usedVariant === 'short') {
             const phrase = temporal.msToHumanPhrase(decision.absenceMs, temporal.getDurationUnits())
             if (!phrase) {
                 this.log(`Cannot render a duration phrase for ${Math.round(decision.absenceMs / 1000)}s -- skipping the absence note`, 'debug')
@@ -558,19 +581,24 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             tokens = { time_phrase: phrase }
         } else {
             // The offline transition's own timestamp; fall back to now-minus-absence when
-            // history is shorter than expected so date rendering still has a moment.
+            // history is shorter than expected so rendering still has a moment.
             const offlineTs = await DatabaseService.priorTransitionTs(NETWORK_DOMAIN, host) ?? Math.max(0, Date.now() - decision.absenceMs)
-            const dateTemplate = temporal.loadDateBundle()?.date_sentence
-            const fragment = (typeof dateTemplate === 'string' && dateTemplate.trim())
-                ? this.#fillTemplate(dateTemplate, temporal.getDateParts(new Date(offlineTs)), `absence_note.${channel}.${variant} date`)
-                : ''
-            if (!fragment) {
-                this.log('No localized calendar date available -- skipping the last-online note', 'warn')
-                return ''
+            const moment = new Date(offlineTs)
+            if (usedVariant === 'recent') {
+                tokens = { last_online_time: temporal.formatClockTime(moment) }
+            } else {
+                const dateTemplate = temporal.loadDateBundle()?.date_sentence
+                const fragment = (typeof dateTemplate === 'string' && dateTemplate.trim())
+                    ? this.#fillTemplate(dateTemplate, temporal.getDateParts(moment), `absence_note.${channel}.${usedVariant} date`)
+                    : ''
+                if (!fragment) {
+                    this.log('No localized calendar date available -- skipping the last-online note', 'warn')
+                    return ''
+                }
+                tokens = { last_online_date: fragment }
             }
-            tokens = { last_online_date: fragment }
         }
 
-        return this.#fillTemplate(template, tokens, `absence_note.${channel}.${variant}`)
+        return this.#fillTemplate(template, tokens, `absence_note.${channel}.${usedVariant}`)
     }
 }

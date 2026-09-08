@@ -37,6 +37,13 @@ tts_options:
   outro:          # Wave filename played after the synthesized speech
   intro_spacing:  # Seconds between intro end and speech start; negative = overlap (e.g., -2.5)
 
+# Stand-down guard -- while any listed player is in one of these statuses the whole automation stays
+# quiet so a movie is not interrupted by weather chatter. Hosts combine with OR; force does NOT bypass it.
+# Remove this block to let WeatherMan announce regardless of playback state.
+video_player_suppression:
+  htpc: [playing]      # Home theater / HTPC player
+  bedroom: [playing]   # Bedroom player
+
 rules:
   - name: 'Warm day'
     priority: 1
@@ -91,6 +98,13 @@ rules:
   - name: 'Warm evening'
     priority: 2
     conditions:
-      time-of-day: [evening, night]
+      time-of-day: [evening]
+      temperature: { gt: 18 }
+    sentence: 'weatherman.soothing_warm_evening'
+
+  - name: 'Warm night'
+    priority: 2
+    conditions:
+      time-of-day: [night]
       temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_night'

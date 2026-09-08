@@ -311,6 +311,48 @@ console.log('── execute(): forceFirst debug poke ──\n')
 }
 
 // ---------------------------------------------------------------------------
+// H. Day-period boundaries -- fixed round-clock partition, identical year-round
+// ---------------------------------------------------------------------------
+console.log('── day-period boundaries ──\n')
+{
+    const predicates = {
+        morning:   (d) => temporal.isMorning(d),
+        noon:      (d) => temporal.isNoon(d),
+        afternoon: (d) => temporal.isAfternoon(d),
+        evening:   (d) => temporal.isEvening(d),
+        night:     (d) => temporal.isNight(d),
+    }
+    // Every hour of every month maps to exactly one period -- no gaps, no overlaps,
+    // and the partition is identical across all twelve months (fixed zones, not sun-derived).
+    for (let month = 0; month < 12; month += 1) {
+        let breakAt = null
+        for (let h = 0; h < 24 && !breakAt; h += 1) {
+            const moment = new Date(2026, month, 15, h, 30, 0, 0)
+            const hits = Object.keys(predicates).filter((p) => predicates[p](moment))
+            if (hits.length !== 1) breakAt = `${String(h).padStart(2, '0')}:00 -> [${hits.join(',') || 'none'}]`
+        }
+        assert(breakAt === null, `month ${String(month + 1).padStart(2, '0')}: each hour maps to exactly one period${breakAt ? ` -- first break at ${breakAt}` : ''}`)
+    }
+
+    // Spot checks pinning the actual boundaries (January was the worst case under the old
+    // sun-based math: evening used to start as early as 15:00 there).
+    const jan = (h, m) => new Date(2026, 0, 15, h, m, 0, 0)
+    assert(temporal.getCurrentTimePeriod(jan(5, 59)) === 'night', 'Jan 05:59 is night')
+    assert(temporal.getCurrentTimePeriod(jan(6, 0)) === 'morning', 'Jan 06:00 starts morning')
+    assert(temporal.getCurrentTimePeriod(jan(9, 59)) === 'morning', 'Jan 09:59 still morning')
+    assert(temporal.getCurrentTimePeriod(jan(13, 59)) === 'noon', 'Jan 13:59 still noon')
+    assert(temporal.getCurrentTimePeriod(jan(14, 0)) === 'afternoon', 'Jan 14:00 starts afternoon')
+    assert(temporal.getCurrentTimePeriod(jan(18, 59)) === 'afternoon', 'Jan 18:59 still afternoon -- evening never before 7pm')
+    assert(temporal.getCurrentTimePeriod(jan(19, 0)) === 'evening', 'Jan 19:00 starts evening')
+    assert(temporal.getCurrentTimePeriod(jan(23, 59)) === 'evening', 'Jan 23:59 still evening')
+    assert(temporal.getCurrentTimePeriod(jan(0, 0)) === 'night', 'midnight is night (stars only here)')
+
+    // formatClockTime() -- zero-padded 24-hour clock used by the greeter's recent tier.
+    assert(temporal.formatClockTime(new Date(2026, 0, 15, 7, 5)) === '07:05', 'formatClockTime pads single-digit hour/minute')
+    assert(temporal.formatClockTime(new Date(2026, 0, 15, 23, 40)) === '23:40', 'formatClockTime keeps 24h past noon')
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${'═'.repeat(50)}\n  Results: ${passed}/${passed + failed} passed` + (failed ? `, ${failed} FAILED` : '') + `\n${'═'.repeat(50)}\n`)
