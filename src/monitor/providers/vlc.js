@@ -63,4 +63,37 @@ export default class VlcProvider {
         if (state === 'playing' || state === 'paused') return state
         return 'stopped'
     }
+
+    /**
+     * Best-effort extraction of the current media identifier from a VLC status document.
+     *
+     * VLC's HTTP interface does not expose one stable "title" field across versions, so this
+     * probes common candidates and returns the first non-empty value. When none is present it
+     * returns null -- the monitor still applies its dwell timer; it simply cannot detect a movie
+     * change by name for that player (a documented graceful degradation).
+     *
+     * @param {string} body - Raw response body (JSON status document)
+     * @returns {string|null} Media identifier, or null when not determinable
+     */
+    extractTitle(body) {
+        let data
+        try {
+            data = JSON.parse(body)
+        } catch {
+            return null
+        }
+        if (!data || typeof data !== 'object') return null
+        for (const key of ['input_name', 'name', 'current_item', 'filename']) {
+            const value = data[key]
+            if (typeof value === 'string' && value.trim() !== '') return value.trim()
+        }
+        // Some builds nest metadata under an object with title/artist/album fields.
+        const meta = data.meta ?? data.current_item_meta
+        if (meta && typeof meta === 'object') {
+            for (const key of ['title', 'artist', 'album']) {
+                if (typeof meta[key] === 'string' && meta[key].trim() !== '') return meta[key].trim()
+            }
+        }
+        return null
+    }
 }

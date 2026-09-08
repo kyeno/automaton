@@ -19,7 +19,32 @@ An `unknown` status matches **only** rule lists that explicitly include the `unk
 - All configured players are swept in parallel every 4 seconds; a re-entrancy guard prevents overlapping sweeps.
 - Polling is **presence-gated**: a host that the [Network Presence monitor](./network-presence.md) knows to be offline is not polled at all — its status becomes `unknown`. Hosts absent from every ping category are polled directly.
 - A 3-strike failure counter keeps a transiently failing host at its previous status instead of flapping it to `unreachable`.
+- A **playback-settle** dwell window gates what counts as actively `playing`, so browsing/skipping titles does not trigger dark mode or suppression (see [Playback Settle](#playback-settle)).
 - Status is cached in Redis (`videoPlayer:<host>:status`) and a `videoPlayer:<host>` EventBus event is published **only on change**.
+
+## Playback Settle
+
+A raw `playing` report from a player can mean either "a movie is genuinely playing" or just "the user opened the player and started scrubbing through titles". To keep lights and roller-suppression from flickering while someone chooses what to watch, the monitor applies a **settle delay**: an effective status of `playing` is only reported once the *same* media title has been observed playing continuously for at least the settle window (**60 seconds** by default). Until then an unsettled `playing` reads as `stopped`, so dark-mode rules and the top-level `video_player_suppression` guard stay inert during browsing/skipping. Once settled, play/pause act immediately with no further delay.
+
+Because both rule-engine consumers already read `getStatus(host)`, this behavior is global to every video-player-driven automation (per-rule `video-player` conditions *and* the suppression guard) without any YAML change.
+
+Reset semantics:
+
+| Event | Effect on the dwell clock / session |
+|-------|-------------------------------------|
+| Same title keeps playing | Clock continues; flips to `playing` when the window elapses |
+| Different/new title starts | Clock restarts from zero, `settled` cleared |
+| Pause before settling | Session reset — must play continuously again |
+| Pause after settling | Stays settled; resuming the same title is instantly `playing` |
+| Stop / unreachable / offline | Session cleared entirely |
+
+The per-host watch-session state is held in StateService under these keys (visible via `/status`):
+
+- `videoPlayer.<host>.title` — current media title being played (`null` if the provider can't determine one)
+- `videoPlayer.<host>.sinceMs` — epoch-ms timestamp of when that title began continuous playback
+- `videoPlayer.<host>.settled` — whether the settle window has elapsed for the current title
+
+Providers expose a best-effort `extractTitle()` used purely for identity tracking (MPC-HC reads `<p id="file">`, falling back to `<p id="title">`; VLC probes common JSON fields such as `input_name`/`name`). When a player cannot report a title, the dwell timer still applies but a movie change cannot be detected by name — a documented graceful degradation.
 
 ## Configuration
 

@@ -13,6 +13,8 @@ It ships as **one reusable pattern with per-room deployments**: a shared base cl
 | `paused` / `stopped` | stays closed | delegated to [Ambient Lights](./ambient-lights.md) via forced `invoke_automation` |
 | `unknown` / `unreachable` | **handed back** to the room's roller owner via forced `invoke_automation` | delegated to [Ambient Lights](./ambient-lights.md), still gated by `presence` |
 
+> **Settling delay:** `playing` above is the monitor's *effective* status, which only becomes true once the same title has played continuously for the [playback-settle](../monitors/video-player.md#playback-settle) window (~60 s by default). So dark mode and light/suppression stand-down engage ~60 s into continuous viewing rather than the instant playback starts; rollers are unaffected because they track reachability, not playback. Browsing or skipping through titles therefore never dims the room or suppresses roller automations.
+
 Key design points:
 
 - **Roller ownership is keyed to reachability, not playback.** A paused movie still means "someone is watching" — blinds stay down until the player disappears (machine off, player closed).

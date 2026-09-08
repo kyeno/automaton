@@ -17,6 +17,9 @@
  *     guard prevents overlapping sweeps.
  *   - A per-host failure-strike counter (3 strikes) avoids flapping a
  *     transiently failing host to `unreachable`.
+ *   - Playback-settle: a title must play continuously for a dwell window before it reports as
+ *     actively `playing`; until then it reads as `stopped` so browsing/skipping does not trigger
+ *     dark mode or suppression. Watch-session state lives in StateService under `videoPlayer:<host>.*`.
  *   - Status transitions are recorded durably in local SQLite via DatabaseService
  *     (domain 'videoPlayer', subject = host); an EventBus event (`videoPlayer:<host>`)
  *     is published only when a real transition occurs.
@@ -33,6 +36,7 @@ import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
 import DatabaseService from '../service/databaseService.js'
 import EventBus from '../service/eventBus.js'
+import StateService from '../service/stateService.js'
 import NetworkPresence from './networkPresence.js'
 
 import VlcProvider from './providers/vlc.js'
@@ -69,6 +73,28 @@ const PROVIDERS = {
     vlc: VlcProvider,
     mpc: MpcProvider
 }
+
+/**
+ * Default dwell window in milliseconds before a continuously-playing title is treated as an active
+ * "watching" session (1 minute). Distinguishes actually watching a movie from choosing/skipping
+ * through titles; adjustable at runtime via _setPlaybackSettleMs().
+ * @type {number}
+ */
+const DEFAULT_PLAYBACK_SETTLE_MS = 60_000
+
+/**
+ * Active playback-settle threshold in ms. Module-scoped (not a frozen instance field) so tests and
+ * config can adjust it without touching the frozen singleton; read on every observation.
+ * @type {number}
+ */
+let playbackSettleMs = DEFAULT_PLAYBACK_SETTLE_MS
+
+/**
+ * Clock source for settle-window math. Defaults to Date.now(); swappable in tests (_setClock) for
+ * fully deterministic timing instead of sleeping across the real dwell window.
+ * @type {() => number}
+ */
+let nowFn = () => Date.now()
 
 // ---------------------------------------------------------------------------
 // SVideoPlayerMonitor (singleton)
@@ -239,9 +265,13 @@ class SVideoPlayerMonitor {
     }
 
     /**
-     * Get the current normalized status for a host.
-     * Reads the in-process cache first (authoritative while running), then falls
-     * back to the durable SQLite history for values recorded by an earlier run.
+     * Get the automation-effective status for a host.
+     *
+     * Returns what rules and video-player suppression should act on -- the playback-settle-aware
+     * view of the player. A title playing continuously for at least the settle window reports
+     * `playing`; one still within that window (browsing / skipping) reports `stopped`.
+     * `paused`/`stopped`/`unreachable` pass through unchanged; null means offline/unknown. Reads the
+     * in-process cache first (authoritative while running), then falls back to durable SQLite history.
      *
      * @param {string} host - Host name as configured in network.yaml
      * @returns {Promise<string|null>} `playing`/`paused`/`stopped`/`unreachable`, or null when unknown
@@ -290,6 +320,37 @@ class SVideoPlayerMonitor {
         await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: status })
     }
 
+    /**
+     * Test/config hook: apply a single playback observation through the same settle logic a live
+     * sweep would use, without performing an HTTP fetch. Lets tests drive the watch-session state
+     * machine deterministically together with {@link _setClock} and {@link _setPlaybackSettleMs}.
+     * @param {string} host - Host name
+     * @param {string|null} status - Normalized status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
+     * @param {string|null} [title] - Media title captured by the provider (or null)
+     * @returns {Promise<void>}
+     */
+    async recordObservation(host, status, title = null) {
+        await this.#observe(host, status, title)
+    }
+
+    /**
+     * Test/config hook: override the playback-settle dwell window in milliseconds.
+     * @param {number} ms - Settle threshold; must be a finite non-negative number
+     */
+    _setPlaybackSettleMs(ms) {
+        if (!Number.isFinite(ms) || ms < 0) throw new Error('playback settle ms must be a finite non-negative number')
+        playbackSettleMs = ms
+    }
+
+    /**
+     * Test/config hook: replace the clock used for settle-window math (e.g., a controllable fake).
+     * Pass null to restore Date.now().
+     * @param {(() => number)|null} fn - Clock function returning epoch-ms, or null to reset
+     */
+    _setClock(fn) {
+        nowFn = typeof fn === 'function' ? fn : () => Date.now()
+    }
+
     // -- Private helpers --------------------------------------------------
 
     /**
@@ -311,7 +372,10 @@ class SVideoPlayerMonitor {
     }
 
     /**
-     * Check a single host: presence gate, fetch, parse, and status update.
+     * Check a single host: presence gate, fetch, parse, capture the media title, then apply one
+     * observation through the playback-settle state machine. Transient fetch failures keep both the
+     * last effective status AND the in-progress watch session so a brief hiccup neither flaps the
+     * lights nor resets the dwell clock (no observation is applied on that sweep).
      * @private
      * @param {string} host - Host name
      * @param {{host: string, port: number, path: string, parser: string}} cfg - Endpoint config
@@ -323,7 +387,7 @@ class SVideoPlayerMonitor {
         // the HTTP fetch plus the strike counter is its own reachability test.
         const presence = await NetworkPresence.getPresence(host)
         if (presence === PRESENCE_OFFLINE) {
-            await this.#setStatus(host, null)
+            await this.#observe(host, null, null)
             return
         }
 
@@ -336,21 +400,100 @@ class SVideoPlayerMonitor {
         try {
             const body = await provider.fetch(cfg)
             const status = provider.parse(body)
+            const title = typeof provider.extractTitle === 'function' ? provider.extractTitle(body) : null
             this.#failCounts.set(host, 0)
-            await this.#setStatus(host, status)
+            await this.#observe(host, status, title)
         } catch (error) {
             const strikes = (this.#failCounts.get(host) ?? 0) + 1
             this.#failCounts.set(host, strikes)
             if (strikes >= FAILURE_STRIKES) {
-                await this.#setStatus(host, 'unreachable')
+                // Player stopped answering -- treat it as gone and reset the watch session.
+                await this.#observe(host, 'unreachable', null)
             } else {
-                // Keep the previous status to avoid flapping on transient failures.
+                // Keep the previous effective status AND the existing watch session to avoid
+                // flapping on transient failures; no observation is applied this sweep.
                 LoggerService.debug(
                     `${host}: status fetch failed (${strikes}/${FAILURE_STRIKES}): ${error.message}`,
                     'VideoPlayerMonitor'
                 )
             }
         }
+    }
+
+    /**
+     * Apply one playback observation to a host's watch-session state machine (held in StateService
+     * under `videoPlayer.<host>.*`) and publish the resulting automation-effective status.
+     *
+     * A host reports an effective `playing` only once the SAME media title has been observed playing
+     * continuously for at least {@link playbackSettleMs}; until then it reads as `stopped`, so dark-mode
+     * rules and video-player suppression stay inert while someone browses/skips titles. Once settled,
+     * play/pause act immediately. Reset semantics: a pause BEFORE settling clears the clock (must play
+     * continuously again); stop / unreachable / offline clear the session entirely; switching to a
+     * different title restarts the dwell clock from scratch.
+     * @private
+     * @param {string} host - Host name
+     * @param {string|null} rawStatus - Provider status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
+     * @param {string|null} title - Media title captured by the provider, or null
+     */
+    async #observe(host, rawStatus, title) {
+        const now = nowFn()
+        const keyTitle = `videoPlayer.${host}.title`
+        const keySince = `videoPlayer.${host}.sinceMs`
+        const keySettled = `videoPlayer.${host}.settled`
+
+        let effective
+        if (rawStatus === 'playing') {
+            const t = typeof title === 'string' && title.trim() !== '' ? title : null
+            const prevTitle = StateService.get(keyTitle)
+            const prevSince = StateService.get(keySince)
+            const prevSettled = StateService.get(keySettled) === true
+
+            if (prevTitle !== t || prevSince == null) {
+                // New/different media (or no prior session): start a fresh dwell clock.
+                StateService.set(keyTitle, t)
+                StateService.set(keySince, now)
+                StateService.set(keySettled, false)
+                effective = 'stopped'
+            } else if (prevSettled) {
+                // Already watching this same title -- stays active immediately on resume/continue.
+                effective = 'playing'
+            } else if ((now - prevSince) >= playbackSettleMs) {
+                // Continuous same-title play just crossed the settle window -> actively watching.
+                StateService.set(keySettled, true)
+                effective = 'playing'
+                LoggerService.info(
+                    `${host}: "${t ?? '(untitled)'}" playing continuously for ${Math.round((now - prevSince) / 1000)}s -- dark mode/suppression active`,
+                    'VideoPlayerMonitor'
+                )
+            } else {
+                // Still within the settle window: keep settling, report as not-yet-playing.
+                effective = 'stopped'
+            }
+        } else if (rawStatus === 'paused') {
+            // A pause before settling breaks "continuous play": reset the watch session. Once settled,
+            // pausing only toggles lights/suppression back on/off without resetting the clock.
+            if (StateService.get(keySettled) !== true) this.#clearSession(keyTitle, keySince, keySettled)
+            effective = 'paused'
+        } else {
+            // stopped / unreachable / offline(null): clear any in-progress watch session.
+            this.#clearSession(keyTitle, keySince, keySettled)
+            effective = rawStatus   // 'stopped'|'unreachable'|null
+        }
+
+        await this.#setStatus(host, effective)
+    }
+
+    /**
+     * Clear a host's watch-session state from StateService (title / start time / settled flag).
+     * @private
+     * @param {string} keyTitle - StateService title key
+     * @param {string} keySince - StateService sinceMs key
+     * @param {string} keySettled - StateService settled key
+     */
+    #clearSession(keyTitle, keySince, keySettled) {
+        StateService.delete(keyTitle)
+        StateService.delete(keySince)
+        StateService.delete(keySettled)
     }
 
     /**
@@ -390,14 +533,15 @@ class SVideoPlayerMonitor {
     }
 
     /**
-     * Record a new status for a host, persist the transition durably via SQLite, and
-     * publish an EventBus event only when the value genuinely changed versus the stored
+     * Store an automation-effective status for a host, persist the transition durably via SQLite,
+     * and publish an EventBus event only when the value genuinely changed versus the stored
      * history. Gating on the store keeps an unchanged-across-restart state from re-firing
      * subscribers (mirrors NetworkPresence); it still publishes while the database is
-     * temporarily unavailable to preserve fail-open behaviour.
+     * temporarily unavailable to preserve fail-open behaviour. Called with the settle-aware
+     * effective status produced by {@link #observe}.
      * @private
      * @param {string} host - Host name
-     * @param {string|null} status - New normalized status
+     * @param {string|null} status - Automation-effective status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
      */
     async #setStatus(host, status) {
         const prev = this.#statuses.get(host)

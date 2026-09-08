@@ -110,6 +110,24 @@ export default class MpcProvider {
         return 'stopped'
     }
 
+    /**
+     * Extract the current media title from a variables page for identity tracking.
+     *
+     * Used by the monitor's playback-settle logic to detect when a DIFFERENT movie starts
+     * (which resets the dwell clock). Prefers the `<p id="file">` value (the loaded file
+     * name/path), falling back to `<p id="title">`; returns null when neither is present so
+     * callers can treat an unknown title as "no change signal" and rely on the dwell timer.
+     *
+     * @param {string} body - Raw response body
+     * @returns {string|null} Media title/identifier, or null when not determinable
+     */
+    extractTitle(body) {
+        const file = this.#extractParagraph(body, 'file')
+        if (file) return file
+        const title = this.#extractParagraph(body, 'title')
+        return title || null
+    }
+
     // -- Private helpers --------------------------------------------------
 
     /**

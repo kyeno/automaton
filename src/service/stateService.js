@@ -17,6 +17,10 @@
  *   - lifecycle.shuttingDown           (boolean) -- true once graceful shutdown has started
  *   - lifecycle.lastError              (Error|null) -- last uncaught exception or rejection reason
  *
+ *   - videoPlayer.<host>.title         (string|null) -- current media title being played (VideoPlayerMonitor)
+ *   - videoPlayer.<host>.sinceMs       (number|null) -- epoch ms when that title began continuous playback
+ *   - videoPlayer.<host>.settled       (boolean)     -- dwell window elapsed; host is "actively watching"
+ *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  *
@@ -64,6 +68,18 @@ class SStateService {
         if (old === value) return
         this.#state.set(key, value)
         this.#emit(key, value, old)
+    }
+
+    /**
+     * Remove a key entirely and notify listeners as if its value changed to undefined.
+     * A no-op when the key does not exist (mirrors {@link set}'s change-only semantics).
+     * @param {string} key - State key to remove
+     */
+    delete(key) {
+        if (!this.#state.has(key)) return
+        const old = this.#state.get(key)
+        this.#state.delete(key)
+        this.#emit(key, undefined, old)
     }
 
     /**
