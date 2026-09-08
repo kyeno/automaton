@@ -1,13 +1,19 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Add crypto price monitor and TTS automation
-- Add flowers moisture TTS automation (warnings)
+- Move afternoon/evening zones so that evening does not start before 7pm
+- Update weatherman TTS so it doesn't say about watching the stars during the evening; only at night
+- Make sure playing a movie suppresses TTS WeatherMan
 - BUG: DatabaService is *silent*, doesn't produce any lifecycle logs.
+- LATER: Add crypto price monitor and TTS automation
+- LATER: Add flowers moisture TTS automation (warnings)
+- LATER (when WiFi is here): Consider monitoring WiFi devices so you can greet our friends by their mobile phone presence
 
 ## HUGE MILESTONES
 - Add WiFi and WiFi devices support
 - Build entire speech-to-text (SST) architecture based on whisper-cpp
+- Integrate cleaning robot
+- Integrate A/C
 
 ## Architecture
 - Lift shared TTS pipeline into RuleBasedAutomationBase: availability guard, AI->TTS routing fallback, i18n sentence resolution + interpolation, silent-period gate deduplication; drop parity-only loadDevices()/resolveCommand() overrides from both TTS classes afterwards
@@ -32,6 +38,11 @@
 - LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
 - LATER: Support `get_time` tool that would return both time of the day from `lib/date` as well as actual hour/minutes
 - LATER: Drive the "* AI thinking..." indicator from shared state instead of inline print -- expose `ai.busy` plus a start timestamp via StateService while processMessage() holds its FIFO lock; AiWindow observes it and either rewrites the line to "* AI thought for X seconds" on completion or appends an IRC `/me`-style follow-up message
+
+### TTS Greeter "Goodbye" enhance ideas
+- Greet only when someone comes back -- extend the greeter to also say goodbye when their computer goes OFFLINE after being up for a while (measure online duration via priorStateDurationMs() on the offline event, symmetric to today's windows).
+- Keep goodbyes distinct from greetings: separate bundle buckets/sentences per host, so "see you later" never reads like a welcome-back and vice versa.
+- Guard against chatter: a quick step-away must not trigger both a greeting and a goodbye; consider suppressing the next-day welcome right after an already-said goodbye (and deduping repeat offline events).
 
 ### LATER: Assistant personalization
 - Dynamic model temperature settings per persona!
@@ -71,11 +82,6 @@ personas:
 - MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
 - MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 - LATER: Debug timers (LATER)
-
-## TTS Greeter "Goodbye" enhance ideas
-- Greet only when someone comes back -- extend the greeter to also say goodbye when their computer goes OFFLINE after being up for a while (measure online duration via priorStateDurationMs() on the offline event, symmetric to today's windows).
-- Keep goodbyes distinct from greetings: separate bundle buckets/sentences per host, so "see you later" never reads like a welcome-back and vice versa.
-- Guard against chatter: a quick step-away must not trigger both a greeting and a goodbye; consider suppressing the next-day welcome right after an already-said goodbye (and deduping repeat offline events).
 
 ---
 

@@ -17,6 +17,22 @@ const ROOT = resolve(import.meta.dirname, '..')
 const SRC_DIR = join(ROOT, 'src')
 const TESTS_DIR = join(ROOT, 'tests')
 
+// Isolate test runs from production keyspace: point every child test process at a
+// dedicated logical database on the same Redis host so tests never read/write real
+// automation/device markers. _debug/* scripts are unaffected (they run standalone).
+{
+    const base = process.env.REDIS_URL || 'redis://192.168.1.1:6379'
+    const idx  = process.env.TEST_REDIS_DB_INDEX || '15'
+    try {
+        const u = new URL(base)
+        u.pathname = `/${idx}`
+        process.env.REDIS_URL = u.toString()
+    } catch (_) {
+        process.env.REDIS_URL = `${base.replace(/\/+$/, '')}/${idx}`
+    }
+}
+
+
 let failures = 0
 let passed = 0
 
@@ -110,6 +126,7 @@ const testScripts = [
   'test-rule-based-targets.js',
   'test-video-player-host-resolution.js',
   'test-video-player-suppression.js',
+  'test-video-player-settle.js',
   'test-database-service.js',
   'test-rule-react-on-change.js',
   'test-tts-greeter.js',
