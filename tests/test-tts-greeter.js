@@ -3,9 +3,9 @@
  *
  * Covers: unknown-history fail-open (full welcome, no absence note without data), each
  * configured window band (reboot / short-return / welcome-back -- contiguous bands so
- * every return speaks), absence-note tiers ("off for <duration>" up to the threshold,
- * "last online at HH:MM" while within the last day, full date beyond; threshold override
- * via absence_note_long_after), hosts without a bundle line in
+ * every return speaks), the two-tier absence note ("last seen online X ago" below 24h,
+ * full calendar date + clock time from 24h up, including the boundary case itself),
+ * hosts without a bundle line in
  * a bucket staying silent there ("greeting not required" instead of missing-template
  * warnings), the possessive (_named) vs neutral (_anonymous) absence-note selection keyed
  * off whether the host's welcome line uses their name, offline events being ignored,
@@ -96,23 +96,19 @@ function greetingUsesName(host) {
     return typeof line === 'string' && /\{%\s*name_(?:vocative|genitive)\s*%\}/.test(line)
 }
 
-/** Upper bound of the time-only ("last online at HH:MM") note tier -- mirrors ABSENCE_NOTE_RECENT_MAX_MS. */
-const NOTE_RECENT_MAX_MS = 24 * 3_600_000
+/** Boundary between the relative and absolute note tiers -- mirrors ABSENCE_NOTE_LONG_MIN_MS. */
+const NOTE_LONG_MIN_MS = 24 * 3_600_000
 
 /** Expected absence note appended to a greeting for a known duration ('' when none applies). */
-function expectedNote(absenceMs, channel = 'tts', thresholdMs = 12 * HOUR, host = null) {
+function expectedNote(absenceMs, channel = 'tts', host = null) {
     if (!Number.isFinite(absenceMs) || !(absenceMs > 0)) return ''
     const section = bundle.absence_note?.[channel]
     if (!section) return ''
-    // Mirror of #absenceNote(): short up to the configured threshold, time-only while within
-    // the last day, full date beyond; tts notes prefer _named/_anonymous variants keyed off
-    // the host's welcome line; bundles without the split fall back to the legacy single keys,
-    // and bundles predating the recent tier degrade to the calendar-date line.
-    let variant
-    if (absenceMs <= thresholdMs) variant = 'short'
-    else if (absenceMs <= NOTE_RECENT_MAX_MS) variant = 'recent'
-    else variant = 'long'
-    const candidates = variant === 'recent' ? ['recent', 'long'] : [variant]
+    // Mirror of #absenceNote(): relative phrase below NOTE_LONG_MIN_MS, full date + clock
+    // time above it; tts notes prefer _named/_anonymous variants keyed off the host's
+    // welcome line; bundles still carrying legacy short_* lines degrade to those instead.
+    const variant = absenceMs >= NOTE_LONG_MIN_MS ? 'long' : 'recent'
+    const candidates = variant === 'recent' ? ['recent', 'short'] : [variant]
     const has = (keyName) => typeof section[keyName] === 'string' && section[keyName].trim() !== ''
     let key = null
     let usedVariant = variant
@@ -125,18 +121,17 @@ function expectedNote(absenceMs, channel = 'tts', thresholdMs = 12 * HOUR, host 
         if (has(candidateKey)) { key = candidateKey; usedVariant = v; break }
     }
     if (!key) return ''
-    const tpl = section[key]
-    if (usedVariant === 'short') {
-        const phrase = temporal.msToHumanPhrase(absenceMs, temporal.getDurationUnits())
-        return phrase ? tpl.replace(/\{%\s*time_phrase\s*%}/g, phrase) : ''
-    }
-    // recent / long: the offline moment is seeded as NOW - absenceMs in every case below.
+    const tpl = String(section[key])
+    // The offline moment is seeded as NOW - absenceMs in every case below.
     const moment = new Date(NOW - absenceMs)
-    if (usedVariant === 'recent') {
-        return tpl.replace(/\{%\s*last_online_time\s*%}/g, temporal.formatClockTime(moment))
+    if (usedVariant === 'long') {
+        const fragment = expectedDateFragment(moment)
+        if (!fragment) return ''
+        return tpl.replace(/\{%\s*last_online_date\s*%}/g, fragment)
+                  .replace(/\{%\s*last_online_time\s*%}/g, temporal.formatClockTime(moment))
     }
-    const fragment = expectedDateFragment(moment)
-    return fragment ? tpl.replace(/\{%\s*last_online_date\s*%}/g, fragment) : ''
+    const phrase = temporal.msToHumanPhrase(absenceMs, temporal.getDurationUnits())
+    return phrase ? tpl.replace(/\{%\s*time_phrase\s*%}/g, phrase) : ''
 }
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'automaton-greeter-test-'))
@@ -220,10 +215,10 @@ try {
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:kyeno' })
-    assert(seen.tts.length === 1, 'long absence (8h) speaks once')
+    assert(seen.tts.length === 1, 'absence of 8h speaks once')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedNote(8 * HOUR, 'tts', 12 * HOUR, 'kyeno')}`,
-        '8h absence -> welcome bucket + "off for" absence note'
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedNote(8 * HOUR, 'tts', 'kyeno')}`,
+        '8h absence -> welcome bucket + relative last-seen note ("... ago")'
     )
 
     await seedHistory('meerkat', [
@@ -234,8 +229,8 @@ try {
     await greeter.execute({ trigger: 'network:meerkat' })
     assert(seen.tts.length === 1, 'short return (15m) speaks once')
     assert(
-        seen.tts[0]?.text === `${expectedText('forgot', 'tts', 'meerkat')} ${expectedNote(15 * MIN, 'tts', 12 * HOUR, 'meerkat')}`,
-        '15m absence -> forgot bucket ("did you forget something?") + off-for note'
+        seen.tts[0]?.text === `${expectedText('forgot', 'tts', 'meerkat')} ${expectedNote(15 * MIN, 'tts', 'meerkat')}`,
+        '15m absence -> forgot bucket ("did you forget something?") + relative last-seen note'
     )
 
     await seedHistory('kyeno', [
@@ -248,12 +243,12 @@ try {
     await greeter.execute({ trigger: 'network:kyeno' })
     assert(seen.tts.length === 1, 'quick blip (90s) speaks once')
     assert(
-        seen.tts[0]?.text === `${expectedText('reboot', 'tts', 'kyeno')} ${expectedNote(90_000, 'tts', 12 * HOUR, 'kyeno')}`,
-        '90s absence -> reboot bucket with genitive name + off-for note'
+        seen.tts[0]?.text === `${expectedText('reboot', 'tts', 'kyeno')} ${expectedNote(90_000, 'tts', 'kyeno')}`,
+        '90s absence -> reboot bucket with genitive name + relative last-seen note'
     )
 
     // The old silent gap (30m < x < 4h): shipped bands are contiguous now, so a 2h return
-    // is greeted -- welcome bucket plus the "off for" absence note.
+    // is greeted -- welcome bucket plus the relative last-seen note.
     await seedHistory('meerkat', [
         { state: 'offline', atMs: NOW - 2 * HOUR },
         { state: 'online', atMs: NOW }
@@ -262,61 +257,57 @@ try {
     await greeter.execute({ trigger: 'network:meerkat' })
     assert(seen.tts.length === 1, '2h absence speaks once (contiguous bands -- no more silent gap)')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(2 * HOUR, 'tts', 12 * HOUR, 'meerkat')}`,
-        '2h absence -> welcome bucket + off-for note'
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(2 * HOUR, 'tts', 'meerkat')}`,
+        '2h absence -> welcome bucket + relative last-seen note'
     )
     assert(seen.system.length === 0 && seen.periodic.length === 0, 'case emits nothing to UI either')
 
     // -----------------------------------------------------------------------
-    console.log('\n── absence notes switch from duration to date past the threshold ──')
+    console.log('\n── absence notes switch from relative to date+time at 24h ──')
     greeter.config = { ...shippedConfig, use_ai: false }
 
-    // Above the default 12h threshold: "last online on <date it went offline>".
+    // Above the 24h boundary: full calendar date PLUS clock time of the offline moment.
     await seedHistory('kyeno', [
         { state: 'offline', atMs: NOW - 30 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:kyeno' })
-    const expectedLongNote = expectedNote(30 * HOUR, 'tts', 12 * HOUR, 'kyeno')
+    const expectedLongNote = expectedNote(30 * HOUR, 'tts', 'kyeno')
     assert(expectedLongNote !== '', 'long-variant note resolves in active bundle')
+    assert(/\d{2}:\d{2}/.test(expectedLongNote), 'long note carries a zero-padded HH:MM clock time alongside the date')
     assert(
         seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedLongNote}`,
-        '30h absence -> welcome bucket + last-online-on-date note'
+        '30h absence -> welcome bucket + last-online-on-date-and-time note'
     )
 
-    // Config override moves the switch point: with a 6h threshold an 8h absence leaves the
-    // duration tier and lands in the time-only ("last online at HH:MM") band instead.
-    greeter.config = { ...shippedConfig, use_ai: false, absence_note_long_after: '6h' }
+    // Boundary itself (exactly 24h): already absolute -- date + time, not a duration phrase.
     await seedHistory('meerkat', [
-        { state: 'offline', atMs: NOW - 8 * HOUR },
+        { state: 'offline', atMs: NOW - NOTE_LONG_MIN_MS },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:meerkat' })
-    const recentOverrideNote = expectedNote(8 * HOUR, 'tts', 6 * HOUR, 'meerkat')
-    assert(recentOverrideNote !== '', 'time-only note resolves for an 8h absence under a 6h threshold')
-    assert(/\d{2}:\d{2}/.test(recentOverrideNote), 'time-only note carries a zero-padded HH:MM clock time')
+    const boundaryNote = expectedNote(NOTE_LONG_MIN_MS, 'tts', 'meerkat')
+    assert(boundaryNote !== '' && /\d{2}:\d{2}/.test(boundaryNote), 'absence of exactly 24h renders the absolute date+time note')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${recentOverrideNote}`,
-        'threshold override (6h): 8h absence renders the time-of-day variant instead of a duration'
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${boundaryNote}`,
+        'absence of exactly 24h lands in the long tier, not the relative one'
     )
 
-    // Default tiers: a 13h absence is just past the 12h short tier but still within the last
-    // day -- it speaks "last online at HH:MM" rather than jumping straight to a full date.
-    greeter.config = { ...shippedConfig, use_ai: false }
+    // Just below the boundary: still relative ("... ago"), no clock time or calendar date.
     await seedHistory('kyeno', [
-        { state: 'offline', atMs: NOW - 13 * HOUR },
+        { state: 'offline', atMs: NOW - 23 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:kyeno' })
-    const recentDefaultNote = expectedNote(13 * HOUR, 'tts', 12 * HOUR, 'kyeno')
-    assert(recentDefaultNote !== '', 'default threshold: 13h absence resolves the time-only note')
-    assert(/\d{2}:\d{2}/.test(recentDefaultNote), 'time-only note carries a zero-padded HH:MM clock time')
+    const recentDefaultNote = expectedNote(23 * HOUR, 'tts', 'kyeno')
+    assert(recentDefaultNote !== '', 'just-below-boundary absence resolves the relative note')
+    assert(!/\d{2}:\d{2}/.test(recentDefaultNote), 'relative note carries a duration phrase, not an HH:MM clock time')
     assert(
         seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${recentDefaultNote}`,
-        '13h absence (default tiers) renders "last online at HH:MM", not a calendar date'
+        '23h absence renders "last seen online X ago", not a calendar date'
     )
 
     // -----------------------------------------------------------------------
@@ -356,7 +347,7 @@ try {
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:meerkat' })
-    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('forgot', 'tts', 'meerkat')} ${expectedNote(15 * MIN, 'tts', 12 * HOUR, 'meerkat')}`, 'AI unavailable -> plain TTS sentence + off-for note spoken once')
+    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('forgot', 'tts', 'meerkat')} ${expectedNote(15 * MIN, 'tts', 'meerkat')}`, 'AI unavailable -> plain TTS sentence + relative last-seen note spoken once')
     assert(seen.system.length === 0 && seen.periodic.length === 0, 'AI-down fallback posts no UI notice (warn log only)')
 
     setAi({ available: true, failWith: 'provider exploded' })   // provider throws mid-flight
@@ -366,7 +357,7 @@ try {
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:meerkat' })
-    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(8 * HOUR, 'tts', 12 * HOUR, 'meerkat')}`, 'thrown AI error -> plain TTS sentence + off-for note spoken once')
+    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(8 * HOUR, 'tts', 'meerkat')}`, 'thrown AI error -> plain TTS sentence + relative last-seen note spoken once')
     assert(seen.periodic.length === 0, 'thrown AI error surfaces no periodic response')
 
     setAi({ available: true, reply: '' })   // model answers with nothing usable
@@ -376,7 +367,7 @@ try {
     ])
     resetSeen()
     await greeter.execute({ trigger: 'network:meerkat' })
-    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('reboot', 'tts', 'meerkat')} ${expectedNote(90_000, 'tts', 12 * HOUR, 'meerkat')}`, 'empty AI reply -> plain TTS sentence + off-for note spoken once')
+    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('reboot', 'tts', 'meerkat')} ${expectedNote(90_000, 'tts', 'meerkat')}`, 'empty AI reply -> plain TTS sentence + relative last-seen note spoken once')
     assert(seen.system.length >= 1, 'the instruction was still echoed to UI before the failed attempt')
 
     // -----------------------------------------------------------------------
@@ -405,7 +396,7 @@ try {
     // -----------------------------------------------------------------------
     console.log('\n── absence notes pick possessive vs neutral by whether the welcome names the person ──')
     const ttsNoteSection = bundle.absence_note?.tts ?? {}
-    if (typeof ttsNoteSection['short_named'] !== 'string' || typeof ttsNoteSection['short_anonymous'] !== 'string') {
+    if (typeof ttsNoteSection['recent_named'] !== 'string' || typeof ttsNoteSection['recent_anonymous'] !== 'string') {
         console.log('  ⊘ active bundle has no _named/_anonymous split -- legacy single-variant notes in effect')
     } else {
         // Personal hosts keep the possessive variant after a greeting that uses their name.
@@ -420,7 +411,7 @@ try {
         resetSeen()
         await greeter.execute({ trigger: 'network:kyeno' })
         assert(
-            seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedNote(8 * HOUR, 'tts', 12 * HOUR, 'kyeno')}`,
+            seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedNote(8 * HOUR, 'tts', 'kyeno')}`,
             'personal host gets the possessive note (_named) because its welcome line uses their name'
         )
 
@@ -441,7 +432,7 @@ try {
             ])
             resetSeen()
             await greeter.execute({ trigger: 'network:htpc' })
-            const neutralNote = expectedNote(8 * HOUR, 'tts', 12 * HOUR, 'htpc')
+            const neutralNote = expectedNote(8 * HOUR, 'tts', 'htpc')
             assert(neutralNote !== '', 'anonymous absence-note variant resolves for nameless hosts')
             assert(
                 seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'htpc')} ${neutralNote}`,

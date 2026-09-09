@@ -39,25 +39,21 @@ reboot:
     hostname2: 'Ogłoś krótko i z humorem, że komputer {% name_genitive %} właśnie się rebootował.'
 
 # Absence note -- appended AFTER the bucket greeting (space-separated) whenever the
-# transition history provides an absence duration. Variant choice by length:
-#   short  -- absence <= absence_note_long_after (config default 12h): how long it was off
-#   recent -- above that threshold but within the last day: clock time (HH:MM) it went offline
-#   long   -- beyond 24h: calendar date of the moment it went offline
+# transition history provides an absence duration. Two tiers by length:
+#   recent -- below 24h: how long ago it was last seen online ("...8 godzin temu")
+#   long   -- from 24h up: full calendar date + clock time of the moment it went offline
 # TTS variants come in _named / _anonymous pairs: the possessive form is spoken only when
 # this host's welcome.tts line addresses them by name ({% name_vocative %}/{% name_genitive %});
 # machines without a personal greeting get the neutral "Komputer ..." form instead.
 # Placeholders: {% time_phrase %} -> localized duration incl. unit word ("58 minut");
-#               {% last_online_time %} -> zero-padded 24-hour clock time ("07:35") via lib/date;
-#               {% last_online_date %} -> localized calendar date from the date bundle.
+#               {% last_online_date %} -> localized calendar date from the date bundle;
+#               {% last_online_time %} -> zero-padded 24-hour clock time ("07:35").
 absence_note:
   tts:
-    short_named:     'Twój komputer był wyłączony przez {% time_phrase %}'
-    short_anonymous: 'Komputer był wyłączony przez {% time_phrase %}'
-    recent_named:    'Twój komputer ostatnio był włączony o godzinie {% last_online_time %}'
-    recent_anonymous: 'Komputer ostatnio był włączony o godzinie {% last_online_time %}'
-    long_named:      'Twój komputer ostatnio był włączony {% last_online_date %}'
-    long_anonymous:  'Komputer ostatnio był włączony {% last_online_date %}'
+    recent_named:     'Twój komputer ostatnio był włączony {% time_phrase %} temu'
+    recent_anonymous: 'Komputer ostatnio był włączony {% time_phrase %} temu'
+    long_named:       'Twój komputer ostatnio był włączony {% last_online_date %}, o godzinie {% last_online_time %}'
+    long_anonymous:   'Komputer ostatnio był włączony {% last_online_date %}, o godzinie {% last_online_time %}'
   ai:
-    short: 'Dodatkowo wspomnij, że komputer był wyłączony przez {% time_phrase %}.'
-    recent: 'Dodatkowo wspomnij, że komputer ostatnio był włączony o godzinie {% last_online_time %}.'
-    long:  'Dodatkowo wspomnij, że komputer ostatnio był włączony {% last_online_date %}.'
+    recent: 'Dodatkowo wspomnij, że komputer ostatnio był włączony {% time_phrase %} temu.'
+    long:   'Dodatkowo wspomnij, że komputer ostatnio był włączony {% last_online_date %}, o godzinie {% last_online_time %}.'

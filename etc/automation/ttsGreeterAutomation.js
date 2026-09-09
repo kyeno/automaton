@@ -22,13 +22,11 @@
  * template picks the grammatical case it needs. A host that has no line in a given
  * bucket on either channel simply does not require a greeting there (e.g., a shared HTPC)
  * and those returns skip silently instead of warning. When transition history provides
- * an absence duration, a localized note is appended after the greeting -- "off for
- * <duration>" up to absence_note_long_after (default 12h), "last online at HH:MM"
- * (zero-padded 24-hour clock time) while that moment is still within the last day, and
- * beyond that "last online on <date>" rendered at the offline transition's own
- * timestamp; all three go through lib/date's date/time machinery and degrade silently
- * when data or templates are missing. TTS
- * notes ship as _named/_anonymous pairs: the possessive form ("Twój komputer ...") is
+ * an absence duration, a localized note is appended after the greeting: below 24h it says
+ * how long ago the host was last seen online ("...8 hours ago"), from 24h up it gives the
+ * full calendar date plus clock time of the offline transition itself. Both render via
+ * lib/date's date/time machinery and degrade silently when data or templates are missing.
+ * TTS notes ship as _named/_anonymous pairs: the possessive form ("Twój komputer ...") is
  * spoken only when the host's welcome TTS line addresses them by name.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -74,14 +72,11 @@ const NETWORK_DOMAIN = 'network'
  */
 const UNKNOWN_ABSENCE_BUCKET = 'welcome'
 
-/** Default switch point between the short ("off for ...") and recent/long absence notes. */
-const DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS = 12 * 3_600_000
-
 /**
- * Upper bound of the time-only ("last online at HH:MM") note tier: absences above this
- * fall back to the full calendar-date line instead of a bare clock time.
+ * Absence boundary in ms: below it the note is relative ("last seen online X ago");
+ * at/above it, absolute -- full calendar date + clock time of the offline moment.
  */
-const ABSENCE_NOTE_RECENT_MAX_MS = 24 * 3_600_000
+const ABSENCE_NOTE_LONG_MIN_MS = 24 * 3_600_000
 
 export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
 
@@ -321,8 +316,8 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             this.log('use_ai enabled but AI unavailable -- speaking the plain TTS sentence instead', 'warn')
         }
 
-        // Append the localized absence note ("off for ..." / "last online on ...") when
-        // history provides a duration; it never replaces or blocks the main greeting.
+        // Append the localized absence note when history provides a duration;
+        // it never replaces or blocks the main greeting.
         const ttsNote = await this.#absenceNote(host, 'tts', decision)
         const spoken = ttsNote ? `${plainText} ${ttsNote}` : plainText
         EventBus.emit('tts:speak', { text: spoken })
@@ -505,36 +500,16 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return typeof line === 'string' && /\{%\s*name_(?:vocative|genitive)\s*%\}/.test(line)
     }
 
-
     /**
-     * Absence duration above which the long ("last online on <date>") note replaces the
-     * short ("off for <duration>") one. Read from optional config key
-     * absence_note_long_after via temporal.parseDurationMs(); missing values use the 12h
-     * default silently, present-but-invalid ones warn and fall back to it (fail-open).
-     * @private
-     * @returns {number} Threshold in milliseconds (> 0)
-     */
-    #longThresholdMs() {
-        const raw = this.config?.absence_note_long_after
-        if (raw == null || raw === '') return DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS
-        const ms = temporal.parseDurationMs(raw)
-        if (ms != null && Number.isFinite(ms) && ms > 0) return Math.round(ms)
-        this.log(`absence_note_long_after ${JSON.stringify(raw)} is not a valid duration ("5s", "7m", "4h") -- using default (${temporal.millisecondsToHumanReadable(DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS)})`, 'warn')
-        return DEFAULT_ABSENCE_NOTE_LONG_AFTER_MS
-    }
-
-    /**
-     * Build the localized absence note appended after the bucket greeting. Three tiers by
-     * how long the host was off: <= threshold -> "off for <duration>" (lib/date's speech-
-     * oriented duration phrase + date-bundle unit words); above that but within the last
-     * day -> "last online at HH:MM" in zero-padded 24-hour clock time; beyond 24h -> full
-     * calendar date of the offline transition via the same date_sentence machinery
-     * WeatherMan uses. The tts channel prefers the _named / _anonymous variant pair --
-     * possessive only when the host's welcome line addresses them by name -- and falls
-     * back to the legacy single short/recent/long keys for older bundles; a bundle without
-     * the recent tier degrades to the calendar-date line rather than dropping the note.
-     * Returns '' whenever anything is missing -- unknown absence, no template, unresolvable
-     * token -- so the main greeting always stands alone. Never throws.
+     * Build the localized absence note appended after the bucket greeting, or '' to omit
+     * it. Two tiers by how long the host was off: below ABSENCE_NOTE_LONG_MIN_MS --
+     * "last seen online <duration> ago" via lib/date's speech-oriented phrase; at/above
+     * it -- full calendar date + zero-padded 24-hour clock time of the offline transition
+     * (the same date_sentence machinery WeatherMan uses). The tts channel prefers the
+     * _named / _anonymous pair -- possessive only when the welcome line names the person
+     * -- and degrades to legacy short_* lines in older bundles rather than dropping the
+     * note. Returns '' whenever anything is missing so the main greeting always stands
+     * alone. Never throws.
      * @private
      * @param {string} host - Configured network host name
      * @param {'tts'|'ai'} channel - Output-path section inside absence_note/
@@ -546,12 +521,8 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         const section = this.#bundle?.absence_note?.[channel]
         if (!section || typeof section !== 'object') return ''
 
-        // Tier selection: duration phrase up to the configured threshold, bare clock time
-        // while the offline moment is still within the last day, full date beyond that.
-        let variant
-        if (decision.absenceMs <= this.#longThresholdMs()) variant = 'short'
-        else if (decision.absenceMs <= ABSENCE_NOTE_RECENT_MAX_MS) variant = 'recent'
-        else variant = 'long'
+        // Relative ("... X temu") below the boundary; absolute date + time at/above it.
+        const variant = decision.absenceMs >= ABSENCE_NOTE_LONG_MIN_MS ? 'long' : 'recent'
 
         const pick = (key) => (typeof section[key] === 'string' && String(section[key]).trim()) ? section[key] : null
         const resolveTemplate = (v) => (channel === 'tts')
@@ -560,9 +531,8 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             ? pick(`${v}_${this.#greetingUsesName(host) ? 'named' : 'anonymous'}`) ?? pick(v)
             : pick(v)
 
-        // Bundles predating the time-only tier have no recent_* lines -- degrade to the
-        // calendar-date note so the information survives in older bundles.
-        const candidates = variant === 'recent' ? ['recent', 'long'] : [variant]
+        // Bundles predating the recent tier keep their "off for ..." short_* lines.
+        const candidates = variant === 'recent' ? ['recent', 'short'] : [variant]
         let template = null
         let usedVariant = variant
         for (const v of candidates) {
@@ -572,31 +542,27 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         if (!template) return ''   // bundle predates the note feature -- plain greeting only
 
         let tokens
-        if (usedVariant === 'short') {
+        if (usedVariant === 'long') {
+            // The offline transition's own timestamp; fall back to now-minus-absence when
+            // history is shorter than expected so rendering still has a moment.
+            const offlineTs = await DatabaseService.priorTransitionTs(NETWORK_DOMAIN, host) ?? Math.max(0, Date.now() - decision.absenceMs)
+            const moment = new Date(offlineTs)
+            const dateTemplate = temporal.loadDateBundle()?.date_sentence
+            const fragment = (typeof dateTemplate === 'string' && dateTemplate.trim())
+                ? this.#fillTemplate(dateTemplate, temporal.getDateParts(moment), `absence_note.${channel}.${usedVariant} date`)
+                : ''
+            if (!fragment) {
+                this.log('No localized calendar date available -- skipping the last-online note', 'warn')
+                return ''
+            }
+            tokens = { last_online_date: fragment, last_online_time: temporal.formatClockTime(moment) }
+        } else {
             const phrase = temporal.msToHumanPhrase(decision.absenceMs, temporal.getDurationUnits())
             if (!phrase) {
                 this.log(`Cannot render a duration phrase for ${Math.round(decision.absenceMs / 1000)}s -- skipping the absence note`, 'debug')
                 return ''
             }
             tokens = { time_phrase: phrase }
-        } else {
-            // The offline transition's own timestamp; fall back to now-minus-absence when
-            // history is shorter than expected so rendering still has a moment.
-            const offlineTs = await DatabaseService.priorTransitionTs(NETWORK_DOMAIN, host) ?? Math.max(0, Date.now() - decision.absenceMs)
-            const moment = new Date(offlineTs)
-            if (usedVariant === 'recent') {
-                tokens = { last_online_time: temporal.formatClockTime(moment) }
-            } else {
-                const dateTemplate = temporal.loadDateBundle()?.date_sentence
-                const fragment = (typeof dateTemplate === 'string' && dateTemplate.trim())
-                    ? this.#fillTemplate(dateTemplate, temporal.getDateParts(moment), `absence_note.${channel}.${usedVariant} date`)
-                    : ''
-                if (!fragment) {
-                    this.log('No localized calendar date available -- skipping the last-online note', 'warn')
-                    return ''
-                }
-                tokens = { last_online_date: fragment }
-            }
         }
 
         return this.#fillTemplate(template, tokens, `absence_note.${channel}.${usedVariant}`)
