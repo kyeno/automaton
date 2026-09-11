@@ -249,6 +249,50 @@ try {
         assert(auto.device.received.length === receivedBefore + 1, 'with all guards clear, a plain natural run dispatches end-to-end')
         restore()
     }
+
+    // -- S7: window-scoped once-markers for time-of-day rules -------------------------
+
+    console.log('\n\u2500\u2500 Window-scoped once markers \u2500\u2500\n')
+
+    {
+        const cfgPathWindow = path.join(tmpDir, 'force-probe-window.yaml')
+        fs.writeFileSync(cfgPathWindow, [
+            'rules:',
+            '  - name: "Window probe rule"',
+            '    once: true',
+            '    conditions:',
+            '      time-of-day: [evening, night]',
+            '    action: "on"',
+        ].join('\n'))
+        const winAuto = new ForceProbeAutomation('ForceProbeWindowAutomation', cfgPathWindow)
+
+        redisMock.onceStore.clear()
+        const receivedBase = winAuto.device.received.length
+
+        const restoreEvening = stubDate(20, 0)   // evening window
+        await winAuto.execute({ trigger: 'manual' })
+        assert(winAuto.device.received.length === receivedBase + 1, 'window rule dispatches inside the evening window')
+        let keys = [...redisMock.onceStore.keys()]
+        assert(keys.length === 1 && keys[0] === 'auto:ForceProbeWindowAutomation:once:window_probe_rule:evening',
+            'marker key is suffixed with the active period for time-of-day rules')
+        restoreEvening()
+
+        const restoreEveningAgain = stubDate(21, 30)   // same window, same calendar day
+        await winAuto.execute({ trigger: 'manual' })
+        assert(winAuto.device.received.length === receivedBase + 1, 'second firing within the SAME window stays blocked')
+        restoreEveningAgain()
+
+        const restoreNight = stubDate(2, 0)      // night window -- independent slot on the same day
+        await winAuto.execute({ trigger: 'manual' })
+        assert(winAuto.device.received.length === receivedBase + 2, 'night window keeps its own once-slot (pre-dawn vs dusk independence)')
+        keys = [...redisMock.onceStore.keys()].sort()
+        assert(
+            keys.includes('auto:ForceProbeWindowAutomation:once:window_probe_rule:evening')
+                && keys.includes('auto:ForceProbeWindowAutomation:once:window_probe_rule:night'),
+            'both per-window markers coexist under distinct keys'
+        )
+        restoreNight()
+    }
 } finally {
     restoreCacheService()
     fs.rmSync(tmpDir, { recursive: true, force: true })

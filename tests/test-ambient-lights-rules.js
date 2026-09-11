@@ -27,6 +27,7 @@ import { join } from 'node:path'
 import { createClient } from 'redis'
 
 import ConfigService from '../src/service/configService.js'
+import CacheService from '../src/service/cacheService.js'
 import LoggerService from '../src/service/loggerService.js'
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
@@ -148,6 +149,24 @@ writeFileSync(TEST_CONFIG_PATH, [
     '    targets:',
     '      Kitchen_Outlet: ON',
     '      Hallway_Outlet: ON',
+    '',
+    "  - name: 'Multi-window dusk - turn on ambient lamps'",
+    '    once: true',
+    '    conditions:',
+    '      time-of-day: [evening, night]',
+    '      illuminance: { lt: 900 }',
+    '    targets:',
+    '      Kitchen_Outlet: ON',
+    '      Hallway_Outlet: ON',
+    '',
+    "  - name: 'Late-night restore - invoke only'",
+    '    forced_only: true',
+    '    conditions:',
+    '      time-of-day: [night]',
+    '      illuminance: { lt: 900 }',
+    '    targets:',
+    '      Kitchen_Outlet: ON',
+    '      Hallway_Outlet: ON',
 ].join('\n'))
 
 /**
@@ -169,10 +188,14 @@ class TestAmbient extends AmbientLightsAutomation {
     async buildContext() { return this.#context }
 }
 
-async function runScenario(context) {
+/**
+ * @param {{illuminance?: number|null, timeOfDay: string}} context - Fabricated buildContext result
+ * @param {Object} [triggerData] - Extra fields merged into execute() input (e.g., `{ force: true }` for a delegated run)
+ */
+async function runScenario(context, triggerData = {}) {
     const devices = new Map(ALL_IDS.map(id => [id, makeStubDevice(id)]))
     const auto = new TestAmbient(devices, context)
-    await auto.execute({ trigger: 'test' })
+    await auto.execute({ trigger: 'test', ...triggerData })
     return devices
 }
 
@@ -203,6 +226,74 @@ for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPaylo
 // Evening still bright -> nothing happens at all
 devices = await runScenario({ illuminance: 8000, timeOfDay: 'evening' })
 for (const id of ALL_IDS) expectPayload(devices, id, null)
+
+// Multi-window once semantics (regression): an [evening, night] rule gets ONE slot per
+// window per calendar day -- a pre-dawn firing must not consume actual dusk's budget,
+// while re-firing within the SAME window stays blocked for the rest of that day.
+// Marker state is stubbed via the CacheService prototype (same approach as
+// test-automation-force.js) so these assertions hold with or without live Redis.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    const onceStore = new Map()
+    cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
+    cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
+    try {
+        // Evening #1 -> dispatches and consumes today's EVENING slot only
+        let devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+
+        // Evening #2, same calendar day -> its own consumed evening slot blocks it again
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        for (const id of ALL_IDS) expectPayload(devices, id, null)
+
+        // Night, same calendar day -> independent NIGHT slot is still free -> fires again
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+
+        const keys = [...onceStore.keys()]
+        assert(keys.includes('auto:AmbientLightsAutomation:once:multi-window_dusk_-_turn_on_ambient_lamps:evening')
+            && keys.includes('auto:AmbientLightsAutomation:once:multi-window_dusk_-_turn_on_ambient_lamps:night'),
+            'per-window markers stored under distinct :evening / :night keys')
+    } finally {
+        cacheProto.get = origGet
+        cacheProto.set = origSet
+    }
+}
+
+// Invoke-only semantics (forced_only): a night-window rule must answer delegated late-night
+// light restore (home-theater pause hand-off for movies watched past midnight) while never
+// firing on natural pre-dawn ticks -- even when its conditions hold and no marker is set.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    let onceStore = new Map()
+    cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
+    cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
+    try {
+        // Natural pre-dawn tick: seed the other night-matching rule's consumed slot so that ANY
+        // dispatch would have to come from the invoke-only rule -> expect total silence.
+        onceStore.set('auto:AmbientLightsAutomation:once:multi-window_dusk_-_turn_on_ambient_lamps:night',
+            { date: temporal.getLocalDayString(), at: Date.now() })
+        let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        for (const id of ALL_IDS) expectPayload(devices, id, null)
+
+        // Forced delegation #1 (movie paused at ~03:00): restore fires via its own window...
+        onceStore.clear()
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+
+        // ...and forced delegation #2 shortly after still restores again -- forced runs neither
+        // check nor write markers, so repeated pauses keep working all night long.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+    } finally {
+        cacheProto.get = origGet
+        cacheProto.set = origSet
+    }
+}
 
 // Flat per-rule "action" fallback (regression: old configs used flat action values)
 {

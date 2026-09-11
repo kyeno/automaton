@@ -1,6 +1,6 @@
 # Ambient Lights
 
-The **Ambient lights** automation manages ambient lighting across two daily windows: during morning hours it turns off any leftover lights once natural light becomes sufficient, and when dusk settles it switches on socket-powered ambient lamps. Each rule acts **at most once per day** (`once: true`) — after firing, it stands down so humans have full control until the next window opens.
+The **Ambient lights** automation manages ambient lighting in three behaviors: during morning hours it turns off any leftover lights once natural light becomes sufficient; when dusk settles (the `evening` period) it switches on socket-powered ambient lamps; and a separate **late-night restore** rule answers Home Theater Mode's pause/stop hand-off for movies watched past midnight without ever firing on its own. Autonomous rules act **at most once per calendar day per time window** (`once: true`), so an early firing never blocks a later darkness window; within a given window they stand down after firing so humans keep full control.
 
 ## How It Works
 
@@ -8,7 +8,8 @@ The **Ambient lights** automation manages ambient lighting across two daily wind
 2. Rules are evaluated against that context:
    - *Bright morning* fires in the `morning` period when illuminance ≥ 20 lx and commands **OFF** for every listed target — including wall switches driving main room lights, so nothing stays lit once daylight arrives.
    - *Settled dusk* fires in the `evening` period once illuminance drops below the dusk threshold and commands **ON** only for the socket-powered lamps.
-3. Once commands are dispatched — or every targeted device was deferred due to recent human interaction — the rule consumes its daily slot by writing a marker to Redis (`auto:<automation>:once:<rule-slug>`, storing the local calendar day) and stays quiet for the rest of that day. If nothing happened at all, later ticks keep retrying until conditions hold.
+    - *Late-night restore* is marked `forced_only`: only forced/delegated runs evaluate it, so a movie paused at 03:00 still gets these lamps back via the room's home-theater hand-off, while pre-dawn timer ticks never switch anything on uninvited.
+3. Once commands are dispatched — or every targeted device was deferred due to recent human interaction — the rule consumes that window's slot by writing a marker to Redis (key `auto:<automation>:once:<rule-slug>` -- suffixed with the active period as `<...>:<period>`, because this rule declares a `time-of-day` condition, giving every listed window its own daily budget), storing the local calendar day, and stays quiet for the rest of that window. If nothing happened at all, later ticks keep retrying until conditions hold.
 
 ## Asymmetric Target Sets
 
@@ -18,6 +19,7 @@ Each rule carries its own per-target command map, so the ON and OFF sets can dif
 |------|------------|-------------------|
 | Bright morning → `OFF` | `time-of-day: [morning]`, `illuminance: { gte: 20 }` | Every target in that rule (sockets and wall switches) |
 | Settled dusk → `ON` | `time-of-day: [evening]`, `illuminance: { lt: <threshold> }` | Only the socket-powered lamps |
+| | Late-night restore → `ON` | `time-of-day: [night]`, `illuminance: { lt: <threshold> }`, **`forced_only: true`** | Same sockets -- but only when delegated by a home-theater automation (pause/stop/gone); natural ticks skip it entirely |
 
 There is no top-level declaration section: each rule's `targets:` map addresses devices directly by their derived **target key** -- the registered friendly name trimmed with whitespace collapsed to underscores, casing preserved (`Kitchen Outlet` -> `Kitchen_Outlet`). Keys are validated against the live device container at startup: unknown keys or non-actuator resolutions warn and stay inert; an automation whose declared targets all fail validation fails fast instead of running silently inert. Simple automations may instead use a single flat `action:` field applied uniformly to every resolved device.
 
@@ -42,6 +44,22 @@ rules:
       illuminance: { gte: 20 }
     targets:                    # Per-target actions (key = registered device name, spaces -> _)
       Kitchen_Outlet: OFF
+      ...
+  - name: 'Settled dusk - turn on ambient lamps'
+    once: true                  # One autonomous firing per calendar day in its window
+    conditions:
+      time-of-day: [evening]
+      illuminance: { lt: 900 }
+    targets:
+      Kitchen_Outlet: ON
+      ...
+  - name: 'Late-night restore - turn on ambient lamps'
+    forced_only: true           # Acts ONLY on forced/delegated runs -- answers late-night movie pause hand-offs; never fires on its own
+    conditions:
+      time-of-day: [night]
+      illuminance: { lt: 900 }
+    targets:
+      Kitchen_Outlet: ON
       ...
 ```
 

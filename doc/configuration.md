@@ -275,7 +275,8 @@ video_player_suppression:       # Optional: stand-down guard -- suppress all rul
 
 rules:
   - name: 'Human-readable rule name'
-    once: true                          # Optional: act at most once per calendar day
+    once: true                          # Optional: act at most once per calendar day (per time-window for rules with a time-of-day condition)
+    forced_only: true                   # Optional: participate only in forced/delegated runs (e.g., delegated light restore); natural ticks skip it entirely
     conditions:
       time-of-day: [morning, noon]     # Day period(s)
       season: [winter]                 # Season(s), optional -- spring/summer/autumn/winter
@@ -385,7 +386,11 @@ rules:
 
 ### Daily Once Markers (`once`)
 
-Adding `once: true` to a rule makes it act **at most once per local calendar day**. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a daily marker in Redis and stands down for the rest of that day; humans then have full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. The marker self-resets each day; storage failures fail open.
+Adding `once: true` to a rule makes it act **at most once per local calendar day -- per time window when the rule declares a `time-of-day` condition**. A rule covering several periods (e.g. `[evening, night]`) therefore gets one slot in EACH listed window: an early pre-dawn firing consumes only that window's budget and never blocks actual dusk, while re-firing inside the same window stays blocked. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a marker in Redis (`auto:<name>:once:<rule slug>`, suffixed with the active period as `<...>:<period>` for window-scoped rules) storing the local calendar day, and stands down for the rest of that window; humans then keep full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. Markers self-reset each day; storage failures fail open.
+
+### Invoke-Only Rules (`forced_only`)
+
+Adding `forced_only: true` to a rule makes it participate **only in forced or delegated runs** -- `/automation force <n>` or another automation's forced `invoke_automation`. Natural timer/sensor ticks skip such rules entirely, even when their conditions hold and no once-marker is set. This is how the ambient-lights late-night restore works: its `[night]` window answers home-theater pause hand-offs for movies watched past midnight without ever switching lamps on uninvited at pre-dawn darkness. Because forced runs neither check nor write once-markers, an invoke-only rule can re-fire on every delegation -- each pause restores the lights again.
 
 ### Season Conditions
 

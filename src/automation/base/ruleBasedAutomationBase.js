@@ -392,6 +392,15 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             // Stand-down guard active: only rules that opted out participate.
             if (suppressionActive && rule.ignore_video_player_suppression !== true) continue
 
+            // Invoke-only rules (forced_only): respond solely to forced/delegated runs -- e.g.,
+            // late-night light restore handed over by a room's home-theater automation on pause.
+            // Natural timer/sensor ticks skip them entirely so they can never fire uninvited in
+            // windows we deliberately keep free of autonomous action.
+            if (rule.forced_only === true && !forced) {
+                this.log(`Rule "${rule.name}" is invoke-only and this is a natural run, skipping`, 'debug')
+                continue
+            }
+
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
                 if (!match) continue
@@ -400,8 +409,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 // A forced run bypasses this check entirely and also skips writing the
                 // marker afterwards, so it can re-fire an already-consumed rule without
                 // consuming anyone else's once-per-day budget.
-                if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule)) {
-                    this.log(`Rule "${rule.name}" already acted today, skipping`, 'debug')
+                if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule, context.timeOfDay)) {
+                    const scope = rule.conditions?.['time-of-day'] ? ` during ${context.timeOfDay}` : ''
+                    this.log(`Rule "${rule.name}" already acted today${scope}, skipping`, 'debug')
                     continue
                 }
 
@@ -468,7 +478,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         if ((dispatchedCount > 0 || humanSkippedCount > 0 || invokedCount > 0) && triggerData?.force !== true) {
             for (const rule of matchingRules) {
                 if (rule.once) {
-                    await this.#markActedToday(rule)
+                    await this.#markActedToday(rule, context.timeOfDay)
                 }
             }
         }
@@ -776,20 +786,40 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     // -----------------------------------------------------------------------
 
     /**
-     * Check whether an `once` rule has already consumed today's action slot.
-     * Reads the daily marker from Redis (`auto:<name>:once:<rule slug>`); the stored
-     * calendar day is compared against the current local date, so markers self-reset
-     * each day without cleanup logic. Fails open when Redis is unavailable or the
-     * entry cannot be parsed -- consistent with checkAndLogHumanInteraction().
+     * Build the Redis key for a rule's daily "once" marker. Rules that declare a
+     * `time-of-day` condition get one slot per calendar day PER WINDOW -- suffixed with
+     * the period active at evaluation time -- so e.g. an [evening, night] dusk rule can
+     * act once in pre-dawn AND once at actual dusk instead of its first firing consuming
+     * both windows' budgets. Rules without such a condition keep the single plain-key
+     * slot per calendar day (unchanged behaviour).
+     * @private
+     * @param {Object} rule - Rule object carrying an `once: true` flag
+     * @param {string|null} period - Context time-of-day period ('morning' ... 'night')
+     * @returns {string} Redis key for the marker
+     */
+    #onceMarkerKey(rule, period) {
+        const base = `auto:${this.name}:once:${slugify(rule.name)}`
+        const declaresWindow = Boolean(rule.conditions?.['time-of-day'])
+        return declaresWindow && typeof period === 'string' && period !== '' ? `${base}:${period}` : base
+    }
+
+    /**
+     * Check whether an `once` rule has already consumed its action slot today -- either
+     * that window's slot on this calendar day when the rule declares a `time-of-day`
+     * condition, or its single daily slot otherwise. Reads the marker from Redis
+     * (`auto:<name>:once:<rule slug>[:<period>]`); the stored calendar day is compared
+     * against the current local date, so markers self-reset each day without cleanup
+     * logic. Fails open when Redis is unavailable or the entry cannot be parsed --
+     * consistent with checkAndLogHumanInteraction().
      * 
      * @private
      * @param {Object} rule - Rule object carrying an `once: true` flag
-     * @returns {Promise<boolean>} true if this rule already acted today
+     * @param {string|null} [period] - Context time-of-day period; scopes the lookup per window
+     * @returns {Promise<boolean>} true if this rule already acted in this window today
      */
-    async #hasActedToday(rule) {
+    async #hasActedToday(rule, period) {
         try {
-            const key = `auto:${this.name}:once:${slugify(rule.name)}`
-            const stored = await CacheService.get(key)
+            const stored = await CacheService.get(this.#onceMarkerKey(rule, period))
             return Boolean(stored && stored.date === temporal.getLocalDayString())
         } catch (_) {
             // Redis unavailable / parse issue -- allow the automation to proceed.
@@ -798,20 +828,21 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /**
-     * Consume an `once` rule's daily action slot by writing its marker to Redis.
-     * Called after dispatch completes (commands sent and/or devices deferred to recent
-     * human interaction). Failures are logged but never fatal -- worst case the rule may
-     * act again on a later tick of the same day.
+     * Consume an `once` rule's action slot for this window by writing its marker to
+     * Redis (window-scoped key when the rule declares a `time-of-day` condition). Called
+     * after dispatch completes (commands sent and/or devices deferred to recent human
+     * interaction). Failures are logged but never fatal -- worst case the rule may act
+     * again on a later tick of the same day.
      * 
      * @private
      * @param {Object} rule - Rule object carrying an `once: true` flag
+     * @param {string|null} [period] - Context time-of-day period; scopes the write per window
      * @returns {Promise<void>}
      */
-    async #markActedToday(rule) {
+    async #markActedToday(rule, period) {
         try {
-            const key = `auto:${this.name}:once:${slugify(rule.name)}`
             const ok = await CacheService.set(
-                key,
+                this.#onceMarkerKey(rule, period),
                 { date: temporal.getLocalDayString(), at: Date.now() },
                 ONCE_MARKER_TTL_SECONDS
             )
@@ -822,7 +853,6 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             this.log(`Error storing once-marker for rule "${rule.name}": ${error.message}`, 'warn')
         }
     }
-
     /**
      * Check if a numeric value satisfies range bounds defined in config.
      * Supports: lt, lte, gt, gte

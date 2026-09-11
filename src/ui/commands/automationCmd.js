@@ -234,6 +234,7 @@ class AutomationCmd extends CommandBase {
             const summary = AutomationCmd.formatConditionSummary(rule.conditions)
             if (summary !== '') detail += ` -- ${summary}`
             if (rule.once) detail += ' [once/day]'
+            if (rule.forced_only === true) detail += ' [invoke-only]'
             props.push([`rule ${i + 1}`, detail])
         }
 

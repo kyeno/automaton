@@ -1,8 +1,12 @@
 # Ambient Lights Automation Configuration
 # Morning: turns off leftover lights once natural light becomes sufficient.
-# Evening/night: turns on ambient lamps (socket-powered) once it gets dark enough.
-# Each rule acts at most once per day ("once: true"), then stands down until
-# the next window opens -- humans keep full control of the lights in between.
+# Evening: turns on ambient lamps (socket-powered) once dusk settles.
+# Each autonomous rule acts at most once per calendar day PER TIME WINDOW ("once: true"),
+# so an early firing never eats the budget of a later darkness window on the same day.
+# Humans keep full control within a window after it fires.
+# Late night (pre-dawn): the restore rule is invoke-only (forced_only) -- it answers forced
+# delegations (e.g., a home-theater pause hand-off for late-night movies) but never fires
+# on its own, so no unannounced midnight lights-on.
 #
 # Copy this file to "ambient-lights.yaml" and customize device names/thresholds.
 
@@ -35,10 +39,23 @@ rules:
       Hallway_Outlet: OFF
       Living_Room_Switch: OFF
 
-  - name: 'Settled dusk / night - turn on ambient lamps'
+  - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:
-      time-of-day: [evening, night]
+      time-of-day: [evening]
+      illuminance: { lt: 900 }
+    targets:
+      Kitchen_Outlet: ON
+      Hallway_Outlet: ON
+
+  # Invoke-only (forced_only): acts solely when another automation delegates to this one
+  # with force: true -- e.g., restoring these lamps after a late-night movie is paused.
+  # Natural timer/sensor ticks skip it entirely, so pre-dawn darkness alone never switches
+  # anything on. Remove the flag if you DO want autonomous pre-dawn lighting too.
+  - name: 'Late-night restore - turn on ambient lamps'
+    forced_only: true
+    conditions:
+      time-of-day: [night]
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON
