@@ -7,6 +7,12 @@
  *                             (name, status, type, timer interval, triggers, rules)
  *   /automation debug <n>    Render one automation like list, plus silence window,
  *                             per-rule condition summaries, or config keys
+ *   /automation coverage <n> Static timing-gap analysis: sweeps every hour x sensor/presence
+ *                             scenario of that automation's rules and reports which rules can
+ *                             fire at each hour, unmatched gap cells, overlaps and winners
+ *   /automation coverage <n> legacy
+ *                             Also diffs against the pre-c1e8c6f sun-derived day periods so
+ *                             you can see how each shifted hour's behavior changed
  *   /automation run <n>      Call that automation's execute() now; the log shows
  *                             "Triggered by: manual" under its Auto:<name> context
  *   /automation force <n>    Same as run but bypasses the silent period and any
@@ -29,6 +35,7 @@
 
 import CommandBase from './base/commandBase.js'
 import temporal from '../../lib/date.js'
+import * as ruleCoverage from '../../lib/ruleCoverage.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -138,6 +145,9 @@ class AutomationCmd extends CommandBase {
             case 'debug':
                 this.#handleDebug(container, rest)
                 break
+            case 'coverage':
+                this.#handleCoverage(container, rest)
+                break
             case 'run':
                 await this.#handleRun(container, rest)
                 break
@@ -163,6 +173,10 @@ class AutomationCmd extends CommandBase {
             '',
             '  list             List all loaded automations',
             '  debug <name>     Show detailed info for one automation',
+            '  coverage <name>  Static timing-gap analysis: which rules can fire at each hour,',
+            '                   plus unmatched gap cells and overlaps across sensor/presence scenarios',
+            '  coverage <name> legacy',
+            '                   As coverage, but also diff against the pre-c1e8c6f sun-derived day periods',
             '  run <name>       Manually trigger an automation now',
             '  force <name>     Trigger now even during its silent period or after a',
             '                   once/day marker fired (human-interaction cooldowns kept)',
@@ -319,25 +333,218 @@ class AutomationCmd extends CommandBase {
         return { name: rawName.trim(), forceFirst: false }
     }
 
+    /**
+     * Parse a coverage payload into { name, legacy } -- a trailing "legacy" token is treated as
+     * the diff modifier rather than part of the automation name, mirroring the force/first pattern.
+     * @private
+     * @param {string} rawName - Raw argument string after the "coverage" verb.
+     * @returns {{name: string, legacy: boolean}} Resolved automation name and whether legacy diffing was requested.
+     */
+    #parseCoverageArgs(rawName) {
+        const tokens = rawName.trim().split(/\s+/).filter(Boolean)
+        if (tokens.length > 0 && tokens[tokens.length - 1].toLowerCase() === 'legacy') {
+            return { name: tokens.slice(0, -1).join(' '), legacy: true }
+        }
+        return { name: rawName.trim(), legacy: false }
+    }
+
+    /**
+     * Dispatch the static timing-gap analysis for one automation and print the report through the
+     * preformatted path so aligned columns survive terminal wrapping. Purely read-only: no rule is
+     * executed and no device state is touched; live-state conditions are noted in the header.
+     * @private
+     * @param {Object|null} container - AutomationContainer from context (may be null when absent).
+     * @param {string} rawName - Raw argument string after the "coverage" verb.
+     */
+    #handleCoverage(container, rawName) {
+        const { name, legacy } = this.#parseCoverageArgs(rawName)
+        const automation = this.#findAutomation(container, name)
+        if (!automation) {
+            this.ctx.print(name ? `Unknown automation "${name}"` : 'Missing automation name')
+            this.#printAvailableNames(container)
+            return
+        }
+        const rules = Array.isArray(automation.config?.rules) ? automation.config.rules : []
+        if (rules.length === 0) {
+            this.ctx.print(`"${automation.name ?? name}" defines no rules to analyze`)
+            return
+        }
+
+        const built = ruleCoverage.buildScenarios(rules)
+        const currentMap = ruleCoverage.currentHourToPeriod()
+        const report = ruleCoverage.analyzeRules({ rules, periodMap: currentMap, scenarios: built.scenarios })
+
+        const lines = [...this.#renderCoverageReport(automation, rules, built, report)]
+        if (legacy) {
+            lines.push('', ...this.#renderLegacyDiff(rules, built, report, currentMap))
+        }
+        this.printPreformatted(lines.join('\n'))
+    }
+
     // -- Tab completion -----------------------------------------------------
 
     /**
      * Tab-completion candidates for /automation arguments. The first token offers the known
-     * subcommands; once "run", "debug" or "force" has been typed, registered automation names are offered
-     * so "/automation run TtsWea<Tab>" completes without consulting the list view first. For
-     * "force", once a name token is present the next token offers the optional "first" modifier.
+     * subcommands; once "run", "debug", "coverage" or "force" has been typed, registered automation
+     * names are offered so "/automation run TtsWea<Tab>" completes without consulting the list view
+     * first. For "force"/"coverage", once a name token is present the next token offers the optional
+     * trailing modifier ("first" / "legacy").
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
      * @returns {Array<string>|null} Candidates for the next token, or null when none apply
      */
     completeNextToken(typedTokens) {
-        if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'run', 'force']
+        if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'coverage', 'run', 'force']
         const sub = String(typedTokens[0]).toLowerCase()
-        if (sub !== 'run' && sub !== 'debug' && sub !== 'force') return null
-        // "force <name> <Tab>" -> the name is already typed, so offer the optional "first" modifier.
-        if (sub === 'force' && typedTokens.length >= 2) return ['first']
+        if (sub !== 'run' && sub !== 'debug' && sub !== 'coverage' && sub !== 'force') return null
+        // "<verb> <name> <Tab>" -> the name is already typed; only verbs with a trailing modifier offer one.
+        if (typedTokens.length >= 2) {
+            if (sub === 'force') return ['first']
+            if (sub === 'coverage') return ['legacy']
+            return null
+        }
         const container = this.ctx.automationContainer
         if (container && typeof container.getNames === 'function') return container.getNames()
         return null
+    }
+
+    /**
+     * Map a rule's display name to its "R#" reference in the printed index list so timeline and
+     * diff rows stay compact while remaining unambiguous.
+     * @private
+     * @param {Array<object>} rules - Rules under analysis (index order).
+     * @returns {Map<string, string>} Rule name to R-reference label.
+     */
+    #ruleRefs(rules) {
+        const map = new Map()
+        rules.forEach((r, i) => {
+            const n = String(r?.name ?? `(unnamed ${i + 1})`)
+            if (!map.has(n)) map.set(n, `R${i + 1}`)
+        })
+        return map
+    }
+
+    /**
+     * Render flags worth surfacing next to a rule name: once-per-day budget, invoke-only mode, priority.
+     * @private
+     * @param {object} rule - A single YAML rule object.
+     * @returns {string} Space-joined flag labels or empty string when none apply.
+     */
+    #ruleFlags(rule) {
+        const parts = []
+        if (rule?.once === true) parts.push('[once/day]')
+        if (rule?.forced_only === true) parts.push('[invoke-only]')
+        if (typeof rule?.priority === 'number' && rule.priority !== 0) parts.push(`[p=${rule.priority}]`)
+        return parts.join(' ')
+    }
+
+    /**
+     * Build the main coverage report lines: header with sweep dimensions, the R-indexed rule list,
+     * an hour timeline grouped by identical match/gap profile, then gap cells and overlap examples.
+     * @private
+     * @param {Object} automation - Resolved automation instance (for its display name).
+     * @param {Array<object>} rules - Rules under analysis.
+     * @param {{meta: Object}} built - buildScenarios() result providing grid metadata.
+     * @param {Object} report - analyzeRules() result for the current period map.
+     * @returns {string[]} Report lines ready to join and print.
+     */
+    #renderCoverageReport(automation, rules, built, report) {
+        const L = []
+        const sensorDesc = built.meta.sensorKeys.length > 0
+            ? built.meta.sensorKeys.map((k) => `${k}(${built.meta.pointsBySensor[k].length})`).join(', ')
+            : 'none'
+        const presenceDesc = built.meta.presenceHosts.length > 0 ? ` · presence hosts: ${built.meta.presenceHosts.join(', ')}` : ''
+        L.push(`Coverage analysis: ${automation.name ?? '(unnamed)'}`)
+        L.push(`${report.meta.ruleCount} rules · sensors: ${sensorDesc}${presenceDesc} · ${report.meta.scenarioCount} scenario(s)/hour${built.meta.truncated ? ' [grid truncated]' : ''}`)
+        L.push(report.meta.note)
+
+        // Rule index list with behavioral flags so timeline references stay short but unambiguous.
+        const refs = this.#ruleRefs(rules)
+        L.push('rules:')
+        rules.forEach((r, i) => {
+            const n = String(r?.name ?? `(unnamed ${i + 1})`)
+            const flags = this.#ruleFlags(r)
+            L.push(`  R${i + 1} "${n}"${flags ? ' ' + flags : ''}`)
+        })
+
+        // Timeline -- group consecutive hours sharing the same match/gap profile for compactness.
+        L.push('timeline (union of rules able to fire at each hour; G k/N = gap in k scenarios):')
+        const groups = []
+        for (const h of report.hours) {
+            const key = JSON.stringify([h.matchedRules, h.gapCount])
+            const last = groups[groups.length - 1]
+            if (last && last.key === key && last.endHour === h.hour - 1) {
+                last.endHour = h.hour
+            } else {
+                groups.push({ startHour: h.hour, endHour: h.hour, key, sample: h })
+            }
+        }
+        for (const g of groups) {
+            const pad2 = (v) => String(v).padStart(2, '0')
+            const range = g.startHour === g.endHour ? pad2(g.startHour) : `${pad2(g.startHour)}-${pad2(g.endHour)}`
+            const periods = [...new Set(report.hours.slice(g.startHour, g.endHour + 1).map((h) => h.period))].join('/')
+            const ruleList = g.sample.matchedRules.map((n) => refs.get(n)).filter(Boolean).join(',') || '-'
+            const gapNote = g.sample.gapCount > 0 ? `   G ${g.sample.gapCount}/${g.sample.totalScenarios}` : ''
+            L.push(`  ${range}  ${periods.padEnd(16)}${ruleList}${gapNote}`)
+        }
+
+        // Gap cells -- the actionable part: hour/scenario combinations no rule can serve.
+        if (report.summary.gapCells > 0) {
+            L.push(`GAPS -- ${report.summary.gapCells} of ${report.summary.totalCells} cells unmatched:`)
+            for (const g of report.gaps.slice(0, 12)) {
+                L.push(`  h=${String(g.hour).padStart(2, '0')} (${g.period}) ${g.label}`)
+            }
+            if (report.gaps.length > 12) L.push(`  ... and ${report.gaps.length - 12} more`)
+        } else {
+            L.push('GAPS -- none: every hour/scenario combination matches at least one rule')
+        }
+
+        // Overlaps -- where several rules compete; note who wins by priority so intent is explicit.
+        if (report.overlaps.count > 0) {
+            L.push(`OVERLAPS -- ${report.overlaps.count} cells with multiple matching rules (winner by priority):`)
+            for (const ex of report.overlaps.examples.slice(0, 4)) {
+                const others = ex.names.filter((n) => n !== ex.winnerName).length
+                L.push(`  h=${String(ex.hour).padStart(2, '0')} (${ex.period}) ${ex.label} -> "${ex.winnerName}" wins over ${others} other(s)`)
+            }
+            if (report.overlaps.examples.length > 4) L.push(`  ... and ${report.overlaps.count - 4} more overlapping cell(s)`)
+        }
+
+        L.push(`coverage: ${report.summary.coveragePct}% of cells covered`)
+        return L
+    }
+
+    /**
+     * Render the legacy-diff section: for January (winter worst case) and June (summer), list each
+     * shifted hour whose set of matchable rules changed versus today's fixed partition, naming what
+     * was lost and gained. This surfaces exactly how c1e8c6f moved behavior on existing rules.
+     * @private
+     * @param {Array<object>} rules - Rules under analysis.
+     * @param {{scenarios: Array<Object>}} built - Shared scenario grid so both maps are swept identically.
+     * @param {Object} currentReport - analyzeRules() result for the current period map.
+     * @param {Array<string>} currentMap - Current hour-to-period mapping.
+     * @returns {string[]} Diff lines ready to join and print.
+     */
+    #renderLegacyDiff(rules, built, currentReport, currentMap) {
+        const L = ['-- Legacy diff vs pre-c1e8c6f sun-derived periods --']
+        const refs = this.#ruleRefs(rules)
+        const nowSet = ruleCoverage.matchedNamesByHour(currentReport)
+        const fmtList = (names) => names.length === 0 ? '-' : names.slice(0, 3).map((n) => `${refs.get(n) ?? n}`).join(',') + (names.length > 3 ? ` (+${names.length - 3})` : '')
+
+        for (const [label, month] of [['January (winter worst case)', 0], ['June (summer)', 5]]) {
+            const legacyMap = ruleCoverage.buildLegacyHourMap(month)
+            const legacyRep = ruleCoverage.analyzeRules({ rules, periodMap: legacyMap, scenarios: built.scenarios })
+            const thenSet = ruleCoverage.matchedNamesByHour(legacyRep)
+            const rows = []
+            for (let h = 0; h < 24; h++) {
+                if (currentMap[h] === legacyMap[h]) continue
+                const lost = [...thenSet.get(h)].filter((n) => !nowSet.get(h)?.has(n))
+                const gained = [...nowSet.get(h)].filter((n) => !thenSet.get(h)?.has(n))
+                if (lost.length === 0 && gained.length === 0) continue
+                rows.push(`  h=${String(h).padStart(2, '0')} ${legacyMap[h]} -> ${currentMap[h]}   lost: ${fmtList(lost)}   gained: ${fmtList(gained)}`)
+            }
+            L.push(`${label}:`)
+            L.push(rows.length > 0 ? rows.join('\n') : '  no rule-set differences on shifted hours')
+        }
+        return L
     }
 
     // -- Shared helpers -------------------------------------------------------

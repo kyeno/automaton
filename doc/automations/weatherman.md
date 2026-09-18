@@ -107,17 +107,7 @@ rules:
 
 ### Time-of-Day Periods
 
-The `time-of-day` condition matches against five **fixed** periods (`DAY_PERIODS` in `src/lib/date.js`) that are identical year-round — round-clock boundaries instead of sun-derived ones, so rules behave predictably across seasons and *evening* never begins before 19:00:
-
-| Period    | Hours   |
-|-----------|---------|
-| morning   | 06–09   |
-| noon      | 10–13   |
-| afternoon | 14–18   |
-| evening   | 19–23   |
-| night     | 00–05   |
-
-Matching is hour-granular — every hour maps to exactly one period, no gaps or overlaps. Because the zones are clock-based rather than daylight-based, a warm late-afternoon now matches `[morning, noon, afternoon]` until 18:59 even in summer, while star-sky talk waits for real deep night (`[night]`, midnight onward) all year. When designing rules, check this table first — "Warm day" above is a classic example of a rule that silently stops matching once evening begins at 19:00.
+The `time-of-day` condition matches five fixed clock-based periods identical year-round (night 00–04, morning 05–10, noon 11–12, afternoon 13–17, evening 18–23); matching is hour-granular with no gaps or overlaps. Because the zones are clock-based rather than daylight-based, a warm late-afternoon now matches `[morning, noon, afternoon]` until 17:59 even in summer, while star-sky talk waits for real deep night (`[night]`, midnight through pre-dawn) all year — and rules written before commit `c1e8c6f` may have silently lost hours they used to cover ("Warm day" above stops matching once evening begins at 18:00). Full rationale, old-vs-new boundary comparison and impact analysis live in [Time-of-Day Periods](../architecture/time-of-day-periods.md); run `/automation coverage <name> legacy` to diff any automation against both schemes.
 
 ## TTS Server Passthrough Options
 

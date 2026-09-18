@@ -155,14 +155,16 @@ console.log('\n\u2500\u2500 CommandBase default \u2500\u2500\n')
 console.log('\n\u2500\u2500 Real command overrides \u2500\u2500\n')
 
 {
-    // AutomationCmd: subcommands first, then registered automation names after run/debug/force
+    // AutomationCmd: subcommands first, then registered automation names after run/debug/coverage/force
     const container = { getNames: () => ['bedroomRollersAutomation', 'ttsWeatherManAutomation'] }
     const cmd = new AutomationCmd({ print() {}, automationContainer: container })
-    assertArrayEqual(cmd.completeNextToken([]), ['list', 'debug', 'run', 'force'], '/automation<Tab> lists its subcommands')
+    assertArrayEqual(cmd.completeNextToken([]), ['list', 'debug', 'coverage', 'run', 'force'], '/automation<Tab> lists its subcommands')
     assertArrayEqual(cmd.completeNextToken(['run']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation run <TAB> offers automation names from the container hook')
     assertArrayEqual(cmd.completeNextToken(['debug']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation debug <TAB> offers the same name pool')
     assertArrayEqual(cmd.completeNextToken(['force']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation force <TAB> offers the same name pool as run')
+    assertArrayEqual(cmd.completeNextToken(['coverage']), ['bedroomRollersAutomation', 'ttsWeatherManAutomation'], '/automation coverage <TAB> offers the same name pool')
     assertArrayEqual(cmd.completeNextToken(['force', 'ttsWeatherManAutomation']), ['first'], '/automation force <name> <TAB> offers the "first" modifier once a name is typed')
+    assertArrayEqual(cmd.completeNextToken(['coverage', 'ttsWeatherManAutomation']), ['legacy'], '/automation coverage <name> <TAB> offers the "legacy" modifier once a name is typed')
     assertEqual(cmd.completeNextToken(['bogus']), null, 'unknown subcommand position offers nothing')
     assertEqual(new AutomationCmd({ print() {} }).completeNextToken(['run']), null, 'missing container degrades to no completion instead of throwing')
 }

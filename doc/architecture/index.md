@@ -1,6 +1,6 @@
 # Architecture
 
-> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md) · [Rule Engine Restore & Ownership](./rule-engine-restore-semantics.md) · [Weatherman Speech Rendering](./weatherman-speech-rendering.md)
+> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md) · [Rule Engine Restore & Ownership](./rule-engine-restore-semantics.md) · [Time-of-Day Periods](./time-of-day-periods.md) · [Weatherman Speech Rendering](./weatherman-speech-rendering.md)
 
 ## Project Structure
 
@@ -17,6 +17,7 @@
 │   │   ├── ai-conversation-caching.md  # AI conversation persistence & caching behavior
 │   │   ├── automation-human-differentiation.md # Automation vs human origin classification
 │   │   ├── rule-engine-restore-semantics.md # Snapshots, ownership, no-op suppression
+│   │   ├── time-of-day-periods.md # Fixed day periods, c1e8c6f history, coverage tooling
 │   │   └── weatherman-speech-rendering.md # Clock phrases, day markers, date fusion
 │   ├── installation/           # Setup guides
 │   │   ├── index.md            # Requirements, install steps, running modes

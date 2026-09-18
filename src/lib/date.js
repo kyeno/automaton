@@ -2,8 +2,8 @@
  * Temporal utilities for time-of-day and season detection.
  *
  * Day periods (morning, noon, afternoon, evening, night) use fixed round-clock
- * boundaries identical year-round ({@link DAY_PERIODS}): morning starts at 06:00,
- * evening runs 19:00-23:59 so it never begins before 7pm, and night covers only true
+ * boundaries identical year-round ({@link DAY_PERIODS}): morning starts at 05:00,
+ * evening runs 18:00-23:59 so it never begins before 6pm, and night covers only true
  * deep night (midnight through pre-dawn). Clock-based zones keep rule behavior
  * predictable across seasons instead of tracking sunrise/sunset.
  * Every hour 0-23 maps to exactly one period -- no gaps, no overlaps.
@@ -15,8 +15,8 @@
  * - **Duration formatters**: `millisecondsToHumanReadable()`,
  *   `secondsToHumanReadable()`, `msToHuman()`, `msToHumanPhrase()`
  * - **Duration parsing**: `humanToMs()`, `parseDurationMs()`
- * - **Convenience**: `getCurrentTimePeriod()`, `getCurrentSeason()`,
- *   `getLocalDayString()`, `formatClockTime()`
+ * - **Convenience**: `getCurrentTimePeriod()`, `getHourToPeriodMap()`,
+ *   `getCurrentSeason()`, `getLocalDayString()`, `formatClockTime()`
  * - **Date i18n**: `loadDateBundle()`, `getDateParts()`, `getPeriodWords()`,
  *   `getDurationUnits()` -- the module owns the per-locale `date.yaml` bundle
  *   (day/month names, period words, duration units) that speech automations
@@ -74,28 +74,28 @@ const SEASONS = {
  * Fixed day-period partition of hours 0-23 -- identical every month of the year.
  *
  * Round-clock boundaries were chosen deliberately instead of tracking sunrise/sunset:
- * "evening" never starts before 19:00 and stays long (19:00-23:59), while "night"
- * covers only true deep night (midnight through pre-dawn). Morning begins at 06:00
- * regardless of actual dawn time. The five ranges form a continuous partition:
- * each period's `from` equals the previous period's `to + 1`, so no hour falls
- * through a gap or matches two periods.
+ * "evening" runs 18:00-23:59 so it never begins before 6pm, while "night" covers only
+ * true deep night (midnight through pre-dawn). Morning begins at 05:00 regardless of
+ * actual dawn time. The five ranges form a continuous partition: each period's `from`
+ * equals the previous period's `to + 1`, so no hour falls through a gap or matches two
+ * periods.
  *
  * | Period    | Hours   |
  * |-----------|---------|
- * | morning   | 06-09   |
- * | noon      | 10-13   |
- * | afternoon | 14-18   |
- * | evening   | 19-23   |
- * | night     | 00-05   |
+ * | morning   | 05-10   |
+ * | noon      | 11-12   |
+ * | afternoon | 13-17   |
+ * | evening   | 18-23   |
+ * | night     | 00-04   |
  *
  * @type {Record<string, [number, number]>}
  */
 const DAY_PERIODS = Object.freeze({
-    morning:   [6, 9],
-    noon:      [10, 13],
-    afternoon: [14, 18],
-    evening:   [19, 23],
-    night:     [0, 5],
+    morning:   [5, 10],
+    noon:      [11, 12],
+    afternoon: [13, 17],
+    evening:   [18, 23],
+    night:     [0, 4],
 })
 
 // ---------------------------------------------------------------------------
@@ -481,6 +481,22 @@ class STemporal {
         if (this.isEvening(date)) return 'evening'
         if (this.isNight(date)) return 'night'
         return null
+    }
+
+    /**
+     * Build the full 24-entry hour-to-period lookup table for {@link DAY_PERIODS}.
+     *
+     * Index i holds the period name active during clock hour i, so consumers can map
+     * any hour of the day without instantiating per-hour Dates themselves. Because the
+     * partition is fixed round-clock boundaries, the result is identical year-round --
+     * this stays the single source of truth for rule coverage analysis
+     * ({@link lib/ruleCoverage}) and similar tooling instead of duplicating the table.
+     *
+     * @returns {Array<string>} 24-element array; index = hour (0-23), value = period name.
+     */
+    getHourToPeriodMap() {
+        const reference = new Date(2026, 8 /* September */, 15) // arbitrary date; zones are clock-based
+        return Array.from({ length: 24 }, (_, h) => this.getCurrentTimePeriod(new Date(reference.getFullYear(), reference.getMonth(), reference.getDate(), h)))
     }
 
     /**

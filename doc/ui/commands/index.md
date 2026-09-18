@@ -14,7 +14,7 @@ The Automaton terminal UI supports slash commands typed into the input bar at th
 | `/pgdn` | Scroll page down (forward to live tail) |
 | `/status` | Dump StateService contents |
 | `/config [arg]` | Inspect the main config & apply live overrides: `debug` dumps it in full, `set <path> <value...>` targets the main section, `reload` re-reads files from disk (bare invocation shows usage) |
-| `/automation [arg]` | Manage automations: `list`, `debug <name>`, `run <name>`, `force <name> [first]` (bare invocation shows usage) |
+| `/automation [arg]` | Manage automations: `list`, `debug <name>`, `coverage <name> [legacy]` (static timing-gap analysis), `run <name>`, `force <name> [first]` (bare invocation shows usage) |
 | `/interaction [arg]` | Manage interactions: `list`, `debug <name>`, `run <name> [actionType]` (bare invocation shows usage) |
 | `/device [arg]` | List & inspect Zigbee + network devices: bare counts/help, `list [zigbee\|network]`, `debug <name>` cross-registry lookup |
 | `/quit` (`/exit`, `/q`) | Exit Automaton |

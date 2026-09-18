@@ -11,6 +11,7 @@ Design decisions and internal mechanics.
 - [Architecture Overview](architecture/index.md) — project structure, core concepts, CLI usage, testing
 - [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) — command provenance, token-based classification, cooldowns
 - [AI Conversation Caching](architecture/ai-conversation-caching.md) — conversation persistence, TTL, system-message filtering
+- [Time-of-Day Periods](architecture/time-of-day-periods.md) — fixed day-period partition, pre/post-c1e8c6f comparison, rule-design guidance & coverage tooling
 
 ### Installation & Integration
 
