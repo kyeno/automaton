@@ -197,7 +197,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     /**
      * Evaluate a single rule's conditions against the built context.
      *
-     * Checks `time-of-day`, `season`, `illuminance`, `temperature`, and `presence` constraints.
+     * Checks `time-of-day`, actual wall-clock `hour`, `season`, numeric sensor ranges (`illuminance`, `temperature`, ...), and `presence` constraints.
      * A condition key that is absent or falsy is treated as "always passes".
      *
      * @param {Record<string, unknown>} [conditions] - Conditions object from YAML rule
@@ -219,6 +219,22 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         // season check
+
+        // Actual wall-clock hour check -- independent of the calendar-based day periods, so a rule can
+        // gate on "it is late" without caring which period label that hour carries. A bare number requires
+        // exactly that hour; a bounds object ({lt|lte|gt|gte}) ranges over hours 0-23 like any sensor
+        // condition. Anything else fails closed rather than passing silently.
+        if (conditions.hour !== undefined) {
+            const nowHour = new Date().getHours()
+            const constraint = conditions.hour
+            if (typeof constraint === 'number') {
+                if (!Number.isFinite(constraint) || Math.trunc(constraint) !== nowHour) return false
+            } else if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
+                if (!this.#matchesNumericRange(nowHour, constraint)) return false
+            } else {
+                return false
+            }
+        }
         if (conditions.season) {
             const seasons = Array.isArray(conditions.season)
                 ? conditions.season
@@ -279,7 +295,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'season' || key === 'presence' || key === 'video-player' || key === 'state-changed-ago-minutes') continue // handled above
+            if (key === 'time-of-day' || key === 'hour' || key === 'season' || key === 'presence' || key === 'video-player' || key === 'state-changed-ago-minutes') continue // handled above
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]

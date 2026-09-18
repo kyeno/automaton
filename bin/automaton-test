@@ -110,6 +110,8 @@ const testScripts = [
   'test-device-instantiation.js',
   'test-automation-instantiation.js',
   'test-automation-cmd.js',
+  'test-rule-coverage.js',
+  'test-hour-condition.js',
   'test-interaction-cmd.js',
   'test-device-cmd.js',
   'test-silence-between.js',

@@ -288,6 +288,34 @@ rules:
       Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
 ```
 
+### Day Periods (`time-of-day`)
+
+The `time-of-day:` condition matches against five **fixed clock-based** periods that are identical year-round (hour-granular, no gaps or overlaps):
+
+| Period    | Hours   |
+|-----------|---------|
+| night     | 00–04   |
+| morning   | 05–10   |
+| noon      | 11–12   |
+| afternoon | 13–17   |
+| evening   | 18–23   |
+
+These replaced the older sun-derived boundaries in commit `c1e8c6f` -- rules written before that change may silently miss hours they used to cover (or fire where they shouldn't). See [Time-of-Day Periods](architecture/time-of-day-periods.md) for the full rationale, old-vs-new comparison and impact analysis; use `/automation coverage <name> legacy` inside a running instance to diff any automation's behavior against both schemes.
+
+### Wall-Clock Hour (`hour`)
+
+The optional `hour:` condition gates rules against the **actual local clock hour** (0-23) instead of calendar-derived day-period labels. It accepts either an exact number or a single comparison bound:
+
+| Form | Meaning |
+|------|---------|
+| `hour: 4` | Exactly 04:00-04:59 |
+| `hour: { gt: 22 }` / `{ gte: 23 }` | After / at-or-after that hour |
+| `hour: { lt: 5 }` / `{ lte: 2 }` | Before / up-to-and-including that hour |
+
+Unlike `time-of-day`, it is evaluated directly from `new Date().getHours()` on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Granularity is one hour; minute-level gating would need additional work. Malformed values fail closed (the rule never matches) rather than passing silently.
+
+The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports.
+
 ### Target Keys (`targets:`)
 
 There is no separate declaration section: each rule's `targets:` map addresses devices directly by **target key** — the registered friendly name trimmed, whitespace runs collapsed to single underscores, original casing preserved (`Salon Roleta Okno Lewe` → `Salon_Roleta_Okno_Lewe`). The union of all rule-level keys defines an automation's addressable set; there are no separate aliases to invent or keep in sync.
