@@ -783,6 +783,18 @@ export default class DeviceBase {
         return this.#id
     }
 
+    /**
+     * Return the raw configuration data bag this instance was constructed with
+     * (zigbee2mqtt definition merged with per-device config entries such as
+     * `channels`, `type`, or `brightness_range`). Read-only convenience for
+     * subclasses that need to inspect their own declarative parameters without
+     * reaching into private state.
+     * @returns {Object|null} Constructor-provided data object, or null when none given
+     */
+    getData() {
+        return this.#data
+    }
+
     // -- Cache accessors --------------------------------------------------
 
     /**
@@ -1646,7 +1658,9 @@ export default class DeviceBase {
      * Detect whether an incoming MQTT payload represents a genuine state change
      * compared to the last known cached state.
      *
-     * Compares only meaningful fields: state, position, temperature, illuminance, humidity.
+     * Compares only meaningful fields: state, position, temperature, illuminance,
+     * humidity -- plus per-channel suffixed variants (state_*, position_*,
+     * brightness_*) used by multi-channel devices such as DualSwitch/DualDimmer.
      * If none of these changed meaningfully, it's treated as a periodic report rather than
      * a human interaction.
      *
@@ -1693,6 +1707,30 @@ export default class DeviceBase {
             if (!isNaN(newPos) && !isNaN(oldPos) && Math.abs(newPos - oldPos) > POSITION_MATCH_TOLERANCE) return true
         } else if ('position' in newPayload || 'position' in old) {
             return true
+        }
+
+        // Multi-channel devices (DualSwitch/DualDimmer) report per-channel fields such as
+        // state_left / brightness_l1 instead of a top-level state/position. Apply the same
+        // rules as above: presence on only one side counts as a change; when both sides
+        // carry the key, compare values -- numeric fields use the shared jitter tolerance
+        // so bridge rounding at range bounds does not read as input.
+        const SUFFIXED_FIELD_RE = /^(?:state|position|brightness)_/
+        const suffixedUnion = [...new Set([
+            ...Object.keys(newPayload).filter(k => SUFFIXED_FIELD_RE.test(k)),
+            ...Object.keys(old).filter(k => SUFFIXED_FIELD_RE.test(k))
+        ])]
+        for (const k of suffixedUnion) {
+            if ((k in newPayload) !== (k in old)) return true
+            const a = newPayload[k]
+            const b = old[k]
+            if (typeof a === 'number' || typeof b === 'number') {
+                const na = Number(a)
+                const nb = Number(b)
+                if (!Number.isFinite(na) || !Number.isFinite(nb)) continue
+                if (Math.abs(na - nb) > POSITION_MATCH_TOLERANCE) return true
+            } else if (String(a) !== String(b)) {
+                return true
+            }
         }
 
         // Compare illuminance with threshold

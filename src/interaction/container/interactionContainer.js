@@ -27,6 +27,7 @@ import ConfigService from '../../service/configService.js'
 import { PROJECT_ROOT } from '../../lib/projectRoot.js'
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
+import { slugify } from '../../lib/string.js'
 
 // ---------------------------------------------------------------------------
 // SInteractionContainer (singleton)
@@ -258,6 +259,37 @@ class SInteractionContainer {
                 'InteractionContainer'
             )
         }
+    }
+
+    /**
+     * Route a physical device button action through the interaction registry using
+     * the device's slugified friendly name as the interaction key -- the same
+     * convention Remote uses ("Kuchnia Wlacznik Jadalnia" -> "kuchnia_wlacznik_jadalnia").
+     * Shared entry point for any device type that should keep working with the single
+     * YAML-driven interaction registry without duplicating routing logic.
+     *
+     * @param {string} deviceName - Device friendly name (e.g., "Kuchnia Wlacznik Jadalnia")
+     * @param {Object} triggerData - Data passed straight through to execute(); must include at least {action}
+     * @returns {boolean} true when an interaction matched and was executed (even if it threw), false otherwise
+     */
+    routeDeviceAction(deviceName, triggerData = {}) {
+        const interactionKey = slugify(String(deviceName))
+        const entry = this.#interactions.get(interactionKey)
+        if (!entry?.instance || typeof entry.instance.execute !== 'function') return false
+
+        try {
+            entry.instance.execute(triggerData)
+            LoggerService.info(
+                `Routed action "${triggerData.action}" of "${deviceName}" -> interaction "${interactionKey}"`,
+                'InteractionContainer'
+            )
+        } catch (error) {
+            LoggerService.error(
+                `Error executing interaction "${interactionKey}" for "${deviceName}": ${error.message}`,
+                'InteractionContainer'
+            )
+        }
+        return true
     }
 
     /**

@@ -63,6 +63,7 @@ class SDeviceContainer {
     #typeModules = {}
     #typeModulesByCategory = {}
     #deviceTypeMap = {}
+    #deviceParams = {}
 
     // -- Singleton ----------------------------------------------------
 
@@ -179,17 +180,54 @@ class SDeviceContainer {
                 return
             }
 
-            // Build inverted map: friendly_name -> type category
-            for (const [typeCategory, names] of Object.entries(config)) {
-                if (Array.isArray(names)) {
-                    for (const friendlyName of names) {
-                        this.#deviceTypeMap[friendlyName] = typeCategory
+            // Build inverted map: friendly_name -> effective type category.
+            // Entries may be plain strings ("Kitchen Socket") or objects carrying an
+            // optional subtype plus per-device parameters passed through to the
+            // device constructor's data bag (readable via getData()):
+            //   - name: "Salon Ambient"
+            //     type: dualDimmer          # resolved against loaded type modules
+            //     channels: [l1, l2]        # channel topology for multi-channel devices
+            //     brightness_range: {...}   # optional per-channel dimming bounds override
+            let mappedCount = 0
+            for (const [typeCategory, entries] of Object.entries(config)) {
+                if (!Array.isArray(entries)) continue
+
+                for (const entry of entries) {
+                    const isObjectEntry = entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+                    const friendlyName = isObjectEntry ? entry.name : entry
+
+                    if (typeof friendlyName !== 'string' || friendlyName.trim() === '') {
+                        LoggerService.warn(
+                            `Skipping invalid device config entry in "${typeCategory}": ${JSON.stringify(entry)}`,
+                            'DeviceContainer'
+                        )
+                        continue
                     }
+
+                    let effectiveCategory = typeCategory
+                    if (isObjectEntry && entry.type != null) {
+                        const requested = String(entry.type).toLowerCase().replace(/[\s-]+/g, '')
+                        if (this.#typeModulesByCategory[requested]) {
+                            effectiveCategory = requested
+                        } else {
+                            LoggerService.warn(
+                                `Unknown device subtype "${entry.type}" for "${friendlyName}" -- falling back to category "${typeCategory}"`,
+                                'DeviceContainer'
+                            )
+                        }
+                    }
+
+                    this.#deviceTypeMap[friendlyName] = effectiveCategory
+                    if (isObjectEntry) {
+                        // Keep the whole object so subclasses can read channels/type/etc. via getData().
+                        this.#deviceParams[friendlyName] = entry
+                    }
+                    mappedCount++
                 }
             }
 
             LoggerService.info(
-                `${Object.keys(this.#deviceTypeMap).length} device type mappings loaded from config`,
+                `${mappedCount} device type mappings loaded from config (${Object.keys(this.#deviceParams).length} with per-device parameters)`,
                 'DeviceContainer'
             )
         } catch (error) {
@@ -254,7 +292,9 @@ class SDeviceContainer {
             }
 
             const DeviceClass = this.#resolveDeviceType(name)
-            const deviceData = { ...definition, id: deviceId }
+            // Merge declarative per-device parameters (channels, brightness_range, ...)
+            // on top of the zigbee2mqtt definition so they are readable via getData().
+            const deviceData = { ...definition, id: deviceId, ...(this.#deviceParams[name] ?? {}) }
 
             devices[name] = new DeviceClass(name, deviceId, deviceData)
         }
@@ -412,7 +452,9 @@ class SDeviceContainer {
         }
 
         const DeviceClass = this.#resolveDeviceType(friendlyName)
-        const deviceData = { ...data, id: ieeeAddr, ieee_address: ieeeAddr, friendly_name: friendlyName }
+        // Merge declarative per-device parameters (channels, brightness_range, ...) so
+        // dynamically announced devices behave identically to boot-time ones.
+        const deviceData = { ...data, id: ieeeAddr, ieee_address: ieeeAddr, friendly_name: friendlyName, ...(this.#deviceParams[friendlyName] ?? {}) }
         const device = new DeviceClass(friendlyName, ieeeAddr, deviceData)
 
         this.#wireDeviceMqtt(device)

@@ -16,6 +16,8 @@ import Mechanism from '../src/device/type/mechanism.js'
 import Sensor from '../src/device/type/sensor.js'
 import Bridge from '../src/device/type/bridge.js'
 import Dummy from '../src/device/type/dummy.js'
+import DualSwitch from '../src/device/type/dualswitch.js'
+import DualDimmer from '../src/device/type/dualdimmer.js'
 
 let passed = 0
 let failed = 0
@@ -39,6 +41,8 @@ assert(Mechanism.prototype instanceof DeviceBase, 'Mechanism extends DeviceBase'
 assert(Sensor.prototype instanceof DeviceBase, 'Sensor extends DeviceBase')
 assert(Bridge.prototype instanceof DeviceBase, 'Bridge extends DeviceBase')
 assert(Dummy.prototype instanceof DeviceBase, 'Dummy extends DeviceBase')
+assert(DualSwitch.prototype instanceof Mechanism, 'DualSwitch extends Mechanism')
+assert(DualDimmer.prototype instanceof DualSwitch, 'DualDimmer extends DualSwitch')
 
 // -- Instance creation ----------------------------------------------------
 
@@ -65,6 +69,26 @@ assert(bridge instanceof DeviceBase, 'Bridge instance is instance of DeviceBase'
 const dummy = new Dummy('test-dummy', '0xdddd', {})
 assert(dummy instanceof Dummy, 'Dummy instance is instance of Dummy')
 assert(dummy instanceof DeviceBase, 'Dummy instance is instance of DeviceBase')
+
+// -- Dual switch / dimmer ---------------------------------------------------
+
+console.log('\n── DualSwitch / DualDimmer ──\n')
+
+const dualSwitch = new DualSwitch('kitchen sink light', '0xaaaa', { channels: ['left', 'right'] })
+assert(dualSwitch instanceof DualSwitch, 'DualSwitch instance is instance of DualSwitch')
+assert(dualSwitch instanceof Mechanism, 'DualSwitch instance is a Mechanism (origin tracking applies)')
+assert(JSON.stringify(dualSwitch.getChannels()) === JSON.stringify(['left', 'right']), 'getChannels() returns configured channels lowercased')
+assert(dualSwitch.supportsBrightness() === false, 'DualSwitch reports non-dimmable')
+assert(dualSwitch.getLogPrefix() === 'DualSwitch', 'DualSwitch log prefix')
+
+const bareSwitch = new DualSwitch('bare switch', '0xbbbb', {})
+assert(bareSwitch.getChannels() === null, 'missing channels degrades to null topology (plain mechanism fallback)')
+
+const dualDimmer = new DualDimmer('salon ambient', '0xcccc', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+assert(dualDimmer instanceof DualDimmer, 'DualDimmer instance is instance of DualDimmer')
+assert(dualDimmer instanceof DualSwitch, 'DualDimmer inherits DualSwitch behavior')
+assert(dualDimmer.supportsBrightness() === true, 'DualDimmer reports dimmable')
+assert(dualDimmer.getLogPrefix() === 'DualDimmer', 'DualDimmer log prefix')
 
 // -- Abstract class protection --------------------------------------------
 

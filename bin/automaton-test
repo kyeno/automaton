@@ -108,6 +108,7 @@ const testScripts = [
   'test-config-reload.js',
 
   'test-device-instantiation.js',
+  'test-dualswitch.js',
   'test-automation-instantiation.js',
   'test-automation-cmd.js',
   'test-rule-coverage.js',

@@ -103,9 +103,13 @@ class SToolBuilder {
         const setDeviceNameDesc = I18nLoader.t('tools.set_device_state.parameters.device_name',
             'Exact friendly name of the device, e.g. "Living Room Shutter", "Kitchen Socket".')
         const setActionDesc = I18nLoader.t('tools.set_device_state.parameters.action',
-            'Action to perform. For shutters use OPEN/CLOSE/STOP, for lights and sockets use ON/OFF.')
+            'Action to perform. For shutters use OPEN/CLOSE/STOP, for lights and sockets use ON/OFF, TOGGLE to flip current state.')
         const setPositionDesc = I18nLoader.t('tools.set_device_state.parameters.position',
             'Optional shutter position in percentage (0=closed, 100=open). Use instead of action for precise setting.')
+        const setChannelDesc = I18nLoader.t('tools.set_device_state.parameters.channel',
+            'Optional channel name on multi-channel devices (e.g. dual wall switches/dimmers with left/right or l1/l2 channels). Omit to affect all channels at once.')
+        const setBrightnessDesc = I18nLoader.t('tools.set_device_state.parameters.brightness',
+            'Optional brightness level in percent (0-100) for dimmable devices such as dual dimmers. Combine with channel to target one output only.')
 
         const getDesc = I18nLoader.t('tools.get_device_state.description',
             'Check the current state of any device (sensor, remote, or executive device). Returns sensors, batteries, or current binary state.')
@@ -127,7 +131,7 @@ class SToolBuilder {
                             },
                             action: {
                                 type: 'string',
-                                enum: ['ON', 'OFF', 'OPEN', 'CLOSE', 'STOP', 'STATE'],
+                                enum: ['ON', 'OFF', 'TOGGLE', 'OPEN', 'CLOSE', 'STOP', 'STATE'],
                                 description: setActionDesc
                             },
                             position: {
@@ -135,6 +139,16 @@ class SToolBuilder {
                                 minimum: 0,
                                 maximum: 100,
                                 description: setPositionDesc
+                            },
+                            channel: {
+                                type: 'string',
+                                description: setChannelDesc
+                            },
+                            brightness: {
+                                type: 'integer',
+                                minimum: 0,
+                                maximum: 100,
+                                description: setBrightnessDesc
                             }
                         },
                         required: ['device_name']
@@ -255,6 +269,8 @@ class SToolBuilder {
         return this.#dispatchToDevice(device, deviceName, {
             action,
             position: args.position,
+            channel: args.channel != null ? String(args.channel).trim().toLowerCase() : undefined,
+            brightness: this.#toBrightness(args.brightness),
             toolLabel: funcName,
             readState,
             rawArgs: args
@@ -319,13 +335,25 @@ class SToolBuilder {
                 const p = parsed.parameters
                 const devName = p.device_name || p.device
                 if (!devName) continue
-                intents.push({ device: devName, action: p.action ?? undefined, position: this.#toPosition(p.position) })
+                intents.push({
+                    device: devName,
+                    action: p.action ?? undefined,
+                    position: this.#toPosition(p.position),
+                    channel: p.channel != null ? String(p.channel).trim().toLowerCase() : undefined,
+                    brightness: this.#toBrightness(p.brightness)
+                })
                 continue
             }
 
             // Format 2: {"device": "...", "action": "..."} or {"device_name": "..."}
             if (parsed.device || parsed.device_name) {
-                intents.push({ device: parsed.device || parsed.device_name, action: parsed.action ?? undefined, position: this.#toPosition(parsed.position) })
+                intents.push({
+                    device: parsed.device || parsed.device_name,
+                    action: parsed.action ?? undefined,
+                    position: this.#toPosition(parsed.position),
+                    channel: parsed.channel != null ? String(parsed.channel).trim().toLowerCase() : undefined,
+                    brightness: this.#toBrightness(parsed.brightness)
+                })
                 continue
             }
         }
@@ -368,16 +396,15 @@ class SToolBuilder {
             if (blocks.length === 0) {
                 // No delimiters -- treat everything after the function name as loose key/value pairs.
                 const args = this.#parseArgPairs(segment)
-                if (args && args.device) {
-                    intents.push({ device: args.device, action: args.action ?? undefined, position: args.position })
-                }
+                const intent = args ? this.#normalizeIntent(args) : null
+                if (intent?.device) intents.push(intent)
                 continue
             }
 
             for (const inner of blocks) {
                 const args = this.#parseArgPairs(inner)
                 if (!args || !args.device) continue
-                intents.push({ device: args.device, action: args.action ?? undefined, position: args.position })
+                intents.push(this.#normalizeIntent(args))
             }
         }
         if (intents.length > 0) return intents
@@ -394,7 +421,7 @@ class SToolBuilder {
             if (!parsed || typeof parsed !== 'object') continue
             const devName = parsed.device_name || parsed.device
             if (!devName) continue
-            intents.push({ device: devName, action: parsed.action ?? undefined, position: this.#toPosition(parsed.position) })
+            intents.push(this.#normalizeIntent(parsed))
         }
 
         return intents.length > 0 ? intents : null
@@ -440,6 +467,8 @@ class SToolBuilder {
         return this.#dispatchToDevice(device, deviceName, {
             action,
             position: intent.position,
+            channel: intent.channel != null ? String(intent.channel).trim().toLowerCase() : undefined,
+            brightness: this.#toBrightness(intent.brightness),
             toolLabel: 'json_intent',
             readState
         })
@@ -459,15 +488,24 @@ class SToolBuilder {
      * @returns {Promise<string>} JSON-stringified result for the model
      * @private
      */
-    async #dispatchToDevice(device, deviceName, { action = null, position, toolLabel = 'unknown', readState = false, rawArgs = {} }) {
+    async #dispatchToDevice(device, deviceName, { action = null, position, channel, brightness, toolLabel = 'unknown', readState = false, rawArgs = {} }) {
         const hasPosition = typeof position === 'number'
         // Clamp once -- reused by both the event payload and the command branch
         const clampedPos = hasPosition ? Math.max(0, Math.min(100, round(position))) : null
+
+        // Multi-channel devices (dual switches/dimmers): normalize optional channel/brightness
+        const hasChannel = typeof channel === 'string' && channel.length > 0
+        const clampedBright = Number.isFinite(brightness) ? Math.max(0, Math.min(100, round(brightness))) : null
 
         // Determine human-readable action for the event payload
         let interactionAction = action ?? 'STATE'
         if (hasPosition) {
             interactionAction = `SET_POSITION=${clampedPos}`
+        } else if (hasChannel || clampedBright !== null) {
+            interactionAction = [
+                clampedBright !== null ? `SET_BRIGHTNESS=${clampedBright}` : (action ?? 'STATE'),
+                hasChannel ? `CHANNEL=${channel.toUpperCase()}` : null
+            ].filter(Boolean).join(' ')
         }
 
         // Emit device interaction event for UI consumption
@@ -489,6 +527,26 @@ class SToolBuilder {
                 device: deviceName,
                 action: 'set_position',
                 position: clampedPos,
+                status: 'sent'
+            })
+        }
+
+        // --- Multi-channel write (dual switches/dimmers) ---
+        // An explicit channel or brightness level is ALWAYS a write -- same priority rule as
+        // position above (models routinely combine these with action:"STATE"). The bare STATE
+        // marker itself never reaches the device; only real state/brightness fields do.
+        if (hasChannel || clampedBright !== null) {
+            const payload = {}
+            if (hasChannel) payload.channel = channel
+            if (action && action !== 'STATE') payload.state = action
+            if (clampedBright !== null) payload.brightness = clampedBright
+
+            // AI chat actions are human-directed: a person gave the AI this order.
+            device.receiveCommand(payload, DeviceCommandSource.HUMAN)
+            return JSON.stringify({
+                device: deviceName,
+                action: clampedBright !== null ? `set_brightness=${clampedBright}` : (payload.state ?? 'state'),
+                ...(hasChannel ? { channel } : {}),
                 status: 'sent'
             })
         }
@@ -565,7 +623,7 @@ class SToolBuilder {
      * at the next pair boundary (` ,identifier:= ` / ` identifier:= `), which keeps adjacent
      * pairs from bleeding into each other. Fields that are absent come back undefined.
      * @param {string} inner - Inner content of an argument block (without outer delimiters)
-     * @returns {{device?: string, action?: string, position?: number}|null} Parsed arguments, or null when nothing usable was found
+     * @returns {{device?: string, action?: string, position?: number, channel?: string, brightness?: number}|null} Parsed arguments, or null when nothing usable was found
      * @private
      */
     #parseArgPairs(inner) {
@@ -584,8 +642,9 @@ class SToolBuilder {
             }
 
             // Unquoted value: cut at the first following pair boundary so multi-word names are
-            // preserved while not swallowing subsequent pairs (`action:OPEN device_name:X`).
-            const cut = rest.search(/(?:,|\s+)[A-Za-z_][A-Za-z0-9_]*\s*[:=]/)
+            // preserved while not swallowing subsequent pairs (`action:OPEN device_name:X`,
+            // `channel:l2, brightness:80`). Both ", id:" and " id:" separators count.
+            const cut = rest.search(/[,\s]+[A-Za-z_][A-Za-z0-9_]*\s*[:=]/)
             rest = (cut !== -1 ? rest.slice(0, cut) : rest).trim()
             return rest === '' ? undefined : rest
         }
@@ -593,9 +652,29 @@ class SToolBuilder {
         const device = pick('device_name') || pick('device')
         const action = pick('action')
         const position = this.#toPosition(pick('position'))
+        const channel = pick('channel')
+        const brightness = this.#toBrightness(pick('brightness'))
 
-        if (!device && !action && position === undefined) return null
-        return { device, action, position }
+        if (!device && !action && position === undefined && !channel && brightness === undefined) return null
+        return { device, action, position, channel, brightness }
+    }
+
+    /**
+     * Normalize any loosely-parsed argument object ({device|device_name, action?, position?,
+     * channel?, brightness?}) into the canonical intent record consumed by executeIntent().
+     * Absent optional fields stay undefined so downstream dispatch can distinguish them.
+     * @param {{device?: string, device_name?: string, action?: string|null, position?: number|string, channel?: string, brightness?: number|string}} args - Loose arguments from any parsing path
+     * @returns {{device?: string, action?: string|undefined, position?: number, channel?: string, brightness?: number}} Normalized intent (device may be undefined when not found)
+     * @private
+     */
+    #normalizeIntent(args) {
+        return {
+            device: args.device || args.device_name,
+            action: args.action ?? undefined,
+            position: this.#toPosition(args.position),
+            channel: args.channel != null ? String(args.channel).trim().toLowerCase() : undefined,
+            brightness: this.#toBrightness(args.brightness)
+        }
     }
 
     /**
@@ -624,6 +703,28 @@ class SToolBuilder {
             if (!isNaN(n)) return n
         }
         return undefined
+    }
+
+    /**
+     * Normalize a raw brightness value into an integer percentage, returning undefined when
+     * the value is not a usable number or falls outside 0-100. Accepts numbers and numeric
+     * strings; out-of-range values are clamped rather than rejected so small-model typos
+     * ("brightness: 120") still produce a sane command instead of being dropped.
+     * @param {*} value - Raw brightness from parsed arguments
+     * @returns {number|undefined} Integer percentage 0-100 or undefined
+     * @private
+     */
+    #toBrightness(value) {
+        let n
+        if (typeof value === 'number' && !isNaN(value)) n = value
+        else if (typeof value === 'string') {
+            const p = parseInt(value, 10)
+            if (isNaN(p)) return undefined
+            n = p
+        } else {
+            return undefined
+        }
+        return Math.max(0, Math.min(100, Math.trunc(n)))
     }
 
     // -- Private Helpers --------------------------------------------------
@@ -691,8 +792,13 @@ class SToolBuilder {
         })
 
         const filtered = {}
+        // Multi-channel devices (dual switches/dimmers) expose per-channel variants of core
+        // state fields -- e.g. state_l1/brightness_l1 on Salon dimmers or state_left/state_right
+        // on wall switches. Let them through so get_device_state reflects real hardware state;
+        // values stay raw (device-native labels/levels), no locale formatting applied.
+        const CHANNEL_FIELD_RE = /^(state|brightness)_[a-z0-9]+$/i
         for (const [key, value] of Object.entries(state)) {
-            if (!ALLOWED_FIELDS.has(key)) continue
+            if (!ALLOWED_FIELDS.has(key) && !CHANNEL_FIELD_RE.test(key)) continue
 
             // Format numeric sensors with locale-aware decimal separators via i18n.
             // Zigbee2MQTT sometimes sends sensor values as strings ("23.2") instead

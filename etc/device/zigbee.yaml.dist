@@ -8,6 +8,13 @@ mechanism:
   # Outlets, switches controlling lights, roller shutters etc.
   - "Living Room Outlet"
   - "Bedroom Roller Shutter"
+  # Multi-channel wall switches/dimmers use object entries with an optional subtype
+  # plus per-device parameters passed through to the device class:
+  #   - name: "Kitchen Sink Light"
+  #     type: dualSwitch        # or dualDimmer for dimmable variants
+  #     channels: [left, right] # channel topology used for command translation
+  #     brightness_range:       # optional dimming bounds override ([min,max], 0-254)
+  #       left: [1, 254]
 
 remote:
   # Wall remotes and handheld controllers
