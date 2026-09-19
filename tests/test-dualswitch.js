@@ -27,6 +27,7 @@ import CacheService from '../src/service/cacheService.js'
 import InteractionContainer from '../src/interaction/container/interactionContainer.js'
 import DeviceContainer from '../src/device/container/deviceContainer.js'
 import ToolBuilder from '../src/ai/toolBuilder.js'
+import MqttService from '../src/service/mqttService.js'
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 
 // Set minimal env vars so ConfigService won't throw on missing required keys
@@ -204,6 +205,44 @@ console.log('\n── DualDimmer brightness mapping ──\n')
 }
 
 // ---------------------------------------------------------------------------
+console.log('\n── Channel alias resolution (ONE/TWO vocabulary) ──\n')
+
+{
+    const sw = new DualSwitch('Kuchnia Wlacznik Zlew', '0x1111', { channels: ['left', 'right'] })
+    const mock = new MockMqttService()
+    sw.setMqttService(mock)
+
+    // Positional aliases map by declaration order: ONE -> first channel, TWO -> second.
+    sw.receiveCommand({ channel: 'ONE', state: 'ON' })
+    assertEqual(lastPublish(mock)?.payload, { state_left: 'ON' }, 'channel ONE -> first declared channel (left)')
+
+    mock.reset()
+    sw.receiveCommand({ channel: 'TWO', state: 'OFF' })
+    assertEqual(lastPublish(mock)?.payload, { state_right: 'OFF' }, 'channel TWO -> second declared channel (right)')
+
+    // Numeric aliases and mixed case work too.
+    mock.reset()
+    sw.receiveCommand({ channel: '2', state: 'TOGGLE' })
+    assertEqual(lastPublish(mock)?.payload, { state_right: 'TOGGLE' }, 'numeric alias "2" -> second channel')
+
+    mock.reset()
+    sw.receiveCommand({ channel: 'One', state: 'ON' })
+    assertEqual(lastPublish(mock)?.payload, { state_left: 'ON' }, 'mixed-case "One" -> first channel')
+
+    // Raw wire names keep working as identity aliases.
+    mock.reset()
+    sw.receiveCommand({ channel: 'right', state: 'ON' })
+    assertEqual(lastPublish(mock)?.payload, { state_right: 'ON' }, 'raw wire name still accepted')
+
+    // A positional alias beyond the declared topology is rejected.
+    const sw3 = new DualSwitch('Single Channel', '0x9999', { channels: ['l1'] })
+    const mock3 = new MockMqttService()
+    sw3.setMqttService(mock3)
+    sw3.receiveCommand({ channel: 'TWO', state: 'ON' })
+    assertEqual(mock3.published.length, 0, 'TWO on a single-channel device dropped without publish')
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n── Kuchnia Wlacznik Jadalnia button routing (regression) ──\n')
 
 {
@@ -275,17 +314,33 @@ console.log('\n── AI tool dispatch (channel/brightness params) ──\n')
 
 {
     // Register a live dual dimmer in the device registry for name resolution.
-    const aiDimmer = new DualDimmer('Salon Ambient', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const aiDimmer = new DualDimmer('Salon Wlacznik Ambient', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
     const mockAI = new MockMqttService()
     aiDimmer.setMqttService(mockAI)
-    Object.assign(DeviceContainer.getAll(), { 'Salon Ambient': aiDimmer })
+    Object.assign(DeviceContainer.getAll(), { 'Salon Wlacznik Ambient': aiDimmer })
 
-    // Native function-call shape with channel + brightness -> mapped suffixed payload.
+    // Native function-call shape with the positional channel vocabulary -> mapped suffixed payload.
     const result1 = JSON.parse(await ToolBuilder.execute({
-        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon ambient', channel: 'L1', brightness: 50 }) }
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient', channel: 'ONE', brightness: 50 }) }
     }))
     assertEqual(result1.status, 'sent', 'tool call reports sent status')
-    assertEqual(lastPublish(mockAI)?.payload, { brightness_l1: 154 }, 'AI channel+brightness reaches device as mapped brightness_l1=154')
+    assertEqual(lastPublish(mockAI)?.payload, { brightness_l1: 154 }, 'AI channel ONE + brightness reaches device as mapped brightness_l1=154')
+
+    // The second positional channel maps to the second wire channel.
+    mockAI.reset()
+    await ToolBuilder.execute({
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient', channel: 'TWO', brightness: 100 }) }
+    })
+    assertEqual(lastPublish(mockAI)?.payload, { brightness_l2: 254 }, 'AI channel TWO reaches device as brightness_l2=254')
+
+    // Unknown channel (beyond the ONE/TWO enum, e.g. from a loose parser) returns
+    // an honest error to the model instead of a silent drop.
+    mockAI.reset()
+    const badResult = JSON.parse(await ToolBuilder.execute({
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient', channel: 'MIDDLE', state: 'ON' }) }
+    }))
+    assert(typeof badResult.error === 'string' && badResult.error.includes('Unknown channel'), 'unknown channel returns honest error to the model')
+    assertEqual(mockAI.published.length, 0, 'unknown channel published nothing')
 
     // TOGGLE action now allowed by schema and fanned out across all channels.
     const aiSwitch = new DualSwitch('Kuchnia Wlacznik Zlew', '0x6666', { channels: ['left', 'right'] })
@@ -298,23 +353,27 @@ console.log('\n── AI tool dispatch (channel/brightness params) ──\n')
     })
     assertEqual(lastPublish(mockAISw)?.payload, { state_left: 'TOGGLE', state_right: 'TOGGLE' }, 'bare AI TOGGLE fans out to both switch channels')
 
-    // Text-intent path (small models): loose pseudo-call with channel/brightness survives parsing.
-    const intents = ToolBuilder.parseJsonIntent('set_device_state(device_name:"Salon Ambient", channel:l2, brightness:80)')
+    // Text-intent path (small models): loose pseudo-call with the positional
+    // channel vocabulary survives parsing and normalization.
+    const intents = ToolBuilder.parseJsonIntent('set_device_state(device_name:"Salon Wlacznik Ambient", channel:two, brightness:80)')
     assert(intents !== null && intents.length === 1, 'loose text intent parsed into one record')
     if (intents?.length === 1) {
-        assertEqual(intents[0].channel, 'l2', 'text intent preserves channel field')
+        assertEqual(intents[0].channel, 'TWO', 'text intent normalizes channel to positional TWO')
         assertEqual(intents[0].brightness, 80, 'text intent preserves brightness field')
     }
 
-    // get_device_state must expose suffixed per-channel fields while stripping noise.
-    // Stub the cache read so this assertion tests the filter itself, not Redis availability.
+    // get_device_state must expose per-channel fields under the positional
+    // vocabulary (state_one/brightness_one) with brightness in percent, while
+    // stripping noise. Stub the cache read so this tests the filter, not Redis.
     const aiState = { state_l1: 'ON', brightness_l1: 180, linkquality: 99, last_seen: new Date().toISOString() }
     aiDimmer.getCachedState = async () => ({ stateLast: aiState, stateLastAt: new Date().toISOString(), stateOrigin: 'human' })
     const readResult = JSON.parse(await ToolBuilder.execute({
-        function: { name: 'get_device_state', arguments: JSON.stringify({ device_name: 'salon ambient' }) }
+        function: { name: 'get_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient' }) }
     }))
-    assert(readResult.state?.state_l1 === 'ON', 'filtered AI state includes state_l1')
-    assert(Number.isFinite(Number(readResult.state?.brightness_l1)), 'filtered AI state includes brightness_l1')
+    assert(readResult.state?.state_one === 'ON', 'AI state view renames state_l1 -> state_one')
+    assert(!('state_l1' in (readResult.state ?? {})), 'wire-suffixed key not leaked into AI state view')
+    // 180 in [54..254] -> round((180-54)/200*100) = 63%
+    assertEqual(readResult.state?.brightness_one, 63, 'AI state view converts raw level to percent via channel range')
     assert(!('linkquality' in (readResult.state ?? {})), 'noise fields still stripped from AI state view')
 }
 
@@ -416,6 +475,62 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
     assertEqual(lastPublish(mockF)?.payload, { state_left: 'ON', state_right: 'ON' }, 'AUTOMATION ON fanned out to both channels')
     assertEqual(swF.getStateOrigin(), 'automation', 'own echo + periodic tail stay AUTOMATION inside the token window')
     assertEqual(writesF, 0, 'no human cooldown written for an automation round-trip')
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n── MQTT dedup signature for suffixed payloads (regression) ──\n')
+
+{
+    // Regression: multi-channel devices report ONLY suffixed keys (state_l1,
+    // brightness_l2, ...). The real MQTT service's dedup signature must include
+    // them -- otherwise the signature is always "{}" and every report after the
+    // first within the 300ms window is silently discarded, so the device cache
+    // (and the AI's state view) never updates.
+    const fake = {
+        connected: true,
+        published: [],
+        publish(topic, payload, options) { this.published.push({ topic, payload, options }) },
+        on(event, handler) { ;(this.handlers ??= {})[event] = handler; return this },
+        emit(event, ...args) { this.handlers?.[event]?.(...args) },
+        listenerCount() { return 0 },
+        setMaxListeners() {},
+        removeListener() {},
+        subscribe(_topic, cb) { if (typeof cb === 'function') queueMicrotask(() => cb(null)); return this },
+        unsubscribe(_topic, cb) { if (typeof cb === 'function') queueMicrotask(() => cb()); return this },
+        end(forceOrCb, maybeCb) {
+            const cb = typeof forceOrCb === 'function' ? forceOrCb : maybeCb
+            if (typeof cb === 'function') queueMicrotask(() => cb())
+            return this
+        },
+        destroy() {}
+    }
+    setImmediate(() => fake.emit('connect'))
+
+    await MqttService.init({ connectFn: () => fake })
+
+    const received = []
+    MqttService.subscribe('zigbee2mqtt/Salon Wlacznik Ambient', (topic, message) => received.push(message))
+    await sleep(10) // let the subscription callback register
+
+    const emit = (obj) => fake.emit('message', 'zigbee2mqtt/Salon Wlacznik Ambient', Buffer.from(JSON.stringify(obj)))
+
+    // Identical report twice within the dedupe window -> delivered exactly once.
+    emit({ state_l1: 'ON', state_l2: 'OFF', brightness_l1: 120, brightness_l2: 200 })
+    emit({ state_l1: 'ON', state_l2: 'OFF', brightness_l1: 120, brightness_l2: 200 })
+    await sleep(20)
+    assertEqual(received.length, 1, 'identical suffixed report deduped within the window')
+
+    // A changed report must NOT be deduped against the previous one.
+    emit({ state_l1: 'OFF', state_l2: 'OFF', brightness_l1: 120, brightness_l2: 200 })
+    await sleep(20)
+    assertEqual(received.length, 2, 'changed suffixed report delivered (signature includes channel fields)')
+
+    // A third identical report is deduped again against the latest signature.
+    emit({ state_l1: 'OFF', state_l2: 'OFF', brightness_l1: 120, brightness_l2: 200 })
+    await sleep(20)
+    assertEqual(received.length, 2, 'repeated changed report deduped against the latest signature')
+
+    await MqttService.disconnect()
 }
 
 // ---------------------------------------------------------------------------

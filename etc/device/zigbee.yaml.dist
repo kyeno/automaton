@@ -12,7 +12,8 @@ mechanism:
   # plus per-device parameters passed through to the device class:
   #   - name: "Kitchen Sink Light"
   #     type: dualSwitch        # or dualDimmer for dimmable variants
-  #     channels: [left, right] # channel topology used for command translation
+  #     channels: [left, right] # channel topology; the AI addresses them as ONE/TWO
+  #                             # (declaration order: first = ONE, second = TWO)
   #     brightness_range:       # optional dimming bounds override ([min,max], 0-254)
   #       left: [1, 254]
 

@@ -25,7 +25,7 @@ import BaseWindow from './baseWindow.js'
 // ---------------------------------------------------------------------------
 
 const NAME_W = 35
-const STATE_W = 8
+const STATE_W = 16
 const ORIGIN_W = 11
 const BATT_W = 5
 const TEMP_W = 7
@@ -314,7 +314,36 @@ class DeviceWindow extends BaseWindow {
             const battery = stateLast.battery ?? null
 
             let status
-            if (position !== null) {
+            const channels = device.getChannels?.()
+            if (Array.isArray(channels) && channels.length > 0) {
+                // Multi-channel device: render per-channel state with positional
+                // labels (ONE/TWO) plus brightness percentage when dimmable.
+                const parts = []
+                let anyOn = false
+                let anyOff = false
+                for (const ch of channels) {
+                    const st = stateLast[`state_${ch}`]
+                    if (st === undefined) continue
+                    const up = String(st).toUpperCase()
+                    let part = up
+                    const br = stateLast[`brightness_${ch}`]
+                    if (Number.isFinite(Number(br)) && Number(br) > 0) {
+                        part += ` ${Math.round((Number(br) / 254) * 100)}%`
+                    }
+                    parts.push(part)
+                    if (up === 'ON') anyOn = true
+                    else if (up === 'OFF') anyOff = true
+                }
+                if (parts.length > 0) {
+                    status = parts.join(' / ')
+                    if (anyOn) totalOn++
+                    else if (anyOff) totalOff++
+                    else totalUnknown++
+                } else {
+                    status = '-'
+                    totalUnknown++
+                }
+            } else if (position !== null) {
                 status = Math.round(position) + '%'
             } else if (rawState) {
                 status = String(rawState).toUpperCase()

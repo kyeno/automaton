@@ -12,6 +12,10 @@
  *     channel at once:  {state_left:'ON', state_right:'ON'}
  *   - object commands may target one channel explicitly via `channel`,
  *     validated against the declared topology; unknown channels warn + no-op
+ *
+ * Channel references use the positional AI vocabulary (ONE/TWO, mapped by
+ * declaration order -- see src/lib/channelAliases.js); raw wire names are
+ * accepted as identity aliases so existing payloads keep working.
  *   - `{action: ...}` MQTT reports are routed through the InteractionContainer
  *     under this device's slugified name, preserving YAML interaction bindings
  *     (e.g. Kuchnia Wlacznik Jadalnia right button -> Kuchnia Gniazdo) without
@@ -34,6 +38,7 @@
 'use strict'
 
 import temporal from '../../lib/date.js'
+import { POSITIONAL_NAMES, resolveChannelAlias } from '../../lib/channelAliases.js'
 import LoggerService from '../../service/loggerService.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import InteractionContainer from '../../interaction/container/interactionContainer.js'
@@ -102,7 +107,18 @@ export default class DualSwitch extends Mechanism {
 
         // No declared topology: behave exactly like a plain mechanism so devices
         // typed dualSwitch without channels keep working with legacy payloads.
+        // Multi-channel-only keys are stripped so they never leak into the payload.
         if (!channels) {
+            if (typeof command === 'object' && command !== null
+                && ('channel' in command || 'brightness' in command)) {
+                const { channel, brightness, ...rest } = command
+                if (Object.keys(rest).length === 0) {
+                    this.warn('channel/brightness requested but no channels configured -- command dropped')
+                    return
+                }
+                this.warn('channel/brightness ignored -- no channels configured, using single-state behavior')
+                return super.receiveCommand(rest, source)
+            }
             LoggerService.debug(
                 'No "channels" configured for dual switch -- falling back to single-state behavior',
                 `${this.getLogPrefix()}:${this.getName()}`
@@ -158,10 +174,13 @@ export default class DualSwitch extends Mechanism {
             fieldState = st
         } else if (command && typeof command === 'object') {
             if ('channel' in command) {
-                const ch = String(command.channel).trim().toLowerCase()
-                if (!channels.includes(ch)) {
+                // Positional aliases (ONE/TWO/1/2) map by declaration order; raw
+                // wire names pass through as identity aliases.
+                const ch = resolveChannelAlias(channels, command.channel)
+                if (ch === null) {
                     this.warn(
-                        `Unknown channel "${command.channel}" -- valid channels: ${channels.join(', ')}. Command dropped.`
+                        `Unknown channel "${command.channel}" -- valid channels: `
+                        + `${channels.map((c, i) => `${POSITIONAL_NAMES[i] ?? c} (${c})`).join(', ')}. Command dropped.`
                     )
                     return null
                 }

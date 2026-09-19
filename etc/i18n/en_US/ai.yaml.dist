@@ -41,8 +41,10 @@ tools:
     description: "Change state or position of a device (light, socket, switch, roller)."
     parameters:
       device_name: 'Device name, e.g. "Living Room Roller Left", "Kitchen Outlet".'
-      action: "For shutters: OPEN/CLOSE/STOP. For lights/sockets: ON/OFF."
+      action: "For shutters: OPEN/CLOSE/STOP. For lights/sockets: ON/OFF, TOGGLE flips current state."
       position: "Shutter position in % (0-100), instead of action."
+      channel: "Channel on multi-channel devices (dual switches/dimmers): ONE or TWO. Omit to affect all channels at once."
+      brightness: "Optional brightness level in percent (0-100) for dimmable devices; combine with channel to target one output only."
 
   get_device_state:
     description: "Check device state - sensor readings, battery, binary state."

@@ -50,6 +50,27 @@ export default class DualDimmer extends DualSwitch {
         return true
     }
 
+    /**
+     * Convert a raw Zigbee level (0-254) reported for a channel into the 0-100
+     * percentage vocabulary used by the AI tools, using the same range
+     * resolution as the write path (config override > sane reported bounds >
+     * [1,254]). Lets state readbacks speak the same units the model sets.
+     *
+     * @param {string} channel - Wire channel name (case-insensitive)
+     * @param {number|string} level - Raw level value from a state report
+     * @returns {number|null} Percentage 0-100, or null when the level is not a usable number
+     */
+    levelToPercent(channel, level) {
+        const n = Number(level)
+        if (!Number.isFinite(n)) return null
+        const [minLevel, maxLevel] = this.#resolveChannelRange(
+            String(channel).trim().toLowerCase(),
+            this.getStateLast() ?? {}
+        )
+        const pct = ((n - minLevel) / (maxLevel - minLevel)) * 100
+        return Math.max(0, Math.min(100, Math.round(pct)))
+    }
+
     // -- Brightness mapping ---------------------------------------------------
 
     /**

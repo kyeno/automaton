@@ -122,6 +122,16 @@ const SEMANTIC_KEYS = Object.freeze(new Set([
     'indicator_mode', 'power_outage_memory',
 ]))
 
+/**
+ * Per-channel suffixed variants of semantic fields (state_l1, brightness_left,
+ * position_right, ...). Multi-channel devices (dual switches/dimmers) report
+ * ONLY these suffixed keys -- without matching them here their dedup signature
+ * would always be "{}" and every report after the first within the dedupe
+ * window would be silently discarded.
+ * @readonly
+ */
+const CHANNEL_SIG_RE = /^(state|position|brightness)_[a-z0-9]+$/i
+
 // ---------------------------------------------------------------------------
 // SMQTTService (module-level singleton)
 // ---------------------------------------------------------------------------
@@ -509,7 +519,7 @@ class SMQTTService {
 
             const sig = {}
             for (const [key, value] of Object.entries(obj)) {
-                if (SEMANTIC_KEYS.has(key)) {
+                if (SEMANTIC_KEYS.has(key) || CHANNEL_SIG_RE.test(key)) {
                     sig[key] = value
                 }
             }

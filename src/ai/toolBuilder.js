@@ -26,6 +26,7 @@ import EventBus from '../service/eventBus.js'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { round } from '../lib/math.js'
+import { normalizeChannelRef, positionalNameFor, resolveChannelAlias, POSITIONAL_NAMES } from '../lib/channelAliases.js'
 import DeviceCommandSource from '../enum/deviceCommandSource.js'
 
 // ---------------------------------------------------------------------------
@@ -107,9 +108,9 @@ class SToolBuilder {
         const setPositionDesc = I18nLoader.t('tools.set_device_state.parameters.position',
             'Optional shutter position in percentage (0=closed, 100=open). Use instead of action for precise setting.')
         const setChannelDesc = I18nLoader.t('tools.set_device_state.parameters.channel',
-            'Optional channel name on multi-channel devices (e.g. dual wall switches/dimmers with left/right or l1/l2 channels). Omit to affect all channels at once.')
+            'Channel on multi-channel devices (dual switches/dimmers): ONE or TWO. Omit to affect all channels at once.')
         const setBrightnessDesc = I18nLoader.t('tools.set_device_state.parameters.brightness',
-            'Optional brightness level in percent (0-100) for dimmable devices such as dual dimmers. Combine with channel to target one output only.')
+            'Optional brightness level in percent (0-100) for dimmable devices. Combine with channel to target one output only.')
 
         const getDesc = I18nLoader.t('tools.get_device_state.description',
             'Check the current state of any device (sensor, remote, or executive device). Returns sensors, batteries, or current binary state.')
@@ -142,6 +143,7 @@ class SToolBuilder {
                             },
                             channel: {
                                 type: 'string',
+                                enum: ['ONE', 'TWO'],
                                 description: setChannelDesc
                             },
                             brightness: {
@@ -269,7 +271,7 @@ class SToolBuilder {
         return this.#dispatchToDevice(device, deviceName, {
             action,
             position: args.position,
-            channel: args.channel != null ? String(args.channel).trim().toLowerCase() : undefined,
+            channel: normalizeChannelRef(args.channel),
             brightness: this.#toBrightness(args.brightness),
             toolLabel: funcName,
             readState,
@@ -339,7 +341,7 @@ class SToolBuilder {
                     device: devName,
                     action: p.action ?? undefined,
                     position: this.#toPosition(p.position),
-                    channel: p.channel != null ? String(p.channel).trim().toLowerCase() : undefined,
+                    channel: normalizeChannelRef(p.channel),
                     brightness: this.#toBrightness(p.brightness)
                 })
                 continue
@@ -351,7 +353,7 @@ class SToolBuilder {
                     device: parsed.device || parsed.device_name,
                     action: parsed.action ?? undefined,
                     position: this.#toPosition(parsed.position),
-                    channel: parsed.channel != null ? String(parsed.channel).trim().toLowerCase() : undefined,
+                    channel: normalizeChannelRef(parsed.channel),
                     brightness: this.#toBrightness(parsed.brightness)
                 })
                 continue
@@ -467,7 +469,7 @@ class SToolBuilder {
         return this.#dispatchToDevice(device, deviceName, {
             action,
             position: intent.position,
-            channel: intent.channel != null ? String(intent.channel).trim().toLowerCase() : undefined,
+            channel: normalizeChannelRef(intent.channel),
             brightness: this.#toBrightness(intent.brightness),
             toolLabel: 'json_intent',
             readState
@@ -536,6 +538,18 @@ class SToolBuilder {
         // position above (models routinely combine these with action:"STATE"). The bare STATE
         // marker itself never reaches the device; only real state/brightness fields do.
         if (hasChannel || clampedBright !== null) {
+            // Validate the channel against the device's declared topology before
+            // dispatching so the model gets an honest error instead of a silent
+            // drop (the device would otherwise log a warning and publish nothing).
+            const channels = device.getChannels?.()
+            if (hasChannel && Array.isArray(channels) && resolveChannelAlias(channels, channel) === null) {
+                return JSON.stringify({
+                    device: deviceName,
+                    error: `Unknown channel "${channel}" -- valid channels: `
+                        + `${channels.map((c, i) => `${POSITIONAL_NAMES[i] ?? c} (${c})`).join(', ')}`
+                })
+            }
+
             const payload = {}
             if (hasChannel) payload.channel = channel
             if (action && action !== 'STATE') payload.state = action
@@ -559,7 +573,7 @@ class SToolBuilder {
             const stateLast = cached?.stateLast ?? {}
             return JSON.stringify({
                 device: deviceName,
-                state: this.#filterStateForAI(stateLast),
+                state: this.#filterStateForAI(this.#renameChannelFieldsForAI(stateLast, device)),
                 last_updated: cached?.stateLastAt ?? null,
                 origin: cached?.stateOrigin ?? 'unknown'
             }, null, 2)
@@ -672,7 +686,7 @@ class SToolBuilder {
             device: args.device || args.device_name,
             action: args.action ?? undefined,
             position: this.#toPosition(args.position),
-            channel: args.channel != null ? String(args.channel).trim().toLowerCase() : undefined,
+            channel: normalizeChannelRef(args.channel),
             brightness: this.#toBrightness(args.brightness)
         }
     }
@@ -728,6 +742,45 @@ class SToolBuilder {
     }
 
     // -- Private Helpers --------------------------------------------------
+
+    /**
+     * Rename wire-suffixed channel fields to the positional AI vocabulary
+     * (state_l1 -> state_one, brightness_left -> brightness_one) so the model
+     * sees a uniform ONE/TWO surface regardless of the converter's naming.
+     * Brightness levels are converted into the 0-100 percentage vocabulary the
+     * model sets, via the device's own range resolution when available.
+     *
+     * @param {Object} state - Raw state payload
+     * @param {DeviceBase} device - Device the state belongs to
+     * @returns {Object} Renamed copy (the original object is not mutated)
+     * @private
+     */
+    #renameChannelFieldsForAI(state, device) {
+        const channels = device.getChannels?.()
+        if (!Array.isArray(channels) || channels.length === 0) return state
+
+        const renamed = {}
+        for (const [key, value] of Object.entries(state)) {
+            const m = key.match(/^(state|brightness)_(.+)$/)
+            if (!m) {
+                renamed[key] = value
+                continue
+            }
+            const wire = m[2].toLowerCase()
+            const positional = positionalNameFor(channels, wire)
+            if (positional === null) {
+                renamed[key] = value
+                continue
+            }
+            const newKey = `${m[1]}_${positional.toLowerCase()}`
+            if (m[1] === 'brightness' && typeof device.levelToPercent === 'function') {
+                renamed[newKey] = device.levelToPercent(wire, value) ?? value
+            } else {
+                renamed[newKey] = value
+            }
+        }
+        return renamed
+    }
 
     /**
      * Filter raw Zigbee2MQTT state payload to only include fields relevant

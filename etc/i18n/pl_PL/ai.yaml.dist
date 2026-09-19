@@ -40,8 +40,10 @@ tools:
     description: "Zmień stan lub pozycję urządzenia (światło, gniazdko, przełącznik, roleta)."
     parameters:
       device_name: 'Nazwa urządzenia, np. "Living Room Roller Left", "Kitchen Outlet".'
-      action: "Dla rolet: OPEN/CLOSE/STOP. Dla świateł/gniazdek: ON/OFF."
+      action: "Dla rolet: OPEN/CLOSE/STOP. Dla świateł/gniazdek: ON/OFF, TOGGLE odwraca obecny stan."
       position: "Pozycja rolety w % (0-100), zamiast action."
+      channel: "Kanał na urządzeniach wielokanałowych (podwójnych włącznikach/ściemniaczach): ONE lub TWO. Bez parametru steruje wszystkimi kanałami naraz."
+      brightness: "Opcjonalna jasność w % (0-100) dla ściemniaczy; łączy się z channel, aby celować w jedno wyjście."
 
   get_device_state:
     description: "Sprawdź stan urządzenia - odczyty czujników, baterię, stan binarny."
