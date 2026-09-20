@@ -5,8 +5,8 @@
 # room's roller owner when it goes offline; while a video plays, interfering
 # lights go off (dark mode); on pause/stop/gone this instance restores its lamp
 # set locally from time-of-day + illuminance rules instead of delegating to the
-# ambient-lights automation -- dimmers come back at half brightness rather than
-# full ON.
+# ambient-lights automation -- dimmers come back switched on with per-channel
+# levels (l1 at 50%, l2 at 25%) rather than full ON.
 #
 # One instance per room keeps trigger subscriptions scoped to that room's
 # hosts, so other rooms' players never fire this execution chain. Deploying
@@ -59,8 +59,10 @@ rules:
   # Light restore is done locally from this rule instead of delegated to the ambient-
   # lights automation: on pause/stop/gone the lamp set comes back, gated by time of day
   # + outdoor illuminance. No `presence` gate so an offline machine also restores the
-  # lights. Dimmers take a structured `{brightness: 0-100}` command (percentage mapped
-  # per-channel at publish time) instead of plain ON.
+  # lights. Dimmers take a structured `{state: 'ON', brightness: { l1: 50, l2: 25 }}`
+  # command: a bare `{brightness: N}` only sets the level and never switches the
+  # relay on, so the state comes first and the per-channel map is split into a
+  # separate level publish (the Tuya/AVATTO converter drops combined payloads).
   - name: 'Office: not playing - restore ambient lighting'
     conditions:
       video-player: { my-pc: [paused, stopped, unreachable, unknown] }
@@ -69,7 +71,7 @@ rules:
     targets:
       Living_Room_Plug: ON
       Kitchen_Plug: ON
-      Living_Room_Dimmer: { brightness: 50 }
+      Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 
   - name: 'Office: playing - dark mode (lights off)'
     conditions:
@@ -78,3 +80,4 @@ rules:
     targets:
       Living_Room_Plug: OFF
       Kitchen_Plug: OFF
+      Living_Room_Dimmer: OFF

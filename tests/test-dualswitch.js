@@ -177,11 +177,13 @@ console.log('\n── DualDimmer brightness mapping ──\n')
     dm.receiveCommand({ brightness: 50 })
     assertEqual(lastPublish(mock)?.payload, { brightness_l1: 154, brightness_l2: 128 }, 'all-channel 50% respects per-channel ranges (154 / 128)')
 
-    // State + brightness combine into one payload for the same channel.
+    // State + brightness are split into two sequential publishes (state first, then
+    // brightness) because the Tuya/AVATTO converter drops combined payloads.
     mock.reset()
     dm.receiveCommand({ channel: 'l1', state: 'ON', brightness: 10 })
-    const combined = lastPublish(mock)?.payload ?? {}
-    assert(combined.state_l1 === 'ON' && Number.isInteger(combined.brightness_l1), 'state+brightness combined into single suffixed payload')
+    assertEqual(mock.published.length, 2, 'state+brightness split into two sequential publishes')
+    assertEqual(mock.published[0]?.payload, { state_l1: 'ON' }, 'first publish is state-only')
+    assertEqual(mock.published[1]?.payload, { brightness_l1: 74 }, 'second publish is brightness-only (10% of [54,254] = 74)')
 }
 
 {
@@ -202,6 +204,92 @@ console.log('\n── DualDimmer brightness mapping ──\n')
     deg.setMqttService(mockD)
     deg.receiveCommand({ channel: 'l1', brightness: 50 })
     assertEqual(lastPublish(mockD)?.payload, { brightness_l1: 128 }, 'degenerate 54/54 metadata ignored -> default range gives 128')
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n── SET_BRIGHTNESS sentinel & split-publish behavior ──\n')
+
+{
+    const dm = new DualDimmer('Salon Ambient', '0x7777', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const mock = new MockMqttService()
+    dm.setMqttService(mock)
+
+    // The model learned the SET_BRIGHTNESS verb from our own log lines; it is
+    // accepted as "brightness only, leave state alone" and published as a single
+    // brightness payload (no state field).
+    dm.receiveCommand({ action: 'SET_BRIGHTNESS', channel: 'l1', brightness: 50 })
+    assertEqual(mock.published.length, 1, 'SET_BRIGHTNESS + brightness -> single brightness-only publish')
+    assertEqual(lastPublish(mock)?.payload, { brightness_l1: 154 }, 'SET_BRIGHTNESS maps to brightness_l1 (50% of [54,254] = 154), no state field')
+
+    // A bare SET_BRIGHTNESS with no brightness has nothing to apply -> dropped.
+    mock.reset()
+    dm.receiveCommand({ action: 'SET_BRIGHTNESS' })
+    assertEqual(mock.published.length, 0, 'bare SET_BRIGHTNESS (no brightness) dropped without publish')
+
+    // ON + brightness splits into two sequential publishes: state first, then brightness.
+    mock.reset()
+    dm.receiveCommand({ action: 'ON', channel: 'l1', brightness: 50 })
+    assertEqual(mock.published.length, 2, 'ON + brightness split into two sequential publishes')
+    assertEqual(mock.published[0]?.payload, { state_l1: 'ON' }, 'ON + brightness: first publish is state-only')
+    assertEqual(mock.published[1]?.payload, { brightness_l1: 154 }, 'ON + brightness: second publish is brightness-only')
+
+    // The sentinel also works via the `state` key (not just `action`).
+    mock.reset()
+    dm.receiveCommand({ state: 'SET_BRIGHTNESS', channel: 'l2', brightness: 100 })
+    assertEqual(mock.published.length, 1, 'state:SET_BRIGHTNESS + brightness -> single brightness-only publish')
+    assertEqual(lastPublish(mock)?.payload, { brightness_l2: 254 }, 'state:SET_BRIGHTNESS maps to brightness_l2 (100% of [1,254] = 254)')
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n── Per-channel brightness maps ──\n')
+
+{
+    const dm = new DualDimmer('Salon Ambient', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const mock = new MockMqttService()
+    dm.setMqttService(mock)
+
+    // Per-channel map: state ON to both mapped channels first, then per-channel levels.
+    dm.receiveCommand({ state: 'ON', brightness: { l1: 50, l2: 25 } })
+    assertEqual(mock.published.length, 2, 'per-channel map splits into state + brightness publishes')
+    assertEqual(mock.published[0]?.payload, { state_l1: 'ON', state_l2: 'ON' }, 'state publish covers both mapped channels')
+    assertEqual(mock.published[1]?.payload, { brightness_l1: 154, brightness_l2: 64 }, 'per-channel levels: 50% of [54,254]=154, 25% of [1,254]=64')
+
+    // Positional aliases (ONE/TWO) resolve inside the map too.
+    mock.reset()
+    dm.receiveCommand({ state: 'ON', brightness: { ONE: 100, TWO: 0 } })
+    assertEqual(mock.published[1]?.payload, { brightness_l1: 254, brightness_l2: 1 }, 'ONE/TWO aliases resolve in the map (254 / 1)')
+
+    // Partial map: only the mapped channels are touched, state included.
+    mock.reset()
+    dm.receiveCommand({ state: 'ON', brightness: { l2: 25 } })
+    assertEqual(mock.published[0]?.payload, { state_l2: 'ON' }, 'partial map: state only on the mapped channel')
+    assertEqual(mock.published[1]?.payload, { brightness_l2: 64 }, 'partial map: brightness only on the mapped channel')
+
+    // SET_BRIGHTNESS + per-channel map -> single brightness-only publish (state untouched).
+    mock.reset()
+    dm.receiveCommand({ action: 'SET_BRIGHTNESS', brightness: { l1: 50, l2: 25 } })
+    assertEqual(mock.published.length, 1, 'SET_BRIGHTNESS + map -> single brightness-only publish')
+    assertEqual(lastPublish(mock)?.payload, { brightness_l1: 154, brightness_l2: 64 }, 'map levels published without state fields')
+
+    // Unknown channel in the map -> whole command dropped.
+    mock.reset()
+    dm.receiveCommand({ state: 'ON', brightness: { l1: 50, l3: 25 } })
+    assertEqual(mock.published.length, 0, 'unknown channel in the map dropped without publish')
+
+    // Out-of-range value in the map -> whole command dropped.
+    mock.reset()
+    dm.receiveCommand({ state: 'ON', brightness: { l1: 50, l2: 150 } })
+    assertEqual(mock.published.length, 0, 'out-of-range value in the map dropped without publish')
+
+    // Empty map -> nothing to apply, dropped.
+    mock.reset()
+    dm.receiveCommand({ state: 'ON', brightness: {} })
+    assertEqual(mock.published.length, 0, 'empty map dropped without publish')
+
+    // A map plus an explicit single-channel key is ambiguous -> dropped.
+    mock.reset()
+    dm.receiveCommand({ channel: 'l1', state: 'ON', brightness: { l1: 50, l2: 25 } })
+    assertEqual(mock.published.length, 0, 'channel key + per-channel map is ambiguous and dropped')
 }
 
 // ---------------------------------------------------------------------------

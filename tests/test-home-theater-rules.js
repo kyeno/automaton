@@ -178,8 +178,8 @@ function makeBundledDevices(dark = false) {
 const RULES_OFFICE = [
     { name: 'Office: player reachable - close rollers', conditions: { 'video-player': { htpc: ['playing', 'paused', 'stopped'] } }, targets: { Living_Room_Roller_Left: 'CLOSE' } },
     { name: 'Office: player gone - hand rollers back to their owner', conditions: { 'video-player': { htpc: ['unknown', 'unreachable'] } }, invoke_automation: { name: 'HomeOfficeRollersAutomation', force: true } },
-    { name: 'Office: not playing - restore ambient lighting', conditions: { 'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }, 'time-of-day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { brightness: 50 } } },
-    { name: 'Office: playing - dark mode (lights off)', conditions: { 'video-player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF' } }
+    { name: 'Office: not playing - restore ambient lighting', conditions: { 'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }, 'time-of-day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
+    { name: 'Office: playing - dark mode (lights off)', conditions: { 'video-player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
 ]
 
 const RULES_BUNDLED = [
@@ -278,8 +278,8 @@ console.log('\n── Home theater (bundled instance): dark mode, pause restores
         'Living_Room_Plug: OFF on play; restored locally on the paused tick')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }],
         'Kitchen_Plug: OFF on the playing tick; restored locally on pause')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }],
-        'dimmer returns at 50% on the paused tick only -- never while playing')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }],
+        'dimmer OFF on the playing tick; restored ON at l1 50% / l2 25% on the paused tick')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed on every reachable tick (playing + paused)')
     // Bedroom player open but idle: its roller is still owned (closed); light restore is
@@ -306,7 +306,7 @@ console.log('\n── Home theater (bundled instance): already-dark room, only t
     ])
     assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Living_Room_Plug: OFF re-sent even though already dark; restored locally on pause')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF re-sent on the playing tick; restored locally on pause')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% on the paused tick')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on the playing tick; restored ON at l1 50% / l2 25% on the paused tick')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'], 'Living_Room_Roller_Left: re-closed each reachable tick (idempotent)')
     assertCalls(devices, 'Bedroom_Plug', [], 'Bedroom_Plug: silent (restore delegated)')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE', 'CLOSE'], 'Bedroom_Roller_Left: re-closed each reachable tick (idempotent)')
@@ -324,6 +324,7 @@ console.log('\n── Home theater (bundled instance): both playing (full dark) 
     const devices = await runSequence('bundled', makeBundledDevices(), [{ htpc: 'playing', bedroom: 'playing' }])
     assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }], 'Living_Room_Plug: OFF')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF (dark mode dispatches regardless of prior state)')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }], 'Salon_Ambient_Dimmer: OFF (dark mode switches the ambient dimmer off)')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE'], 'Living_Room_Roller_Left: CLOSE')
     assertCalls(devices, 'Bedroom_Plug', [{ state: 'OFF' }], 'Bedroom_Plug: OFF')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE'], 'Bedroom_Roller_Left: CLOSE')
@@ -345,8 +346,8 @@ console.log('\n── Home theater (bundled instance): movie ends (stopped) -- l
         'Living_Room_Plug: OFF on play; restored locally on the stopped tick')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }],
         'Kitchen_Plug: OFF on the playing tick; restored locally after stop')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }],
-        'dimmer dimmed back to 50% when playback stops')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }],
+        'dimmer OFF on play; restored ON at l1 50% / l2 25% when playback stops')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed each reachable tick (playing + stopped)')
     assertCalls(devices, 'Bedroom_Plug', [{ state: 'OFF' }],
@@ -381,8 +382,8 @@ console.log('\n── Home theater (bundled instance): roller ownership lifecycl
         'Living_Room_Plug: OFF on each playing tick (t1,t5); local restore on every other tick')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'ON' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
         'Kitchen_Plug: mirrors the plug sequence (local restore on t2,t3,t4,t6)')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }, { brightness: 50 }, { brightness: 50 }, { brightness: 50 }],
-        'dimmer dimmed back to 50% on each not-playing tick (t2,t3,t4,t6), never while playing')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }],
+        'dimmer OFF on each playing tick (t1,t5); restored ON at l1 50% / l2 25% on each not-playing tick (t2,t3,t4,t6)')
     assertCalls(devices, 'Bedroom_Roller_Left', [],
         'Bedroom_Roller_Left: never closed by us -- only ever delegated')
     assertCalls(devices, 'Bedroom_Plug', [],
@@ -414,7 +415,7 @@ console.log('\n── Home theater (bundled instance): rollers found closed are 
     assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
         'Living_Room_Plug: OFF on play; restored locally when HTPC goes offline')
     assertCalls(after, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after')
-    assertCalls(after, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% on the offline tick')
+    assertCalls(after, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on play; restored ON at l1 50% / l2 25% on the offline tick')
     assertCalls(after, 'Bedroom_Roller_Left', [], 'Bedroom_Roller_Left: never opened')
     // Delegation happened even though the local rollers stayed put.
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
@@ -439,7 +440,7 @@ console.log('\n── Home theater (bundled instance): players vanish mid-movie 
     assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
         'Living_Room_Plug: OFF on play; restored locally on the vanished tick')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after vanish')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% when both players vanish')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on play; restored ON at l1 50% / l2 25% when both players vanish')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: CLOSE then delegated hand-back (no local OPEN)')
     assertCalls(devices, 'Bedroom_Plug', [{ state: 'OFF' }],
@@ -467,8 +468,8 @@ console.log('\n── Home theater (single-room instance): dark mode, pause rest
         'Living_Room_Plug: OFF on play; restored locally on the paused tick')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }],
         'Kitchen_Plug: OFF on the playing tick; restored locally on pause')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }],
-        'dimmer dimmed back to 50% on the paused tick only')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }],
+        'dimmer OFF on the playing tick; restored ON at l1 50% / l2 25% on the paused tick')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed on every reachable tick (playing + paused)')
     // Local restore while the player stays reachable -- no ambient-lights delegation at all.
@@ -493,7 +494,7 @@ console.log('\n── Home theater (single-room instance): player gone -- hands 
     assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
         'Living_Room_Plug: OFF on play; restored locally when the player goes offline')
     assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% on the offline tick')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on play; restored ON at l1 50% / l2 25% on the offline tick')
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'rollers handed back to this room\'s owner exactly once (forced)')
     assert(invocationCount('BedroomRollersAutomation') === 0,

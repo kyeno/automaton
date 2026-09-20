@@ -19,6 +19,10 @@
  * bounds while still accepting the wider range, so pinning to them would make
  * dimming impossible.
  *
+ * A request may be a single percentage (fanned out to every targeted channel)
+ * or a per-channel map ({l1: 50, l2: 25}) where each channel gets its own
+ * percentage and the mapped channels define the command's scope.
+ *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  *
@@ -28,6 +32,7 @@
 'use strict'
 
 import DualSwitch from './dualswitch.js'
+import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 
 /** Full Zigbee level range used when no better bound information exists. */
 const ZIGBEE_LEVEL_MIN = 1
@@ -74,24 +79,62 @@ export default class DualDimmer extends DualSwitch {
     // -- Brightness mapping ---------------------------------------------------
 
     /**
-     * Append brightness_<channel> fields for a percentage request, mapped into
+     * Build brightness_<channel> fields for a percentage request, mapped into
      * each channel's accepted level range (see class docs for precedence rules).
      * Channels without any usable bounds fall back to the full [1, 254] range.
+     * A per-channel map ({l1: 50, l2: 25}) maps each percentage into its own
+     * channel's range instead of fanning one value out.
      *
-     * @param {Object} payload - Payload being built by DualSwitch (mutated in place)
      * @param {Array<string>} targetChannels - Channels the command applies to
-     * @param {number|undefined} fieldBrightness - Requested percentage 0-100, if any
+     * @param {number|Object<string, number>|undefined} fieldBrightness - Uniform percentage 0-100, or a per-channel percentage map, if any
+     * @returns {Object} Partial payload with one brightness_<channel> key per channel (empty when none requested)
+     * @protected
      */
-    _extendPayloadWithExtraFields(payload, targetChannels, fieldBrightness) {
-        if (fieldBrightness === undefined) return
+    _buildBrightnessFields(targetChannels, fieldBrightness) {
+        if (fieldBrightness === undefined) return {}
 
         const last = this.getStateLast() ?? {}
+        const payload = {}
+        if (fieldBrightness !== null && typeof fieldBrightness === 'object') {
+            // Per-channel map: each percentage is mapped into its own channel's
+            // accepted range (the map's keys were already resolved to wire names
+            // by DualSwitch._resolveCommand).
+            for (const [ch, pct] of Object.entries(fieldBrightness)) {
+                const [minLevel, maxLevel] = this.#resolveChannelRange(ch, last)
+                const raw = minLevel + (pct / 100) * (maxLevel - minLevel)
+                payload[`brightness_${ch}`] = Math.min(maxLevel, Math.max(minLevel, Math.round(raw)))
+            }
+            return payload
+        }
         for (const ch of targetChannels) {
             const [minLevel, maxLevel] = this.#resolveChannelRange(ch, last)
             const raw = minLevel + (fieldBrightness / 100) * (maxLevel - minLevel)
             const level = Math.min(maxLevel, Math.max(minLevel, Math.round(raw)))
             payload[`brightness_${ch}`] = level
         }
+        return payload
+    }
+
+    /**
+     * Some converters (notably the Tuya-based AVATTO ZDMS16) silently drop
+     * combined state+brightness payloads, so a command carrying both is split
+     * into two sequential publishes: state first, then brightness. The MqttService
+     * FIFO queue preserves ordering, and each publish passes the base publisher's
+     * redundancy/backoff checks independently. Single-field commands use the
+     * default single-payload behavior.
+     *
+     * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
+     * @param {DeviceCommandSource} source - Who is behind this command
+     * @protected
+     */
+    _publishResolved(resolved, source) {
+        const { targetChannels, fieldState, fieldBrightness } = resolved
+        if (fieldState !== null && fieldBrightness !== undefined) {
+            this._publishRaw(this._buildStateFields(targetChannels, fieldState), source)
+            this._publishRaw(this._buildBrightnessFields(targetChannels, fieldBrightness), source)
+            return
+        }
+        super._publishResolved(resolved, source)
     }
 
     /**

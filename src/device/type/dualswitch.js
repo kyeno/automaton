@@ -99,7 +99,7 @@ export default class DualSwitch extends Mechanism {
      * cannot be expressed on this topology warn and are dropped instead of being
      * published as an invalid generic `{state}` payload.
      *
-     * @param {string|Object} command - State string or structured payload (may carry channel/brightness/state keys)
+     * @param {string|Object} command - State string or structured payload (may carry channel/brightness/state keys; brightness may be a number or a per-channel map)
      * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command
      */
     receiveCommand(command, source = DeviceCommandSource.HUMAN) {
@@ -126,21 +126,22 @@ export default class DualSwitch extends Mechanism {
             return super.receiveCommand(command, source)
         }
 
-        const translated = this.#translateToChannelPayload(command, channels)
-        if (translated === null) return // already logged why it was dropped
+        const resolved = this._resolveCommand(command, channels)
+        if (resolved === null) return // already logged why it was dropped
 
-        super.receiveCommand(translated, source)
+        this._publishResolved(resolved, source)
     }
 
     /**
      * Build the state_* fields of the payload for a resolved command. Kept as a
-     * separate helper so DualDimmer can compose its own brightness_* fields on top.
+     * separate helper so DualDimmer can compose its own brightness_* fields on top
+     * and so the split-publish path can build each half independently.
      * @param {Array<string>} targetChannels - Channels the command applies to
      * @param {string|null} fieldState - ON/OFF/TOGGLE value, or null when absent
      * @returns {Object} Partial payload with one state_<channel> key per channel (empty when no state requested)
-     * @private
+     * @protected
      */
-    #buildBaseStateFields(targetChannels, fieldState) {
+    _buildStateFields(targetChannels, fieldState) {
         const payload = {}
         if (fieldState !== null) {
             for (const ch of targetChannels) {
@@ -151,16 +152,76 @@ export default class DualSwitch extends Mechanism {
     }
 
     /**
-     * Translate a raw command into the suffixed multi-channel payload shape, or
-     * null when it cannot be expressed on this device's topology (with warning).
-     * Subclasses extend via {@link _extendPayloadWithExtraFields}.
+     * Build the brightness_* fields of the payload for a resolved command. Base
+     * DualSwitch is on/off only, so this returns an empty object; DualDimmer
+     * overrides it to map the requested percentage into per-channel level fields.
+     * @param {Array<string>} targetChannels - Channels the command applies to
+     * @param {number|Object<string, number>|undefined} fieldBrightness - Uniform percentage 0-100, or a per-channel percentage map, if any
+     * @returns {Object} Partial payload with one brightness_<channel> key per channel (empty when none requested)
+     * @protected
+     */
+    _buildBrightnessFields(targetChannels, fieldBrightness) {
+        return {}
+    }
+
+    /**
+     * Compose the full wire payload (state_* + brightness_*) for a resolved command.
+     * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
+     * @returns {Object|null} Payload ready for zigbee2mqtt, or null when empty
+     * @protected
+     */
+    _buildPayload(resolved) {
+        const { targetChannels, fieldState, fieldBrightness } = resolved
+        const payload = {
+            ...this._buildStateFields(targetChannels, fieldState),
+            ...this._buildBrightnessFields(targetChannels, fieldBrightness)
+        }
+        return Object.keys(payload).length > 0 ? payload : null
+    }
+
+    /**
+     * Publish a raw payload to zigbee2mqtt via the base mechanism publisher,
+     * bypassing this class's command translation. Used by the split-publish path
+     * so DualDimmer can emit state and brightness as separate messages without
+     * re-entering the translator.
+     * @param {Object} payload - Payload ready for zigbee2mqtt
+     * @param {DeviceCommandSource} source - Who is behind this command
+     * @protected
+     */
+    _publishRaw(payload, source) {
+        super.receiveCommand(payload, source)
+    }
+
+    /**
+     * Publish a resolved command to zigbee2mqtt. Default: a single combined
+     * payload. DualDimmer overrides this to split state and brightness into two
+     * sequential publishes because some converters (Tuya/AVATTO) drop combined
+     * payloads.
+     * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
+     * @param {DeviceCommandSource} source - Who is behind this command
+     * @protected
+     */
+    _publishResolved(resolved, source) {
+        const payload = this._buildPayload(resolved)
+        if (payload) this._publishRaw(payload, source)
+    }
+
+    /**
+     * Resolve a raw command into its effective scope and fields without building
+     * the wire payload. Returns null (with a warning) when the command cannot be
+     * expressed on this device's topology.
+     *
+     * Recognizes the `SET_BRIGHTNESS` sentinel in the state/action slot: the model
+     * learned that verb from our own "AI performed SET_BRIGHTNESS=NN" log lines, so
+     * it is accepted as "set brightness only, leave state alone" rather than
+     * rejected as an unknown state.
      *
      * @param {string|Object} command - Raw command from any caller
      * @param {Array<string>} channels - Validated channel names
-     * @returns {Object|null} Payload ready for zigbee2mqtt, or null to drop
-     * @private
+     * @returns {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}|null} Resolved command, or null to drop
+     * @protected
      */
-    #translateToChannelPayload(command, channels) {
+    _resolveCommand(command, channels) {
         let fieldState = null              // 'ON' | 'OFF' | 'TOGGLE'
         let fieldBrightness = undefined    // percentage 0-100 (dimmers only)
         let targetChannels = channels
@@ -189,20 +250,68 @@ export default class DualSwitch extends Mechanism {
 
             if ('state' in command || 'action' in command) {
                 const st = String(command.state ?? command.action).toUpperCase()
-                if (!['ON', 'OFF', 'TOGGLE'].includes(st)) {
+                if (st === 'SET_BRIGHTNESS') {
+                    // Sentinel the model learned from our own log lines: means
+                    // "set brightness only, leave state alone."
+                    fieldState = null
+                } else if (['ON', 'OFF', 'TOGGLE'].includes(st)) {
+                    fieldState = st
+                } else {
                     this.warn(`Unsupported state "${st}" for dual switch -- expected ON/OFF/TOGGLE. Command dropped.`)
                     return null
                 }
-                fieldState = st
             }
 
             if ('brightness' in command) {
-                const b = Number(command.brightness)
-                if (!Number.isFinite(b) || b < 0 || b > 100) {
-                    this.warn(`Invalid brightness "${command.brightness}" -- expected a number between 0 and 100. Command dropped.`)
-                    return null
+                if (command.brightness !== null && typeof command.brightness === 'object'
+                    && !Array.isArray(command.brightness)) {
+                    // Per-channel map: {l1: 50, l2: 25} (wire names or ONE/TWO
+                    // aliases). The mapped channels define the command's scope;
+                    // any state field applies to exactly those channels.
+                    if ('channel' in command) {
+                        this.warn('Both "channel" and a per-channel brightness map were given -- ambiguous. Command dropped.')
+                        return null
+                    }
+                    const map = {}
+                    for (const [ref, value] of Object.entries(command.brightness)) {
+                        const ch = resolveChannelAlias(channels, ref)
+                        if (ch === null) {
+                            this.warn(
+                                `Unknown channel "${ref}" in per-channel brightness -- valid channels: `
+                                + `${channels.map((c, i) => `${POSITIONAL_NAMES[i] ?? c} (${c})`).join(', ')}. Command dropped.`
+                            )
+                            return null
+                        }
+                        const b = Number(value)
+                        if (!Number.isFinite(b) || b < 0 || b > 100) {
+                            this.warn(`Invalid brightness "${value}" for channel "${ch}" -- expected a number between 0 and 100. Command dropped.`)
+                            return null
+                        }
+                        map[ch] = Math.round(b)
+                    }
+                    if (Object.keys(map).length === 0) {
+                        this.warn('Per-channel brightness map is empty. Command dropped.')
+                        return null
+                    }
+                    fieldBrightness = map
+                    targetChannels = Object.keys(map)
+                } else {
+                    const b = Number(command.brightness)
+                    if (!Number.isFinite(b) || b < 0 || b > 100) {
+                        this.warn(`Invalid brightness "${command.brightness}" -- expected a number between 0 and 100. Command dropped.`)
+                        return null
+                    }
+                    fieldBrightness = Math.round(b)
                 }
-                fieldBrightness = Math.round(b)
+            }
+
+            // Brightness is only meaningful on dimmable subclasses; warn instead of
+            // silently publishing a field the converter may ignore or reject. Checked
+            // before the "no usable fields" gate so a brightness-only command on a
+            // non-dimmable device is dropped with an explanatory warning.
+            if (fieldBrightness !== undefined && !this.supportsBrightness()) {
+                this.warn(`Channel(s) [${targetChannels.join(', ')}] are not dimmable -- ignoring brightness`)
+                fieldBrightness = undefined
             }
 
             if (fieldState === null && fieldBrightness === undefined) {
@@ -214,20 +323,7 @@ export default class DualSwitch extends Mechanism {
             return null
         }
 
-        // Brightness is only meaningful on dimmable subclasses; warn instead of
-        // silently publishing a field the converter may ignore or reject.
-        if (fieldBrightness !== undefined && !this.supportsBrightness()) {
-            this.warn(`Channel(s) [${targetChannels.join(', ')}] are not dimmable -- ignoring brightness`)
-            fieldBrightness = undefined
-        }
-
-        const payload = this.#buildBaseStateFields(targetChannels, fieldState)
-        if (Object.keys(payload).length === 0 && fieldBrightness === undefined) return null
-
-        // Subclasses append their own suffixed fields (brightness_*) here.
-        this._extendPayloadWithExtraFields(payload, targetChannels, fieldBrightness)
-
-        return Object.keys(payload).length > 0 ? payload : null
+        return { targetChannels, fieldState, fieldBrightness }
     }
 
     // -- Button action passthrough -------------------------------------------
@@ -335,15 +431,12 @@ export default class DualSwitch extends Mechanism {
         return parts.length > 0 ? parts.join(' | ') : super.getCurrentState()
     }
 
-    // -- Subclass extension point ---------------------------------------------
-
-    /**
-     * Hook for subclasses to append extra per-channel fields (e.g. brightness_*)
-     * onto the translated payload. Base DualSwitch adds nothing; DualDimmer maps
-     * the requested percentage into its own suffixed keys here.
-     * @param {Object} payload - Payload being built (mutated in place)
-     * @param {Array<string>} targetChannels - Channels the command applies to
-     * @param {number|undefined} fieldBrightness - Requested percentage, if any
-     */
-    _extendPayloadWithExtraFields(payload, targetChannels, fieldBrightness) {}
+    // -- Subclass extension points --------------------------------------------
+    //
+    // DualDimmer extends this class by overriding:
+    //   - _buildBrightnessFields: maps the requested percentage into per-channel
+    //     brightness_* level fields (base returns an empty object).
+    //   - _publishResolved: splits a combined state+brightness command into two
+    //     sequential publishes (state first, then brightness) because some
+    //     converters (Tuya/AVATTO) drop combined payloads.
 }

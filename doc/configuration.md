@@ -437,7 +437,7 @@ Accepts a single value or a list: `season: spring`, `season: [winter]`. Detectio
 
 - **Mechanisms** (lights/outlets): `ON`, `OFF`, `TOGGLE`
 - **Mechanisms** (roller shutters): `OPEN`, `CLOSE`, `STOP`, or integer percentage (`0-100`)
-- **Dimmers**: structured object commands pass through verbatim -- e.g., `Salon_Dimmer: { brightness: 50 }`; the DualDimmer maps the percentage into its per-channel level range at publish time
+- **Dimmers**: structured object commands pass through verbatim -- e.g., `Salon_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }`; the DualDimmer maps each percentage into its channel's level range at publish time (a bare `{brightness: N}` sets levels only and never switches the relay on)
 - **Simple automations**: `action: OFF` applies to all listed devices
 
 ### Custom JavaScript Automations

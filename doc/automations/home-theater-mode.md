@@ -10,7 +10,7 @@ It ships as **one reusable pattern with per-room deployments**: a shared base cl
 |--------------|--------|--------|
 | Reachable (playing, paused, or stopped) | **CLOSE** — the automation owns them | unchanged |
 | `playing` | stays closed | **OFF** — dark mode |
-| `paused` / `stopped` | stays closed | HTPC instance: restored locally from its own time-of-day + illuminance rules (dimmer at 50%); Bedroom instance: delegated to [Ambient Lights](./ambient-lights.md) via forced `invoke_automation` |
+| `paused` / `stopped` | stays closed | HTPC instance: restored locally from its own time-of-day + illuminance rules (dimmer ON at l1 50% / l2 25%); Bedroom instance: delegated to [Ambient Lights](./ambient-lights.md) via forced `invoke_automation` |
 | `unknown` / `unreachable` | **handed back** to the room's roller owner via forced `invoke_automation` | same local/delegated restore as above -- no `presence` gate on either side, so an offline machine also restores the lights |
 
 > **Settling delay:** `playing` above is the monitor's *effective* status, which only becomes true once the same title has played continuously for the [playback-settle](../monitors/video-player.md#playback-settle) window (~60 s by default). So dark mode and light/suppression stand-down engage ~60 s into continuous viewing rather than the instant playback starts; rollers are unaffected because they track reachability, not playback. Browsing or skipping through titles therefore never dims the room or suppresses roller automations.
@@ -18,7 +18,7 @@ It ships as **one reusable pattern with per-room deployments**: a shared base cl
 Key design points:
 
 - **Roller ownership is keyed to reachability, not playback.** A paused movie still means "someone is watching" — blinds stay down until the player disappears (machine off, player closed).
-- **Roller hand-back is always delegated; light restore depends on the instance.** When a player goes offline home-theater invokes the room's roller owner ([Home Office Rollers](./home-office-rollers.md) / [Bedroom Rollers](./bedroom-rollers.md)) so that owner decides the post-playback position from its full rule set. For lights, the HTPC/Salon instance restores its lamp set directly from its own rules -- gated by time-of-day (`afternoon`/`evening`/`night`) and outdoor illuminance (<900), with the salon dimmer returning at half brightness via a structured `{brightness: 50}` command; the Bedroom instance keeps delegating that decision to [Ambient Lights](./ambient-lights.md).
+- **Roller hand-back is always delegated; light restore depends on the instance.** When a player goes offline home-theater invokes the room's roller owner ([Home Office Rollers](./home-office-rollers.md) / [Bedroom Rollers](./bedroom-rollers.md)) so that owner decides the post-playback position from its full rule set. For lights, the HTPC/Salon instance restores its lamp set directly from its own rules -- gated by time-of-day (`afternoon`/`evening`/`night`) and outdoor illuminance (<900), with the salon dimmer returning switched on via a structured `{state: 'ON', brightness: { l1: 50, l2: 25 }}` command (a bare `{brightness: N}` only sets the level and never switches the relay on); the Bedroom instance keeps delegating that decision to [Ambient Lights](./ambient-lights.md).
 - **Delegated runs are forced but budget-neutral.** Each hand-off carries `force: true` so an owner acts even if a once/silent guard would otherwise block it, yet a forced run neither consumes nor refreshes any once-per-day marker; human-interaction cooldowns still apply.
 - **Dark-mode OFF rules keep `presence`; restore does not.** Re-darkening an empty room serves no one, but pause/stop/gone all restore the lights even when the host itself is unreachable.
 - Each instance opts into `override_human_interaction`, so it is "sticky" while active: manual changes to its targets are re-corrected on the next tick.
@@ -68,7 +68,8 @@ rules:
 
   # Lights: playback drives them locally (dark mode); on pause/stop/gone this instance
   # restores its lamp set itself -- gated by time of day + outdoor illuminance like the old
-  # delegation was. Dimmers take a structured percentage command instead of plain ON.
+  # delegation was. Dimmers take a structured state + per-channel percentage map instead
+  # of plain ON (a bare {brightness: N} never switches the relay on).
   - name: 'Room: not playing - restore ambient lighting'
     conditions:
       video-player: { my-pc: [paused, stopped, unreachable, unknown] }
@@ -77,7 +78,7 @@ rules:
     targets:
       Living_Room_Plug: ON
       Kitchen_Outlet: ON
-      Salon_Dimmer: { brightness: 50 }
+      Salon_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 
   - name: 'Room: playing - dark mode'
     conditions:
@@ -85,9 +86,10 @@ rules:
       video-player: { my-pc: [playing] }
     targets:
       Living_Room_Plug: OFF
+      Salon_Dimmer: OFF
 ```
 
-**Target devices:** there is no separate declaration section -- each rule's `targets:` key addresses a device directly by its derived target key (registered friendly name with spaces replaced by underscores, casing kept). Keys are validated against the live device container at startup: unknown or non-actuator resolutions warn and stay inert; an automation whose declared targets all fail validation fails fast instead of running silently inert. Target values may also be **structured object commands passed through verbatim** -- e.g., `Salon_Dimmer: { brightness: 50 }`, where the DualDimmer maps the percentage into its per-channel level range at publish time; scalar forms (`ON`/`OFF`, `OPEN`/`CLOSE`, position integers) keep their existing mappings.
+**Target devices:** there is no separate declaration section -- each rule's `targets:` key addresses a device directly by its derived target key (registered friendly name with spaces replaced by underscores, casing kept). Keys are validated against the live device container at startup: unknown or non-actuator resolutions warn and stay inert; an automation whose declared targets all fail validation fails fast instead of running silently inert. Target values may also be **structured object commands passed through verbatim** -- e.g., `Salon_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }`, where the DualDimmer maps each percentage into its channel's level range at publish time (a bare `{brightness: N}` sets levels only and leaves the relay state alone); scalar forms (`ON`/`OFF`, `OPEN`/`CLOSE`, position integers) keep their existing mappings.
 
 **Creating your own split:** copy one of the wrapper files (`homeOfficeVideoAutomation.js` / `bedroomVideoAutomation.js`), give it a distinct class + instance name and point its config path at a new YAML with *your* room's hosts, devices and rules. The container auto-discovers any `.js` under `etc/automation/` whose file name contains "Automation", so no registration step is needed -- and the execution test suite discovers every subclass of `HomeTheaterAutomation` on its own and validates each configured instance against its triggers. Keeping the shared base's file name free of "Automation" is what keeps it from being instantiated as a phantom third automation.
 
