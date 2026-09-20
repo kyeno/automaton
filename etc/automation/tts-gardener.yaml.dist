@@ -1,0 +1,62 @@
+# ================================================================
+# TTS GARDENER -- Configuration Template
+# ================================================================
+# Watches soil-moisture flower sensors and announces plant hydration
+# status by voice, with sentences chosen from moisture thresholds tuned below.
+#
+# Two ways in:
+#   * reactive  -- any state change on a listed flower sensor triggers an evaluation;
+#                  speech fires ONLY when some plant has worsened past its last announced
+#                  band (per-flower severity tracking), so periodic battery-sensor blips at
+#                  the same level never re-announce; recovery lowers the baseline silently
+#                  and the next drop below a band speaks again;
+#   * scheduled -- a full status report (even "everything's fine") at each announce_times
+#                  slot once per day, driven by the minute-granularity tick timer below.
+# Manual runs ("/automation run|force TtsGardenerAutomation") always speak immediately.
+#
+# Output routing is a precise boolean switch (use_ai) like ttsGreeter:
+#   use_ai false -> speak the bucket's tts line directly (default);
+#   use_ai true  + AI available -> send the bucket's ai instruction to the model, which
+#                   speaks its own report; empty reply / error / AI down -> warn log +
+#                   plain TTS sentence instead (no spoken fallback notice).
+#
+# rules are evaluated top-down per plant; FIRST matching band wins. Thresholds are yours
+# to tune freely -- keep them contiguous or accept that gaps degrade to the healthy band.
+# Each rule's "sentence" names a section of the gardener i18n bundle
+# (etc/i18n/<locale>/gardener.yaml), which holds tts/ai lines with runtime placeholders:
+#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN)", driest first
+#   {% driest_flower %}    -- name of the single driest plant
+#   {% driest_moisture %}  -- that plant's raw moisture value (digits only)
+# Numeric values stay out of template words on purpose so Piper TTS and small models read
+# digits naturally in any locale; unit words live in the sentences themselves.
+#
+# Copy this file to "tts-gardener.yaml" and customize for your home.
+
+triggers_zigbee: [Flower Sensor One, Flower Sensor Two]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
+
+moisture_property: 'moisture'    # state key carrying the percent value on those devices (z2m exposure-dependent)
+
+use_ai: false                    # true  -> route each announcement through AI -> TTS when available
+                                 #         (warn log + plain TTS sentence if the AI is down);
+                                 # false -> direct TTS only, never touches the AI pipeline
+
+announce_times: ["0830", "1900"] # local HHmm slots for the twice-daily status report (each fires once per day)
+timer_interval: "1m"            # tick driving announce_times scheduling -- keep at minute granularity
+silence_between: "2300-0600"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
+
+rules:                          # most severe first -- first matching band wins per plant
+  - name: 'Critical drought'
+    conditions: { moisture: { lte: 20 } }
+    sentence: 'gardener.critical'
+
+  - name: 'Needs watering'
+    conditions: { moisture: { lte: 35 } }
+    sentence: 'gardener.dry'
+
+  - name: 'Getting dry'
+    conditions: { moisture: { lte: 50 } }
+    sentence: 'gardener.slightly_dry'
+
+  - name: 'Healthy'
+    conditions: { moisture: { gt: 50 } }
+    sentence: 'gardener.healthy'

@@ -134,6 +134,7 @@ const testScripts = [
   'test-database-service.js',
   'test-rule-react-on-change.js',
   'test-tts-greeter.js',
+  'test-tts-gardener.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',
   'test-mqtt-publish-hook.js',
