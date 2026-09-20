@@ -146,7 +146,9 @@ class TestHomeTheater extends HomeTheaterAutomation {
     async buildContext() { return this.#context }
 }
 
-const CONTEXT = { timeOfDay: 'evening' }
+// Dark-enough context for the office rule set's local light-restore gate (illuminance < 900);
+// scenarios needing brighter daylight or other periods build their own instances.
+const CONTEXT = { timeOfDay: 'evening', illuminance: 800 }
 
 // ---------------------------------------------------------------------------
 // Deployment shapes under test
@@ -157,6 +159,7 @@ function makeOfficeDevices(dark = false) {
     return new Map([
         ['Living_Room_Plug', makeStubDevice('Living Room Plug', { state: dark ? 'OFF' : 'ON' })],
         ['Kitchen_Plug', makeStubDevice('Kitchen Plug', { state: 'OFF' })],
+        ['Salon_Ambient_Dimmer', makeStubDevice('Salon Ambient Dimmer')],
         ['Living_Room_Roller_Left', makeStubDevice('Living Room Roller Left', { position: dark ? 0 : 50 })]
     ])
 }
@@ -175,7 +178,7 @@ function makeBundledDevices(dark = false) {
 const RULES_OFFICE = [
     { name: 'Office: player reachable - close rollers', conditions: { 'video-player': { htpc: ['playing', 'paused', 'stopped'] } }, targets: { Living_Room_Roller_Left: 'CLOSE' } },
     { name: 'Office: player gone - hand rollers back to their owner', conditions: { 'video-player': { htpc: ['unknown', 'unreachable'] } }, invoke_automation: { name: 'HomeOfficeRollersAutomation', force: true } },
-    { name: 'Office: not playing - delegate light restore to ambient lights', conditions: { 'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
+    { name: 'Office: not playing - restore ambient lighting', conditions: { 'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }, 'time-of-day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { brightness: 50 } } },
     { name: 'Office: playing - dark mode (lights off)', conditions: { 'video-player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF' } }
 ]
 
@@ -271,10 +274,12 @@ console.log('\n── Home theater (bundled instance): dark mode, pause restores
         { htpc: 'playing', bedroom: 'stopped' },
         { htpc: 'paused', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; restore delegated to ambient-lights (no local ON)')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }],
-        'Kitchen_Plug: OFF on the playing tick (redundant commands no longer suppressed)')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally on the paused tick')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Kitchen_Plug: OFF on the playing tick; restored locally on pause')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }],
+        'dimmer returns at 50% on the paused tick only -- never while playing')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed on every reachable tick (playing + paused)')
     // Bedroom player open but idle: its roller is still owned (closed); light restore is
@@ -283,9 +288,9 @@ console.log('\n── Home theater (bundled instance): dark mode, pause restores
         'Bedroom_Plug: silent (restore delegated to ambient-lights)')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE', 'CLOSE'],
         'Bedroom_Roller_Left: re-closed on every reachable tick (stopped both ticks)')
-    // Delegation: both not-playing ticks hand light restore to the ambient-lights owner.
+    // Delegation now comes from the BEDROOM rule alone; the office side restores locally.
     assert(invocationCount('AmbientLightsAutomation') === 2 && allForced('AmbientLightsAutomation'),
-        'ambient-lights invoked on each not-playing tick (forced)')
+        'bedroom delegation fires on each of its not-playing ticks (forced); office restores locally')
 }
 
 console.log('\n── Home theater (bundled instance): already-dark room, only the always-on ambient returns ──\n')
@@ -299,14 +304,15 @@ console.log('\n── Home theater (bundled instance): already-dark room, only t
         { htpc: 'playing', bedroom: 'stopped' },
         { htpc: 'paused', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }], 'Living_Room_Plug: OFF re-sent even though already dark (restore still delegated)')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF re-sent on the playing tick')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Living_Room_Plug: OFF re-sent even though already dark; restored locally on pause')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF re-sent on the playing tick; restored locally on pause')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% on the paused tick')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'], 'Living_Room_Roller_Left: re-closed each reachable tick (idempotent)')
     assertCalls(devices, 'Bedroom_Plug', [], 'Bedroom_Plug: silent (restore delegated)')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE', 'CLOSE'], 'Bedroom_Roller_Left: re-closed each reachable tick (idempotent)')
-    // Delegation still happens even though no local light command is sent.
+    // Bedroom delegation still happens even though the office side now restores locally.
     assert(invocationCount('AmbientLightsAutomation') === 2 && allForced('AmbientLightsAutomation'),
-        'ambient-lights invoked on each not-playing tick (forced), despite a fully-dark room')
+        'bedroom delegation fires both not-playing ticks (forced), despite a fully-dark room')
 }
 
 console.log('\n── Home theater (bundled instance): both playing (full dark) ──\n')
@@ -335,18 +341,21 @@ console.log('\n── Home theater (bundled instance): movie ends (stopped) -- l
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: 'stopped', bedroom: 'stopped' }
     ])
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; stopped-tick restore delegated (no local ON)')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }],
-        'Kitchen_Plug: OFF on the playing tick; nothing more after stop')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally on the stopped tick')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Kitchen_Plug: OFF on the playing tick; restored locally after stop')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }],
+        'dimmer dimmed back to 50% when playback stops')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed each reachable tick (playing + stopped)')
     assertCalls(devices, 'Bedroom_Plug', [{ state: 'OFF' }],
-        'Bedroom_Plug: OFF on play; stopped-tick restore delegated')
+        'Bedroom_Plug: OFF on play; its not-playing restore stays delegated')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE', 'CLOSE'], 'Bedroom_Roller_Left: re-closed each reachable tick')
-    // Both rooms go "not playing" together on the second tick -> one deduped ambient-lights call.
+    // Both rooms go "not playing" together on the second tick; only the bedroom rule still
+    // delegates -> one forced ambient-lights call for that shared tick.
     assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
-        'ambient-lights invoked once for the shared not-playing tick (forced)')
+        'ambient-lights invoked once via the bedroom rule for the shared not-playing tick (forced)')
 }
 
 console.log('\n── Home theater (bundled instance): roller ownership lifecycle (reachable -> gone -> reachable) ──\n')
@@ -368,9 +377,12 @@ console.log('\n── Home theater (bundled instance): roller ownership lifecycl
     ])
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed on each reachable tick (t1,t2,t5); offline ticks delegate')
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'OFF' }],
-        'Living_Room_Plug: OFF on each playing tick (t1,t5); restore delegated otherwise')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'OFF' }], 'Kitchen_Plug: OFF on each playing tick (t1,t5)')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'ON' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on each playing tick (t1,t5); local restore on every other tick')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'ON' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
+        'Kitchen_Plug: mirrors the plug sequence (local restore on t2,t3,t4,t6)')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }, { brightness: 50 }, { brightness: 50 }, { brightness: 50 }],
+        'dimmer dimmed back to 50% on each not-playing tick (t2,t3,t4,t6), never while playing')
     assertCalls(devices, 'Bedroom_Roller_Left', [],
         'Bedroom_Roller_Left: never closed by us -- only ever delegated')
     assertCalls(devices, 'Bedroom_Plug', [],
@@ -381,7 +393,7 @@ console.log('\n── Home theater (bundled instance): roller ownership lifecycl
     assert(invocationCount('BedroomRollersAutomation') === 6 && allForced('BedroomRollersAutomation'),
         'bedroom rollers handed back every tick (player gone throughout), forced')
     assert(invocationCount('AmbientLightsAutomation') === 6 && allForced('AmbientLightsAutomation'),
-        'ambient restore delegated on every not-playing tick, forced')
+        'ambient restore delegated from the bedroom rule on every tick, forced; office restores locally')
 }
 
 console.log('\n── Home theater (bundled instance): rollers found closed are never opened on hand-back ──\n')
@@ -399,9 +411,10 @@ console.log('\n── Home theater (bundled instance): rollers found closed are 
     ])
     assertCalls(after, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: re-closed on the playing tick; hand-back delegated (never opened)')
-    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; restore delegated when HTPC goes offline')
-    assertCalls(after, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF on the playing tick')
+    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally when HTPC goes offline')
+    assertCalls(after, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after')
+    assertCalls(after, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% on the offline tick')
     assertCalls(after, 'Bedroom_Roller_Left', [], 'Bedroom_Roller_Left: never opened')
     // Delegation happened even though the local rollers stayed put.
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
@@ -423,13 +436,14 @@ console.log('\n── Home theater (bundled instance): players vanish mid-movie 
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: null, bedroom: null }
     ])
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; hand-back tick restores via delegation')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF on the playing tick; hand-back tick delegates')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally on the vanished tick')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after vanish')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% when both players vanish')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: CLOSE then delegated hand-back (no local OPEN)')
     assertCalls(devices, 'Bedroom_Plug', [{ state: 'OFF' }],
-        'Bedroom_Plug: OFF on play; restore delegated')
+        'Bedroom_Plug: OFF on play; its not-playing restore stays delegated')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE'],
         'Bedroom_Roller_Left: CLOSE then delegated hand-back')
     // Full hand-back in one offline tick: each owner invoked once, forced.
@@ -438,7 +452,7 @@ console.log('\n── Home theater (bundled instance): players vanish mid-movie 
     assert(invocationCount('BedroomRollersAutomation') === 1 && allForced('BedroomRollersAutomation'),
         'bedroom rollers handed back to BedroomRollersAutomation (forced)')
     assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
-        'light restore delegated to AmbientLightsAutomation (forced), deduped across rooms')
+        'light restore delegated via the bedroom rule only (forced); office restores locally')
 }
 
 console.log('\n── Home theater (single-room instance): dark mode, pause restores only what was on ──\n')
@@ -449,15 +463,17 @@ console.log('\n── Home theater (single-room instance): dark mode, pause rest
         { htpc: 'playing' },
         { htpc: 'paused' }
     ])
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; restore delegated to ambient-lights (no local ON)')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }],
-        'Kitchen_Plug: OFF on the playing tick (redundant commands no longer suppressed)')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally on the paused tick')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Kitchen_Plug: OFF on the playing tick; restored locally on pause')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }],
+        'dimmer dimmed back to 50% on the paused tick only')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed on every reachable tick (playing + paused)')
-    // Delegation while the player stays reachable: light restore on the paused tick only -- never a roller hand-back.
-    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
-        'ambient-lights invoked once for the single not-playing tick (forced)')
+    // Local restore while the player stays reachable -- no ambient-lights delegation at all.
+    assert(invocationCount('AmbientLightsAutomation') === 0,
+        'office instance restores its lamp set locally -- AmbientLightsAutomation is never invoked')
     assert(invocationCount('HomeOfficeRollersAutomation') === 0,
         'no roller hand-back while the player stays reachable')
     assert(invocationCount('BedroomRollersAutomation') === 0,
@@ -474,15 +490,16 @@ console.log('\n── Home theater (single-room instance): player gone -- hands 
     ])
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: CLOSE then delegated hand-back (no local OPEN)')
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; restore delegated when the player goes offline')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF on the playing tick')
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally when the player goes offline')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ brightness: 50 }], 'dimmer dimmed back to 50% on the offline tick')
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'rollers handed back to this room\'s owner exactly once (forced)')
     assert(invocationCount('BedroomRollersAutomation') === 0,
         "a foreign room's owner is never invoked from a single-room instance")
-    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
-        'light restore delegated once for the offline tick (forced)')
+    assert(invocationCount('AmbientLightsAutomation') === 0,
+        'light restore is local now -- no AmbientLightsAutomation delegation for the offline tick')
 }
 
 console.log('\n── Home theater (single-room instance): rollers found closed are never opened on hand-back ──\n')
@@ -500,12 +517,36 @@ console.log('\n── Home theater (single-room instance): rollers found closed 
     ])
     assertCalls(after, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: re-closed on the playing tick; hand-back delegated (never opened)')
-    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }],
-        'Living_Room_Plug: OFF on play; restore delegated when the player goes offline')
+    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+        'Living_Room_Plug: OFF on play; restored locally when the player goes offline')
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'hand-back delegated once when the player went offline, forced')
     assert(invocationCount('BedroomRollersAutomation') === 0,
         "a foreign room's owner is never invoked from a single-room instance")
+}
+
+console.log('\n── Home theater (single-room instance): daylight pause -- restore gate rejects ──\n')
+
+{
+    // Bright afternoon (illuminance >= 900): pausing must NOT restore the lamp set locally --
+    // the time-of-day + illuminance gate rejects it exactly like the old delegation did.
+    resetInvocations()
+    const devices = makeOfficeDevices()
+    const auto = new TestHomeTheater(devices, { timeOfDay: 'afternoon', illuminance: 1500 })
+    auto.config = {
+        override_human_interaction: true,
+        targets: Array.from(devices.values(), (d) => d.getName()),
+        triggers_video: ['htpc'],
+        triggers_network: ['htpc'],
+        rules: RULES_OFFICE
+    }
+    auto.setOverrideHumanInteraction(true)
+    await setVideoStatus('htpc', 'paused')
+    await auto.execute({ trigger: 'test' })
+    assertCalls(devices, 'Living_Room_Plug', [], 'no local ON while it is still bright outside')
+    assertCalls(devices, 'Kitchen_Plug', [], 'kitchen plug also stays dark in bright daylight')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [], 'dimmer untouched when the restore gate rejects')
+    assert(invocationCount('AmbientLightsAutomation') === 0, 'bright-daylight pause delegates to nothing either')
 }
 
 console.log('\n── Deployment consistency (shipped etc/automation instances) ──\n')
@@ -551,12 +592,21 @@ console.log('\n── Deployment consistency (shipped etc/automation instances) 
                     }
                 }
             }
-            // Trigger topics stay scoped to the declared hosts only.
+            // Trigger topics stay scoped to the declared hosts and sensors only.
+            const declaredSensors = new Set(
+                Array.isArray(instance.config.triggers_zigbee) ? instance.config.triggers_zigbee : []
+            )
             const topics = instance.getTriggerTopics()
             assert(topics.length > 0, `${fileName}: configured instance subscribes to at least one topic`)
             for (const topic of topics) {
-                const host = topic.slice(topic.indexOf(':') + 1)
-                assert(declared.has(host), `${fileName}: subscribed topic "${topic}" stays within declared hosts`)
+                const domain = topic.slice(0, topic.indexOf(':'))
+                const subject = topic.slice(topic.indexOf(':') + 1)
+                if (domain === 'zigbee') {
+                    assert(declaredSensors.has(subject),
+                        `${fileName}: subscribed zigbee topic "${topic}" stays within declared sensors`)
+                } else {
+                    assert(declared.has(subject), `${fileName}: subscribed topic "${topic}" stays within declared hosts`)
+                }
             }
         }
     } catch (e) {
@@ -600,6 +650,25 @@ console.log('\n── video-player condition (conditionsMatch) ──\n')
         'video-player: unknown status does not match a list without the unknown token')
     assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unknown'] } }, CONTEXT),
         'video-player: unknown status matches a list that opts in via unknown')
+
+    // Pin the exact condition shape of the office instance's local restore rule: it must fire
+    // for afternoon/evening/night darkness and reject morning or readings at/above 900 lux.
+    const restoreConditions = {
+        'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] },
+        'time-of-day': ['afternoon', 'evening', 'night'],
+        illuminance: { lt: 900 }
+    }
+    await setVideoStatus('htpc', 'paused')
+    assert(await auto.conditionsMatch(restoreConditions, { timeOfDay: 'afternoon', illuminance: 800 }),
+        'restore gate: afternoon darkness matches')
+    assert(await auto.conditionsMatch(restoreConditions, { timeOfDay: 'evening', illuminance: 899 }),
+        'restore gate: evening just below the bound (899 < 900) matches')
+    assert(await auto.conditionsMatch(restoreConditions, { timeOfDay: 'night', illuminance: 15 }),
+        'restore gate: pre-dawn night darkness matches')
+    assert(!(await auto.conditionsMatch(restoreConditions, { timeOfDay: 'morning', illuminance: 15 })),
+        'restore gate: morning is outside the allowed periods even in full darkness')
+    assert(!(await auto.conditionsMatch(restoreConditions, { timeOfDay: 'evening', illuminance: 900 })),
+        'restore gate: exactly 900 lux rejects (strictly-below bound)')
 }
 
 console.log('\n── MPC / VLC provider parse ──\n')

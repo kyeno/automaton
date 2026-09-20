@@ -1,6 +1,14 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- CONSIDER: home-theater light restore fires on ANY not-playing status, including the
+  pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
+  lamps come back mid-browse whenever it's already dark enough (parity with the old
+  delegation, but worth investigating whether restore should require a settled watch
+  session, e.g., by dropping bare `stopped` from the not-playing list). Related settle
+  semantics in src/monitor/videoPlayerMonitor.js #observe(): pausing after settling does
+  NOT reset the dwell clock (resume re-darkens immediately), while switching titles or
+  stopping clears the session entirely.
 - LATER: Add crypto price monitor and TTS automation
 - LATER: Add flowers moisture TTS automation (warnings)
 - LATER (when WiFi is here): Consider monitoring WiFi devices so you can greet our friends by their mobile phone presence
@@ -21,13 +29,22 @@
 - CONSIDER: "ZigbeeMonitor" sharing the same "state change" logic as other monitors and populate that via local EventBus. Log real Zigbee state changes ONLY as trace; every higher level - via EventBus.
 - CONSIDER: Dropping db's shm and wal to original DB more often, not just on quit?
 - LATER: Postpone automations so they don't fire all at once
+- CONSIDER: Teach CommandCorrelator.#evaluate() to recognize multi-channel suffixed echoes
+  ({state_left/state_right}, {brightness_l1/brightness_l2}) so AUTOMATION commands on
+  DualSwitch/DualDimmer consume their instant tokens via real echo matching instead of
+  expiring by TTL. Today's fallback keeps attribution correct (origin set at publish +
+  "preserve origin" inside the token window) but delays human-override detection until
+  token expiry. Context: dual-switch work 2026-09; current semantics pinned by section D
+  of tests/test-dualswitch.js ("Origin tracking & human-interaction detection").
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
   module longnames coming out as "<file>\n<copyright>" for lib/* headers
 
 ## AI & TTS
 - Allow multiple AI engines configuration and a monitor checking which is online, so we can route from best to worst
-- Absurd anecdote generator (driver for AI)
+- Absurd anecdote generator (driver for AI) -- note: a first iteration already lives inside
+  WeatherMan's `ai_prefix` prompt hook (drunken-weather one-liner); the bigger intended
+  feature is NOT done yet, do not treat as complete
 - CONSIDER: Modifying AI so it does not use the same system prompt for everything; f.e., Weatherman overrides the system prompt instead of appending the user message. Consider pros vs cons when it comes to inference engine caching
 - CONSIDER: Add quotes database?
 - VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read

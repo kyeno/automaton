@@ -53,7 +53,8 @@ export default class HomeTheaterAutomation extends RuleBasedAutomationBase {
      * Delegates to the shared first-rule-wins resolver in the rule-based base:
      * the first matching rule that defines a command for the target wins, with
      * ON/OFF mapped to `{state}`, OPEN/CLOSE to bare state strings, and numeric
-     * values to `{position}` payloads.
+     * values to `{position}` payloads; structured object commands (e.g., a
+     * dimmer's `{brightness: 50}` percentage request) pass through verbatim.
      *
      * @param {DeviceBase} device - Target device
      * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)

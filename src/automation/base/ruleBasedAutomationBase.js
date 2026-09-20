@@ -765,8 +765,10 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     /**
      * Switches-style resolveCommand implementation: the first matching rule
      * that defines a command for the target wins. ON/OFF become `{state}`
-     * payloads, OPEN/CLOSE become bare state strings, and numeric values
-     * become `{position}` payloads.
+     * payloads, OPEN/CLOSE become bare state strings, numeric values become
+     * `{position}` payloads, and structured object commands pass through
+     * verbatim -- e.g., a dimmer's `{brightness: 50}` percentage request,
+     * which the device maps into its per-channel level range at publish time.
      *
      * @param {DeviceBase} device - Target device (unused; present for
      *   resolveCommand signature parity)
@@ -786,6 +788,12 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         if (command === null || command === undefined) return null
+
+        // Structured commands are already device-native payloads ({brightness}, {state}, ...)
+        // -- pass them through untouched instead of running scalar mapping on them.
+        if (typeof command === 'object') {
+            return { payload: command }
+        }
 
         const upper = String(command).toUpperCase()
         if (upper === 'ON' || upper === 'OFF') {

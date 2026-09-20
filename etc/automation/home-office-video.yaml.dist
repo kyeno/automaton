@@ -3,8 +3,10 @@
 # Presence-gated video-player dark mode for a SINGLE room: while the player
 # answers HTTP (any state) the room's rollers are closed and handed back to the
 # room's roller owner when it goes offline; while a video plays, interfering
-# lights go off (dark mode); on pause/stop/gone light restore is delegated to
-# the ambient-lights automation via invoke_automation.
+# lights go off (dark mode); on pause/stop/gone this instance restores its lamp
+# set locally from time-of-day + illuminance rules instead of delegating to the
+# ambient-lights automation -- dimmers come back at half brightness rather than
+# full ON.
 #
 # One instance per room keeps trigger subscriptions scoped to that room's
 # hosts, so other rooms' players never fire this execution chain. Deploying
@@ -18,6 +20,14 @@
 # rather than being deferred to a human-interaction cooldown.
 
 override_human_interaction: true
+
+sensors:
+  illuminance: 'Outdoor Luminance'
+
+triggers_zigbee:
+  - 'Outdoor Luminance'
+
+timer_interval: "15m"
 
 # Rule "targets:" keys are your own Zigbee device names (must exist in zigbee.yaml)
 # with spaces replaced by underscores -- no separate declaration list needed.
@@ -46,13 +56,20 @@ rules:
       video-player: { my-pc: [unknown, unreachable] }
     invoke_automation: { name: HomeOfficeRollersAutomation, force: true }
 
-  # Light restore is fully delegated via `invoke_automation` to the ambient-lights
-  # automation, which owns all ambient lamp devices and re-evaluates its own
-  # conditions. No `presence` gate here so an offline machine also hands light control back.
-  - name: 'Office: not playing - delegate light restore to ambient lights'
+  # Light restore is done locally from this rule instead of delegated to the ambient-
+  # lights automation: on pause/stop/gone the lamp set comes back, gated by time of day
+  # + outdoor illuminance. No `presence` gate so an offline machine also restores the
+  # lights. Dimmers take a structured `{brightness: 0-100}` command (percentage mapped
+  # per-channel at publish time) instead of plain ON.
+  - name: 'Office: not playing - restore ambient lighting'
     conditions:
       video-player: { my-pc: [paused, stopped, unreachable, unknown] }
-    invoke_automation: { name: AmbientLightsAutomation, force: true }
+      time-of-day: [afternoon, evening, night]
+      illuminance: { lt: 900 }
+    targets:
+      Living_Room_Plug: ON
+      Kitchen_Plug: ON
+      Living_Room_Dimmer: { brightness: 50 }
 
   - name: 'Office: playing - dark mode (lights off)'
     conditions:

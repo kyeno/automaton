@@ -393,7 +393,7 @@ With `restore_state_aware: true` (automation level), restore commands are filter
 
 ### Delegating to Other Automations (`invoke_automation`)
 
-A rule can hand control to another loaded automation instead of -- or alongside -- issuing device commands itself. This is how [Home Theater Mode](automations/home-theater-mode.md) hands rollers back to their room's owner when a player goes offline, and delegates light-restore decisions to the ambient-lights automation on pause:
+A rule can hand control to another loaded automation instead of -- or alongside -- issuing device commands itself. This is how [Home Theater Mode](automations/home-theater-mode.md) hands rollers back to their room's owner when a player goes offline, and how its bedroom instance still delegates pause-time light restore to the ambient-lights automation (the HTPC instance restores that lamp set locally from its own rules now):
 
 ```yaml
 rules:
@@ -437,6 +437,7 @@ Accepts a single value or a list: `season: spring`, `season: [winter]`. Detectio
 
 - **Mechanisms** (lights/outlets): `ON`, `OFF`, `TOGGLE`
 - **Mechanisms** (roller shutters): `OPEN`, `CLOSE`, `STOP`, or integer percentage (`0-100`)
+- **Dimmers**: structured object commands pass through verbatim -- e.g., `Salon_Dimmer: { brightness: 50 }`; the DualDimmer maps the percentage into its per-channel level range at publish time
 - **Simple automations**: `action: OFF` applies to all listed devices
 
 ### Custom JavaScript Automations
