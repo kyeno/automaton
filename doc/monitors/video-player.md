@@ -9,18 +9,17 @@ The **Video Player monitor** (`src/monitor/videoPlayerMonitor.js`) polls media p
 | `playing` | A video is actively playing |
 | `paused` | Player open, playback paused |
 | `stopped` | Player open, nothing playing |
-| `unreachable` | Host online but the player stopped answering (3 consecutive failures) |
-| `unknown` | Host known to be offline, or no status determined yet (reported as `null`) |
+| `offline` | No usable player signal — host known to be offline, host not yet polled, or the player stopped answering (3 consecutive failures) |
 
-An `unknown` status matches **only** rule lists that explicitly include the `unknown` token — see [Rule Engine Restore & Ownership](../architecture/rule-engine-restore-semantics.md) for the semantics and typical patterns.
+`offline` is an ordinary, always-available status: rules accept it by listing it explicitly (`[paused, stopped, offline]`), while playback requirements (`[playing]`) stay inert. The raw cause behind an `offline` status (presence-offline vs. unreachable player) is kept in debug logs only — it is **not** a status transition, so drifting between the two never re-fires automations. See [Rule Engine Restore & Ownership](../architecture/rule-engine-restore-semantics.md) for the semantics and typical patterns.
 
 ## How It Works
 
 - All configured players are swept in parallel every 4 seconds; a re-entrancy guard prevents overlapping sweeps.
-- Polling is **presence-gated**: a host that the [Network Presence monitor](./network-presence.md) knows to be offline is not polled at all — its status becomes `unknown`. Hosts absent from every ping category are polled directly.
-- A 3-strike failure counter keeps a transiently failing host at its previous status instead of flapping it to `unreachable`.
+- Polling is **presence-gated**: a host that the [Network Presence monitor](./network-presence.md) knows to be offline is not polled at all — its status becomes `offline`. Hosts absent from every ping category are polled directly.
+- A 3-strike failure counter keeps a transiently failing host at its previous status instead of flapping it to `offline`.
 - A **playback-settle** dwell window gates what counts as actively `playing`, so browsing/skipping titles does not trigger dark mode or suppression (see [Playback Settle](#playback-settle)).
-- Status is cached in Redis (`videoPlayer:<host>:status`) and a `videoPlayer:<host>` EventBus event is published **only on change**.
+- Every genuine status change is recorded in the local SQLite state history (`DatabaseService`, domain `videoPlayer`) and a `videoPlayer:<host>` EventBus event is published **only on change** — a raw-detail change inside the `offline` status (unreachable player vs. host offline) is debug-log-only and produces neither.
 
 ## Playback Settle
 
@@ -36,7 +35,7 @@ Reset semantics:
 | Different/new title starts | Clock restarts from zero, `settled` cleared |
 | Pause before settling | Session reset — must play continuously again |
 | Pause after settling | Stays settled; resuming the same title is instantly `playing` |
-| Stop / unreachable / offline | Session cleared entirely |
+| Stop / offline (unreachable player or host down) | Session cleared entirely |
 
 The per-host watch-session state is held in StateService under these keys (visible via `/status`):
 
@@ -100,7 +99,7 @@ rules:
     targets: ...
 ```
 
-Full `video-player` condition syntax (including the `unknown` token) and the related top-level `video_player_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
+Full `video-player` condition syntax (including the enumerated `offline` status) and the related top-level `video_player_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
 
 ## File Map
 

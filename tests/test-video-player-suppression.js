@@ -5,8 +5,8 @@
  * stand-down semantics) against a self-contained rule set (no local
  * configuration required):
  *   - Suppressed while a listed host is playing / paused / stopped
- *   - NOT suppressed on unreachable / unknown (unless explicitly listed)
- *   - `unknown`-listed suppression list also stands down on a null status
+ *   - NOT suppressed on offline (unless explicitly listed as `offline`)
+ *   - `offline`-listed suppression list also stands down when nothing is recorded (raw null)
  *   - Backward compatibility: no key -> no suppression, rules dispatch
  *   - Multi-host OR: any listed host in a listed status suppresses
  *   - Exempt rules (ignore_video_player_suppression) still dispatch while
@@ -64,7 +64,7 @@ function assert(condition, label) {
  * Uses the monitor's test hook, which seeds the in-memory cache (and Redis
  * when a broker is reachable) without a live player or a running sweep.
  * @param {string} host - Host name
- * @param {string|null} status - Normalized status (or null for unknown)
+ * @param {string|null} status - Status; legacy/raw labels (`unreachable`, `unknown`, null) normalize to `offline`
  */
 async function setVideoStatus(host, status) {
     await videoPlayerMonitor.setTestStatus(host, status)
@@ -198,32 +198,33 @@ console.log('\n── Suppression active on listed statuses ──\n')
 console.log('\n── Suppression inactive on unlisted statuses ──\n')
 
 {
-    // unreachable / unknown are not in the suppression list -> rules dispatch
-    for (const status of ['unreachable', null]) {
+    // offline is not in the suppression list -> rules dispatch. All three raw inputs that
+    // enumerate to `offline` (canonical, unreachable player, nothing recorded) behave alike.
+    for (const status of ['offline', 'unreachable', null]) {
         const devices = makeDevices()
         const auto = makeRollers(devices, { htpc: ['playing', 'paused', 'stopped'] })
         await setVideoStatus('htpc', status)
         await auto.execute({ trigger: 'test' })
-        assertCalls(devices, 'Roller_Left', ['CLOSE'], `no suppression: ${status ?? 'null'} -> CLOSE dispatched`)
+        assertCalls(devices, 'Roller_Left', ['CLOSE'], `no suppression: ${status ?? 'null'} -> offline -> CLOSE dispatched`)
     }
 }
 
-console.log('\n── unknown token listed in suppression ──\n')
+console.log('\n── offline listed in suppression ──\n')
 
 {
-    // A suppression list that includes 'unknown' also stands down on null.
+    // A suppression list that includes 'offline' also stands down when nothing is recorded.
     const devices = makeDevices()
-    const auto = makeRollers(devices, { htpc: ['playing', 'unknown'] })
+    const auto = makeRollers(devices, { htpc: ['playing', 'offline'] })
     await setVideoStatus('htpc', null)
     await auto.execute({ trigger: 'test' })
-    assertCalls(devices, 'Roller_Left', [], 'suppression: unknown listed -> null status stands down')
+    assertCalls(devices, 'Roller_Left', [], 'suppression: offline listed -> null status stands down')
 
-    // ... but a real unreachable status is not in the list -> dispatch
+    // ... while a reachable, unlisted status still dispatches.
     const devices2 = makeDevices()
-    const auto2 = makeRollers(devices2, { htpc: ['playing', 'unknown'] })
-    await setVideoStatus('htpc', 'unreachable')
+    const auto2 = makeRollers(devices2, { htpc: ['playing', 'offline'] })
+    await setVideoStatus('htpc', 'stopped')
     await auto2.execute({ trigger: 'test' })
-    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'suppression: unreachable not listed -> CLOSE dispatched')
+    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'suppression: stopped not listed -> CLOSE dispatched')
 }
 
 console.log('\n── Backward compatibility: no suppression key ──\n')
@@ -310,7 +311,7 @@ console.log('\n── Coexistence with per-rule video-player condition ──\n'
     // own video-player allow-list rejects 'stopped'.
     const devices = makeDevices()
     const auto = makeRollers(devices, { bedroom: ['playing'] })
-    auto.config.rules[0].conditions['video-player'] = { htpc: ['unknown', 'unreachable'] }
+    auto.config.rules[0].conditions['video-player'] = { htpc: ['offline'] }
     await setVideoStatus('htpc', 'stopped')
     await setVideoStatus('bedroom', 'unreachable')
     await auto.execute({ trigger: 'test' })
@@ -319,11 +320,11 @@ console.log('\n── Coexistence with per-rule video-player condition ──\n'
     // Same setup but the per-rule allow-list accepts the status -> dispatch.
     const devices2 = makeDevices()
     const auto2 = makeRollers(devices2, { bedroom: ['playing'] })
-    auto2.config.rules[0].conditions['video-player'] = { htpc: ['unknown', 'unreachable'] }
+    auto2.config.rules[0].conditions['video-player'] = { htpc: ['offline'] }
     await setVideoStatus('htpc', 'unreachable')
     await setVideoStatus('bedroom', 'unreachable')
     await auto2.execute({ trigger: 'test' })
-    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'coexistence: per-rule condition accepts unreachable -> dispatch')
+    assertCalls(devices2, 'Roller_Left', ['CLOSE'], 'coexistence: per-rule condition accepts offline -> dispatch')
 }
 
 console.log('\n── Forced run does not bypass the guard ──\n')

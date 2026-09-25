@@ -12,7 +12,10 @@
 #
 # One instance per room keeps trigger subscriptions scoped to that room's
 # hosts, so other rooms' players never fire this execution chain. Deploying
-# several rooms in ONE instance also works if you prefer it.
+# several rooms in ONE instance also works if you prefer it. The outdoor
+# illuminance sensor is a context source of truth only (`sensors:`), never a
+# trigger -- sensor reports must not re-run this automation (a sensor change
+# while a player is off would otherwise re-fire the gone rule constantly).
 #
 # Requires video players defined under `videoPlayers` in etc/device/network.yaml
 # (see the MPC-HC / VLC setup notes there).
@@ -24,16 +27,14 @@
 override_human_interaction: true
 
 # Timer is a safety net only: skip scheduled ticks unless a monitored state
-# (video-player status, network presence, illuminance sensor) actually transitioned
-# since the last evaluation. Prevents idle 15-minute ticks from re-firing the
-# restore rule every interval once the player is offline.
+# (video-player status, network presence) actually transitioned since the last
+# evaluation. Prevents idle 15-minute ticks from re-firing the restore rule
+# every interval once the player is offline.
 trigger_on_change_only: true
 
+# Context source of truth for the restore rule's illuminance gate -- NOT a trigger.
 sensors:
   illuminance: 'Outdoor Luminance'
-
-triggers_zigbee:
-  - 'Outdoor Luminance'
 
 timer_interval: "15m"
 
@@ -61,11 +62,11 @@ rules:
   # Player gone: hand the room back to its owners in one rule. The array form of
   # `invoke_automation` force-fires BOTH the roller owner (post-playback shutter
   # position) and the ambient-lights owner (lamp restore). Keyed on the player
-  # state alone -- `unknown` already means the host is offline, so no separate
-  # `presence` gate is needed.
+  # state alone -- `offline` covers both an unresponsive player and a powered-down
+  # host, so no separate `presence` gate is needed.
   - name: 'Office: player gone - hand back to the room owners'
     conditions:
-      video-player: { my-pc: [unknown, unreachable] }
+      video-player: { my-pc: [offline] }
     invoke_automation:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }

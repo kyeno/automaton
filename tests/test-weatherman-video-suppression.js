@@ -8,7 +8,7 @@
  * (htpc / bedroom):
  *   - the prod YAML ships a video_player_suppression block covering both players on "playing" only
  *   - htpc playing -> stands down; bedroom playing -> stands down (multi-host OR)
- *   - paused / unreachable are NOT listed -> still announces (guard stays inert while browsing)
+ *   - paused / offline are NOT listed -> still announces (guard stays inert while browsing)
  *   - backward compatibility: with no video_player_suppression key the guard never suppresses
  *
  * Player status is injected via VideoPlayerMonitor.setTestStatus() into the in-memory cache, so
@@ -78,8 +78,8 @@ try {
     await setVideoStatus('htpc', 'paused'); await setVideoStatus('bedroom', 'paused')
     assert((await wm.isVideoPlayerSuppressionActive()) === false, 'paused (not listed) -> still announces while browsing')
 
-    await setVideoStatus('htpc', 'unreachable'); await setVideoStatus('bedroom', 'unreachable')
-    assert((await wm.isVideoPlayerSuppressionActive()) === false, 'unreachable (not listed) -> still announces')
+    await setVideoStatus('htpc', 'offline'); await setVideoStatus('bedroom', 'offline')
+    assert((await wm.isVideoPlayerSuppressionActive()) === false, 'offline (not listed) -> still announces')
 
     // Backward compatibility: with the block removed entirely the guard is inert even while playing.
     const saved = wm.config.video_player_suppression

@@ -11,7 +11,19 @@ The **ttsWeatherMan** automation is a rule-based weather announcer that builds a
 
 If **neither** the AI pipeline nor the TTS server is available, the run is skipped entirely before any context build or device reads. A run with exactly one of the two available still proceeds.
 
-The clock-phrase pre-rendering, day-position markers (first/last/only/next), and calendar-date fusion are rendering mechanics — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md).
+The clock-phrase pre-rendering, day-position markers (first/last/only/next), calendar-date fusion, and the proverb segment are rendering mechanics — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md).
+
+### Segment order
+
+The announcement is assembled as an ordered list, structurally identical on both output paths:
+
+```
+ai_prefix (AI path only) -> [opener] -> core message -> [proverb] -> [next-update closer]
+```
+
+`ai_prefix` is the only AI-exclusive part — it is an instruction to the model and is never read aloud. Everything after it is plain text meant to be spoken.
+
+When `add_proverb: true`, the proverb sits **after the report body but before the next-update closer**, so the next-update time stays the last thing said. That placement is why the AI wording makes no positional claim ("remind your listeners of a proverb" rather than "close with this"), and why it avoids the "at the end" phrasing `ai_prefix` already uses for its own anecdote instruction. On the last run of a session there is no closer, so the proverb becomes the final line on its own.
 
 ## Dynamic Sensor System
 
@@ -31,6 +43,10 @@ silence_between: "0230-1030"    # Suppress execution during this time window
 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
+
+# OPTIONAL -- add a proverb to every announcement, placed after the report body
+# and before the next-update closer, drawn from etc/i18n/<locale>/proverbs.txt.
+add_proverb: false
 
 # All sensors are read dynamically — any key here becomes available for conditions
 sensors:
@@ -135,7 +151,21 @@ Two placeholder types are supported inside i18n strings:
 | `{{ DeviceName.property }}` | `{{ Outdoor Temperature.temperature }}` | Live sensor value from Zigbee2MQTT (locale-formatted numbers) |
 | `{% time %}` | `{% time %}` | Current local time using the configured `time_format` |
 
-If a device or property isn't found during interpolation, it resolves to `"N/A"`. The clock-part tokens (`{% hours %}`, `{% minutes %}`, `{% time_of_day %}`, `{% date %}`, `{% next_interval %}`) are pre-resolved internally by the automation — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md).
+If a device or property isn't found during interpolation, it resolves to `"N/A"`. The clock-part tokens (`{% hours %}`, `{% minutes %}`, `{% time_of_day %}`, `{% date %}`, `{% next_interval %}`) are pre-resolved internally by the automation — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md). With `add_proverb: true`, the `{% proverb %}` token in the `ai_proverb` / `tts_proverb` keys is pre-resolved the same way, from a random line of `etc/i18n/{locale}/proverbs.txt`.
+
+## Closing Proverb
+
+Set `add_proverb: true` to give every announcement a proverb. The proverb is drawn at random from `etc/i18n/{locale}/proverbs.txt`, where **each line is one proverb** (blank lines and `#` comment lines are skipped, so a documented header is safe). The lists ship as clean starter templates (`proverbs.txt.dist`); copy one next to it as `proverbs.txt` (git-ignored) and add your own lines.
+
+Two i18n keys are involved, because the two output paths need genuinely different text:
+
+| Key | Path | Intent |
+|-----|------|--------|
+| `ai_proverb` | AI prompt | A **direction** for the model, which then announces the proverb in its own voice (`Przypomnij słuchaczom przysłowie: ...`) |
+| `tts_proverb` | Direct TTS and the AI-failure fallback | A line that **reads as natural speech** on its own (`I pamiętajcie: ...`) |
+
+Selection is memory-safe: `src/lib/randomLine.js` streams the file twice (count, then fetch) with a fixed buffer instead of loading and splitting it, so peak memory does not grow with the list size. A missing key, missing file, or empty file simply drops the segment — the weather report itself is never affected.
+
 
 ## Language Bundles
 
@@ -146,9 +176,12 @@ base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees 
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely, spelling out the hour in words. Do not use tools -- base your answer only on the provided information: '
 # Day-position markers (see Weatherman Speech Rendering)
 ai_message_first: 'This is the first update of today.'
-ai_message_last: 'This is the last update of tonight.'
+ai_message_last: 'This is the last update of tonight. The next update is tomorrow.'
 ai_message_only: 'This is the only update of today.'
 ai_message_next: 'Next update in {% next_interval %}.'
+# Closing proverb (add_proverb: true) -- see the Closing Proverb section
+ai_proverb: 'Remind your listeners of this proverb: {% proverb %}'
+tts_proverb: 'And remember: {% proverb %}'
 warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 # ... further warning_* / soothing_* sentence keys
 ```
@@ -166,6 +199,9 @@ A Polish bundle (`pl_PL/weatherman.yaml`) ships with the same keys, including `t
 | English date bundle (day/month names, period words, duration units) | `etc/i18n/en_US/date.yaml` |
 | Polish date bundle | `etc/i18n/pl_PL/date.yaml` |
 | Date helper (owns the date bundles) | `src/lib/date.js` |
+| English proverb list (one per line) | `etc/i18n/en_US/proverbs.txt.dist` |
+| Polish proverb list (one per line) | `etc/i18n/pl_PL/proverbs.txt.dist` |
+| Random line reader (memory-safe) | `src/lib/randomLine.js` |
 
 ---
 

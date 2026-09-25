@@ -1,6 +1,8 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- Add simple chat web UI for AI interaction that will share the same state with
+  CLI, so that non-tech house dwellers would be able to interact with it.
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
   pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
   lamps come back mid-browse whenever it's already dark enough (parity with the old
@@ -10,7 +12,6 @@
   NOT reset the dwell clock (resume re-darkens immediately), while switching titles or
   stopping clears the session entirely.
 - LATER: Add crypto price monitor and TTS automation
-- LATER: Add flowers moisture TTS automation (warnings)
 - LATER (when WiFi is here): Consider monitoring WiFi devices so you can greet our friends by their mobile phone presence
 
 ## HUGE MILESTONES
@@ -20,6 +21,13 @@
 - Integrate A/C
 
 ## Architecture
+- Add option to set human interaction threshold as parameter to the function,
+  then add it as an option to tool calling for AI - so it could open the rollers
+  for certain amount of time.
+- Create a special MQTT channel and a monitor that will consume messages from it
+  and pass them directly to the AI engine (while retaining "user" not "system"
+  prompt and default AI pipeline; exactly as if it was AI interaction through
+  UI
 - Lift shared TTS pipeline into RuleBasedAutomationBase: availability guard, AI->TTS routing fallback, i18n sentence resolution + interpolation, silent-period gate deduplication; drop parity-only loadDevices()/resolveCommand() overrides from both TTS classes afterwards
 - Add use_ai flag to weatherman config (default true) while greeter keeps false
 - Support per-rule speech/action alongside targets: and invoke_automation, enabling one rule to drive devices AND speak

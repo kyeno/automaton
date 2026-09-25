@@ -3,20 +3,24 @@
  *
  * Singleton that polls a set of network video players (VLC, MPC-HC/BE, ...)
  * over their HTTP APIs and normalizes each into a small status vocabulary:
- * `playing`, `paused`, `stopped`, or `unreachable`.
+ * `playing`, `paused`, `stopped`, or `offline`.
  *
  * Design notes:
  *   - Presence-gated: a host is only polled when {@link NetworkPresence}
- *     reports it online. Offline hosts are recorded as `null` (unknown); an
- *     unknown status is treated as "not actively playing", so playback-dependent
- *     actions stay inert while safe/ambient actions still apply -- no flapping.
+ *     reports it online. Offline hosts skip polling; an offline host is
+ *     treated as "not actively playing", so playback-dependent actions stay
+ *     inert while safe/ambient actions still apply -- no flapping.
  *   - Endpoint IPs need no duplication: each player's address resolves from
  *     the same-named `computers` entry; an explicit `host` key overrides, and
  *     a player with neither is skipped with an error log.
  *   - One shared interval timer drives all hosts in parallel; a re-entrancy
  *     guard prevents overlapping sweeps.
  *   - A per-host failure-strike counter (3 strikes) avoids flapping a
- *     transiently failing host to `unreachable`.
+ *     transiently failing host to `offline`.
+ *   - Single-offline enumeration: "host is offline" and "host is up but the player stopped
+ *     answering" stay distinct in debug logs (raw detail) but are both published as the single
+ *     `offline` status, so drifting between those raw conditions is NOT a transition
+ *     automations re-react to.
  *   - Playback-settle: a title must play continuously for a dwell window before it reports as
  *     actively `playing`; until then it reads as `stopped` so browsing/skipping does not trigger
  *     dark mode or suppression. Watch-session state lives in StateService under `videoPlayer:<host>.*`.
@@ -53,7 +57,8 @@ import MpcProvider from './providers/mpc.js'
 const CHECK_INTERVAL_MS = 4_000
 
 /**
- * Consecutive fetch failures before an online host is declared `unreachable`.
+ * Consecutive fetch failures before an online host is declared `offline` (raw detail:
+ * "player not answering").
  * @type {number}
  */
 const FAILURE_STRIKES = 3
@@ -64,6 +69,37 @@ const FAILURE_STRIKES = 3
  * @type {string}
  */
 const PRESENCE_OFFLINE = 'offline'
+
+/**
+ * Published status representing "no usable player signal". Two raw conditions enumerate to it:
+ * the host is offline (presence offline / no data) or the player stopped answering (failure
+ * strikes). The distinction is preserved in debug logs only; automations see one status, so a
+ * host drifting between those raw conditions is not a state transition.
+ * @type {string}
+ */
+const STATUS_OFFLINE = 'offline'
+
+/**
+ * Human-readable description of a raw offline detail for log lines.
+ * @param {string|null|undefined} rawStatus - Raw observation ('unreachable', null = presence-offline / no data)
+ * @returns {string} Description used in logs
+ */
+function describeRawDetail(rawStatus) {
+    if (rawStatus === 'unreachable') return 'player not answering'
+    if (rawStatus == null) return 'host offline / no signal'
+    return String(rawStatus)
+}
+
+/**
+ * Normalize a status read from durable history onto the current published vocabulary: raw detail
+ * labels from before the single-offline enumeration (`unreachable`, `unknown`) become `offline`.
+ * @param {string|null|undefined} value - Stored label
+ * @returns {string} Published status
+ */
+function normalizeStoredStatus(value) {
+    if (value == null || value === 'unreachable' || value === 'unknown') return STATUS_OFFLINE
+    return value
+}
 
 /**
  * Provider registry mapping a parser name to its provider class.
@@ -138,12 +174,21 @@ class SVideoPlayerMonitor {
     #failCounts = new Map()
 
     /**
-     * In-process last-known status per host. This process is the sole writer while
+     * In-process last-known published status per host. This process is the sole writer while
      * running, so this map is authoritative for change-detection and reads; SQLite
      * (DatabaseService) provides the durable cross-restart history on top of it.
-     * @type {Map<string, string|null>}
+     * Never holds null: every observed state enumerates to a published status.
+     * @type {Map<string, string>}
      */
     #statuses = new Map()
+
+    /**
+     * In-process last-known RAW offline detail per host ('unreachable' = player not answering,
+     * null = host offline / no data). Log-only: keeps the two offline causes distinguishable in
+     * debug output without re-introducing a published status change between them.
+     * @type {Map<string, string|null>}
+     */
+    #rawDetails = new Map()
 
     // -- Singleton --------------------------------------------------------
 
@@ -220,11 +265,12 @@ class SVideoPlayerMonitor {
 
         // Seed the in-memory cache from durable history so a value that did not change across a
         // restart does not look like a fresh transition on the very first sweep, and so getStatus()/
-        // log lines reflect the true prior state rather than "unknown".
+        // log lines reflect the true prior state rather than "unknown". Legacy labels recorded
+        // before the single-offline enumeration are normalized on the way in.
         if (DatabaseService.isAvailable()) {
             await Promise.all(hosts.map(async (host) => {
                 const stored = await DatabaseService.getCurrent('videoPlayer', host)
-                if (stored != null && stored !== 'unknown') this.#statuses.set(host, stored)
+                if (stored != null) this.#statuses.set(host, normalizeStoredStatus(stored))
             }))
         }
 
@@ -270,11 +316,14 @@ class SVideoPlayerMonitor {
      * Returns what rules and video-player suppression should act on -- the playback-settle-aware
      * view of the player. A title playing continuously for at least the settle window reports
      * `playing`; one still within that window (browsing / skipping) reports `stopped`.
-     * `paused`/`stopped`/`unreachable` pass through unchanged; null means offline/unknown. Reads the
-     * in-process cache first (authoritative while running), then falls back to durable SQLite history.
+     * `paused`/`stopped` pass through unchanged; an unresponsive player and an offline host both
+     * report `offline` (their raw distinction is log-only). Null is returned only when nothing at
+     * all is recorded for the host (not configured / never swept); rule conditions treat that as
+     * `offline` too. Reads the in-process cache first (authoritative while running), then falls
+     * back to durable SQLite history.
      *
      * @param {string} host - Host name as configured in network.yaml
-     * @returns {Promise<string|null>} `playing`/`paused`/`stopped`/`unreachable`, or null when unknown
+     * @returns {Promise<string|null>} `playing`/`paused`/`stopped`/`offline`, or null when nothing is recorded
      */
     async getStatus(host) {
         // In-memory map first: while running, this process is the only writer, so it
@@ -283,7 +332,7 @@ class SVideoPlayerMonitor {
             return this.#statuses.get(host) ?? null
         }
         const value = await DatabaseService.getCurrent('videoPlayer', host)
-        return value && value !== 'unknown' ? value : null
+        return value == null ? null : normalizeStoredStatus(value)
     }
 
     /**
@@ -312,12 +361,14 @@ class SVideoPlayerMonitor {
      * the previous value.
      *
      * @param {string} host - Host name
-     * @param {string|null} status - Normalized status (or null for unknown)
+     * @param {string|null} status - Status; legacy/raw labels (`unreachable`, `unknown`, null) normalize to `offline`
      * @returns {Promise<void>}
      */
     async setTestStatus(host, status) {
-        this.#statuses.set(host, status)
-        await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: status })
+        const published = normalizeStoredStatus(status)
+        this.#statuses.set(host, published)
+        this.#rawDetails.set(host, status === published ? published : status)
+        await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: published })
     }
 
     /**
@@ -325,7 +376,7 @@ class SVideoPlayerMonitor {
      * sweep would use, without performing an HTTP fetch. Lets tests drive the watch-session state
      * machine deterministically together with {@link _setClock} and {@link _setPlaybackSettleMs}.
      * @param {string} host - Host name
-     * @param {string|null} status - Normalized status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
+     * @param {string|null} status - Raw provider status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
      * @param {string|null} [title] - Media title captured by the provider (or null)
      * @returns {Promise<void>}
      */
@@ -480,7 +531,11 @@ class SVideoPlayerMonitor {
             effective = rawStatus   // 'stopped'|'unreachable'|null
         }
 
-        await this.#setStatus(host, effective)
+        // Publish the enumerated status: 'unreachable' (player not answering) and null (host
+        // offline / no data) both enumerate to the single `offline` status, so drifting between
+        // those raw conditions never fires a status transition; the raw detail rides along for logs.
+        const published = effective === null || effective === 'unreachable' ? STATUS_OFFLINE : effective
+        await this.#setStatus(host, published, effective)
     }
 
     /**
@@ -538,15 +593,38 @@ class SVideoPlayerMonitor {
      * history. Gating on the store keeps an unchanged-across-restart state from re-firing
      * subscribers (mirrors NetworkPresence); it still publishes while the database is
      * temporarily unavailable to preserve fail-open behaviour. Called with the settle-aware
-     * effective status produced by {@link #observe}.
+     * enumerated status (plus its raw detail) produced by {@link #observe}: a change of raw
+     * detail that leaves the published status intact is debug-log-only -- no store row and no
+     * EventBus event, so automations never re-react to it.
      * @private
      * @param {string} host - Host name
-     * @param {string|null} status - Automation-effective status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
+     * @param {string} status - Published status ('playing'|'paused'|'stopped'|'offline')
+     * @param {string|null} [rawDetail=null] - Raw observation behind the status ('unreachable', null = host offline / no data)
      */
-    async #setStatus(host, status) {
+    async #setStatus(host, status, rawDetail = null) {
         const prev = this.#statuses.get(host)
-        if (prev === status) return
+        const prevRaw = this.#rawDetails.get(host)
+
+        if (prev === status) {
+            // Published status unchanged; only the raw offline detail can differ (player stopped
+            // answering vs. host confirmed offline). Keep it log-only so no transition, no store
+            // row and no EventBus event is produced for it.
+            if (prevRaw !== rawDetail) {
+                this.#rawDetails.set(host, rawDetail)
+                const prevText = describeRawDetail(prevRaw)
+                const nextText = describeRawDetail(rawDetail)
+                if (prevText !== nextText) {
+                    LoggerService.debug(
+                        `${host}: ${status} detail ${prevText} -> ${nextText} (status unchanged)`,
+                        'VideoPlayerMonitor'
+                    )
+                }
+            }
+            return
+        }
+
         this.#statuses.set(host, status)
+        this.#rawDetails.set(host, rawDetail)
 
         // Persist durably and use the store as the change baseline so an unchanged state across
         // restarts does not re-fire subscribers (mirrors NetworkPresence); still publish when the
@@ -555,7 +633,8 @@ class SVideoPlayerMonitor {
         if (!result.changed && DatabaseService.isAvailable()) return
 
         LoggerService.info(
-            `Video player ${host}: ${prev ?? 'unknown'} -> ${status}`,
+            `Video player ${host}: ${prev ?? 'unknown'} -> ${status}` +
+            (status === STATUS_OFFLINE ? ` (${describeRawDetail(rawDetail)})` : ''),
             'VideoPlayerMonitor'
         )
         EventBus.publish(`videoPlayer:${host}`)

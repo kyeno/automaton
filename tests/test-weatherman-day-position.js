@@ -237,7 +237,11 @@ console.log('\n── computeDayPosition() ──\n')
     // -----------------------------------------------------------------------
     console.log('\n── buildAiPrompt() ──\n')
 
-    wm.config = origConfig   // restore shipped config for a realistic prompt
+    // Restore the shipped config for realistic timing, but pin the optional proverb
+    // segment off: this file asserts exact prompt text for the day-position markers,
+    // and add_proverb (a user-owned, gitignored config key) would append an extra line.
+    // The proverb is covered on its own in test-weatherman-proverb.js.
+    wm.config = { ...origConfig, add_proverb: false }
     await wm.init()          // loads #bundle + starts a harmless hourly timer (stopped below)
 
     const dir = I18nLoader.getLocale()

@@ -51,13 +51,12 @@ const CONTEXT_FAILURE_ESCALATION_THRESHOLD = 5
 const ONCE_MARKER_TTL_SECONDS = 172_800
 
 /**
- * Explicit condition token for an unknown player state (host offline, or the
- * monitor has not determined a status yet). Unlike real statuses it must be
- * listed explicitly: an unknown status matches ONLY condition lists that
- * include this token, so rules decide whether an unknown state is "safe to
- * act on" (ambient restore, ownership hand-back) or not (playback).
+ * Enumerated status meaning "no usable player signal" (host offline, player not answering, or
+ * nothing recorded at all). It is a real, always-available status: unlike the raw detail behind
+ * it, rules match it by simply listing `offline`, so playback requirements (`[playing]`) stay
+ * inert while restore/hand-back rules opt in explicitly.
  */
-const VIDEO_PLAYER_UNKNOWN = 'unknown'
+const VIDEO_PLAYER_OFFLINE = 'offline'
 
 export default class RuleBasedAutomationBase extends AutomationBase {
     /**
@@ -261,15 +260,12 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             const expected = this.#normalizeVideoPlayerCondition(conditions['video-player'])
             for (const [host, statuses] of Object.entries(expected)) {
                 const status = await videoPlayerMonitor.getStatus(host)
-                if (!status) {
-                    // Unknown host (offline / not yet swept): matches ONLY lists that
-                    // explicitly accept the 'unknown' token. Rules that must act on an
-                    // unknown state opt in (ambient restore, ownership hand-back);
-                    // everything else -- in particular playback requirements -- stays
-                    // inert so no dark-mode action can fire on a guess.
-                    return statuses.includes(VIDEO_PLAYER_UNKNOWN)
-                }
-                if (!statuses.includes(status)) {
+                // No recorded state (host not configured / monitor never swept it) counts as the
+                // enumerated `offline` status, so restore/hand-back rules that accept an absent
+                // player keep working while playback requirements stay inert. The raw detail
+                // behind it (unreachable vs. presence-offline) is the monitor's own concern.
+                const effective = status ?? VIDEO_PLAYER_OFFLINE
+                if (!statuses.includes(effective)) {
                     return false
                 }
             }
@@ -1059,10 +1055,10 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * Inverted semantics vs. the per-rule `video-player` condition: instead of
      * statuses a rule requires, the suppression map lists statuses that make
      * the whole automation stand down. Hosts combine with OR -- while ANY
-     * listed host reports one of its listed statuses, the guard is active. A
-     * null (unknown) status maps to the explicit `unknown` token, so it
-     * suppresses only when listed -- mirroring the per-rule condition
-     * semantics.
+     * listed host reports one of its listed statuses, the guard is active. No
+     * recorded status for a host counts as the enumerated `offline` status, so
+     * it suppresses only when `offline` is listed -- mirroring the per-rule
+     * condition semantics.
      *
      * @private
      * @returns {Promise<boolean>} true while the automation should stand down
@@ -1071,7 +1067,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         const suppression = this.#normalizeVideoPlayerCondition(this.config.video_player_suppression)
         for (const [host, statuses] of Object.entries(suppression)) {
             const status = await videoPlayerMonitor.getStatus(host)
-            const effective = status ?? VIDEO_PLAYER_UNKNOWN
+            const effective = status ?? VIDEO_PLAYER_OFFLINE
             if (statuses.includes(effective)) {
                 this.log(`video_player_suppression: "${host}" is ${effective}`, 'debug')
                 return true

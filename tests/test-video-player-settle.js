@@ -67,7 +67,7 @@ videoPlayerMonitor._setClock(() => fakeNow)
 /**
  * Apply one observation at a specific simulated time.
  * @param {string} host - Host name
- * @param {string|null} status - Normalized status ('playing'|'paused'|'stopped'|'unreachable') or null
+ * @param {string|null} status - Raw provider status ('playing'|'paused'|'stopped'|'unreachable') or null when offline/unknown
  * @param {string|null} [title] - Media title to associate with the observation
  * @param {number} atMs - Simulated current time (epoch ms)
  */

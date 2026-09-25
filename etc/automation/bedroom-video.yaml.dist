@@ -43,7 +43,7 @@ rules:
   - name: 'Bedroom: player gone - hand rollers back to their owner'
     conditions:
       presence: { laptop: false }
-      video-player: { laptop: [unknown, unreachable] }
+      video-player: { laptop: [offline] }
     invoke_automation: { name: BedroomRollersAutomation, force: true }
 
   # Light restore is fully delegated via `invoke_automation` to the ambient-lights
@@ -51,7 +51,7 @@ rules:
   # conditions. No `presence` gate here so an offline machine also hands light control back.
   - name: 'Bedroom: not playing - delegate light restore to ambient lights'
     conditions:
-      video-player: { laptop: [paused, stopped, unreachable, unknown] }
+      video-player: { laptop: [paused, stopped, offline] }
     invoke_automation: { name: AmbientLightsAutomation, force: true }
 
   - name: 'Bedroom: playing - dark mode (lights off)'

@@ -8,7 +8,7 @@
  * {@link ../automation/base/ruleBasedAutomationBase.js conditionsMatch()} for every statically
  * evaluable condition type: time-of-day period membership, actual wall-clock hour bounds (`hour:`), season, numeric range bounds
  * (`lt`/`lte`/`gt`/`gte`) on arbitrary sensor keys, network presence maps, and video-player
- * status lists including the explicit-`unknown` opt-in. Conditions that require live state
+ * status lists (no recorded state enumerates to the `offline` status). Conditions that require live state
  * (`state-changed-ago-minutes`) are treated as satisfied and noted in the report meta.
  *
  * The hour-to-period mapping is injected per analysis so callers can evaluate against the
@@ -46,8 +46,8 @@ const RESERVED_CONDITION_KEYS = new Set([
     'state-changed-ago-minutes',
 ])
 
-/** Sentinel status meaning "no recorded player state" -- matches only lists containing `unknown`. */
-const VIDEO_PLAYER_UNKNOWN = 'unknown'
+/** Enumerated status meaning "no usable player signal" -- absent/unreachable/offline all map here. */
+const VIDEO_PLAYER_OFFLINE = 'offline'
 
 /** Average sunrise/sunset hours per month for Central Europe (~52degN), as used pre-c1e8c6f. Indexed by zero-based month. */
 const LEGACY_SUN_TIMES = [
@@ -201,7 +201,7 @@ export function normalizeVideoPlayerCondition(videoPlayer) {
  * matching how conditionsMatch() treats them at runtime.
  *
  * @param {Record<string, unknown>|null|undefined} conditions - Conditions object from a YAML rule.
- * @param {{timeOfDay?: string|null, hour?: number|null, season? string|null, presence?: Record<string, boolean>, videoPlayer?: Record<string, string|undefined>}} ctx - Static context: period name, swept clock hour for the hour condition, optional season, per-host online flags, per-host player status (absent key = no recorded state).
+ * @param {{timeOfDay?: string|null, hour?: number|null, season? string|null, presence?: Record<string, boolean>, videoPlayer?: Record<string, string|undefined>}} ctx - Static context: period name, swept clock hour for the hour condition, optional season, per-host online flags, per-host player status (absent key enumerates to `offline`).
  * @param {Record<string, number|null>} [sensorValues={}] - Sensor readings keyed by logical sensor name.
  * @returns {boolean} True when every present condition holds.
  */
@@ -240,11 +240,10 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
         }
     }
 
-    // video player status check -- no recorded state matches only explicit `unknown` opt-ins
+    // video player status check -- no recorded state counts as the enumerated `offline` status
     if (conditions['video-player'] !== undefined) {
         for (const [host, statuses] of Object.entries(normalizeVideoPlayerCondition(conditions['video-player']))) {
-            const status = ctx.videoPlayer?.[host]
-            if (!status) return statuses.includes(VIDEO_PLAYER_UNKNOWN)
+            const status = ctx.videoPlayer?.[host] ?? VIDEO_PLAYER_OFFLINE
             if (!statuses.includes(status)) return false
         }
     }

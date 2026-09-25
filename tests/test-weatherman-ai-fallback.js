@@ -64,6 +64,11 @@ function assert(condition, label) {
 const wm = new TtsWeatherManAutomation()
 await wm.init()   // loads #bundle from the active locale + starts a harmless timer (stopped below)
 
+// Pin the optional proverb segment off: this file asserts the EXACT fallback text, and
+// add_proverb (a user-owned, gitignored config key) would append a line to it. The
+// proverb is covered on its own in test-weatherman-proverb.js.
+wm.config = { ...wm.config, add_proverb: false }
+
 const dir = I18nLoader.getLocale()
 const bundle = yamlParse(fs.readFileSync(path.join(ROOT, 'etc/i18n', dir, 'weatherman.yaml'), 'utf8'))
 console.log(`\n(using ${dir} weatherman bundle)\n`)

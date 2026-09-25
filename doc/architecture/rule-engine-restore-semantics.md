@@ -38,13 +38,13 @@ Before dispatching, the engine compares the commanded state against the device's
 - `ON` to a device already on, `OFF` to one already off, `CLOSE` to a roller already at position 0, `OPEN` to one already at 100 — all provable no-ops are dropped.
 - This stops MQTT spam from "sticky" automations that re-assert their desired state on every tick (e.g. those using `override_human_interaction`), and keeps snapshots clean: no transition, no snapshot.
 
-## The `unknown` Status Token
+## The `offline` Status
 
-Monitor-backed conditions (`video-player`, and any future monitor) treat a `null` status as an explicit **`unknown`** token rather than a wildcard:
+Monitor-backed conditions (`video-player`, and any future monitor) enumerate every "no usable signal" case into one **`offline`** status rather than a wildcard:
 
-- An unknown status matches **only** condition lists that explicitly include `unknown` -- and, for the top-level `video_player_suppression` stand-down guard, suppresses only when `unknown` is listed among the suppression statuses.
-- Each rule decides whether an unknown state is safe to act on: ambient-restore rules opt in (`[paused, stopped, unreachable, unknown]`), playback rules stay inert (no dark-mode action fires on a guess).
-- `unreachable` is a *real* status (the host is online but the player does not answer) and matches lists containing it, independent of `unknown`.
+- Host offline, host not yet polled, and player not answering all arrive as `offline` -- and, for the top-level `video_player_suppression` stand-down guard, suppress only when `offline` is listed among the suppression statuses.
+- Each rule decides whether an offline player is safe to act on: ambient-restore rules list it (`[paused, stopped, offline]`), playback rules stay inert (no dark-mode action fires on a guess).
+- The raw cause behind an `offline` status (presence-offline vs. unreachable player) is kept in the monitor's debug logs only; drifting between the two raw causes is **not** a status transition, so it never re-fires automations.
 
 ## Ownership Pattern in Practice
 
@@ -55,13 +55,13 @@ The [Home Theater Mode](../automations/home-theater-mode.md) automation demonstr
 | Reachable (any state) | `CLOSE` — automation takes ownership | unchanged |
 | `playing` | stays closed | `OFF` — dark mode |
 | `paused` / `stopped` | stays closed | restore (snapshot-filtered; `force_restore` lights always) |
-| `unknown` / `unreachable` | hand back — `OPEN` only what it closed itself | restore, gated by `presence` |
+| `offline` | hand back — `OPEN` only what it closed itself | restore, gated by `presence` |
 
 ## Related Documentation
 
 | Document | Relation |
 |----------|----------|
 | [Home Theater Mode](../automations/home-theater-mode.md) | Flagship consumer of snapshots, ownership, and `force_restore` |
-| [Video Player Monitor](../monitors/video-player.md) | Source of the statuses the `unknown` token governs |
+| [Video Player Monitor](../monitors/video-player.md) | Source of the `offline` status the conditions govern |
 | [Configuration Guide](../configuration.md) | Rule syntax: `restore_state_aware`, `force_restore`, `video-player` condition |
 | [Automation vs Human Differentiation](./automation-human-differentiation.md) | The cooldown/override system these rules dispatch through |

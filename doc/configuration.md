@@ -222,7 +222,7 @@ Each host is pinged via `arping` to detect presence on the local network. The sh
 
 #### Video Players (`videoPlayers`)
 
-Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `unreachable`) to rules via the `video-player` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
+Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `offline`) to rules via the `video-player` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
 
 ```yaml
 videoPlayers:
@@ -380,11 +380,11 @@ The optional `video-player` condition gates a rule on media-player status (see `
 ```yaml
 conditions:
   video-player:
-    hostname1: [paused, stopped, unreachable]   # "not actively playing"
-    hostname2: playing                          # single value shorthand
+    hostname1: [paused, stopped, offline]   # "not actively playing or gone"
+    hostname2: playing                      # single value shorthand
 ```
 
-An **unknown** player status (host offline or not yet polled) matches ONLY condition lists that explicitly include the `unknown` token -- each rule decides whether an unknown state is safe to act on (e.g. ambient-restore rules opt in with `[paused, stopped, unreachable, unknown]`; ownership hand-back guards use `[unknown, unreachable]`). `triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
+An absent status (host offline, player not answering, or not yet polled) enumerates to the single **`offline`** status -- each rule decides whether that is safe to act on by listing it (e.g. ambient-restore rules use `[paused, stopped, offline]`; ownership hand-back guards use `[offline]`), while playback requirements like `[playing]` stay inert. The raw cause behind `offline` is log-only and never a status transition of its own. `triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
 
 ### Video Player Suppression (`video_player_suppression`)
 
@@ -395,7 +395,7 @@ video_player_suppression:
   htpc: [playing, paused, stopped]   # stand down while actively playing
 ```
 
-- Statuses use the same vocabulary as the `video-player` condition; a null (unknown) status maps to the explicit `unknown` token, so it suppresses only when listed.
+- Statuses use the same vocabulary as the `video-player` condition; a host with no recorded status enumerates to `offline`, so it suppresses only when `offline` is listed.
 - Individual rules may opt out with `ignore_video_player_suppression: true`. While the guard is active, only exempt rules are evaluated; when no rule opts out, the automation returns early without even building context.
 - Unlike `silence_between`, the guard is **never bypassed by `/automation force`** -- a forced run must not create device fights.
 - The per-rule `video-player` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
@@ -409,7 +409,7 @@ A rule can hand control to one or more loaded automations instead of -- or along
 ```yaml
 rules:
   - name: 'HTPC: player gone - hand back to the room owners'
-    conditions: { video-player: { htpc: [unknown, unreachable] } }
+    conditions: { video-player: { htpc: [offline] } }
     invoke_automation:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
@@ -499,7 +499,15 @@ Create `<Name>Interaction.js` in `etc/interaction/`, extending `InteractionBase`
 
 ## 6. i18n Bundles
 
-Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains an AI bundle, a TTS bundle, and (for the weatherman automation) a speech bundle plus a date bundle:
+Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains an AI bundle, a TTS bundle, and (for the weatherman automation) a speech bundle, a date bundle, and a proverb list:
+
+| File | Purpose | Tracked as |
+|------|---------|-----------|
+| `ai.yaml` | LLM system prompt, tool descriptions, device roles, UI strings | `.yaml` + `.yaml.dist` |
+| `tts.yaml` | Voice model and audio effect settings per locale | `.yaml` + `.yaml.dist` |
+| `weatherman.yaml` | Weather announcement sentence templates | `.yaml` + `.yaml.dist` |
+| `date.yaml` | Day/month names, period words, duration units (date helper) | system file, no template |
+| `proverbs.txt.dist` | Starter list to copy to `proverbs.txt`; one proverb per line, drawn at random by the weatherman proverb segment | `.dist` template |
 
 ### AI Bundle (`ai.yaml`)
 
@@ -542,6 +550,19 @@ Defines voice model settings and audio effects per locale. Referenced by the TTS
 
 Owned by the date helper (`src/lib/date.js`): localized day-of-week and month names, the `date_sentence` fragment, `period_words` for `{% time_of_day %}`, and `duration_units` for `{% next_interval %}` -- the vocabulary behind [Weatherman Speech Rendering](architecture/weatherman-speech-rendering.md). A system file (force-tracked in git, no `.dist` template), not a user-customizable speech template.
 
+### Proverb List (`proverbs.txt`)
+
+A plain text file: **one proverb per line**, separated by a line feed. The weatherman automation draws a random line from it (via `src/lib/randomLine.js`, which streams the file instead of loading it) and interpolates it into the `{% proverb %}` token of the `ai_proverb` / `tts_proverb` keys in `weatherman.yaml` when `add_proverb: true` is set in `etc/automation/tts-weatherman.yaml`.
+
+Format rules, enforced by the reader:
+
+- Exactly one proverb per line -- no quoting, no numbering, no embedded newlines.
+- Blank lines are skipped, so entries can be grouped with empty lines.
+- A trailing newline at end of file is fine and never yields an empty proverb.
+- Lines whose first non-blank character is `#` are treated as comments, so a documented header is safe. A proverb that genuinely starts with `#` would need that marker disabled.
+
+Ships as a clean starter template (`proverbs.txt.dist`, tracked); copy it to `proverbs.txt` in the same directory and add your own lines -- the active list is git-ignored so personal entries never get committed.
+
 ---
 
 ## Adding a New Language
@@ -549,7 +570,7 @@ Owned by the date helper (`src/lib/date.js`): localized day-of-week and month na
 1. Create a new directory: `etc/i18n/{locale}/`
 2. Copy and translate `ai.yaml` from an existing bundle
 3. Create `tts.yaml` with appropriate voice model settings
-4. If you use the weatherman automation, copy and translate `weatherman.yaml` and `date.yaml` (the date bundle holds day/month names, period words, and duration units)
+4. If you use the weatherman automation, copy and translate `weatherman.yaml` and `date.yaml` (the date bundle holds day/month names, period words, and duration units), and copy `proverbs.txt.dist` to `proverbs.txt`, adding one proverb per line
 5. Set `locale.language` in `etc/automaton.yaml` to your full locale code (e.g., `de_DE` for German)
 
 ---

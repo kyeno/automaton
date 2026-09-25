@@ -135,12 +135,14 @@ console.log('\n\u2500\u2500 C. condition evaluation \u2500\u2500\n')
         'normalizer maps bare name to expected-online flag'
     )
 
-    // Video-player -- no recorded state only satisfies explicit `unknown` opt-in lists.
+    // Video-player -- no recorded state enumerates to the `offline` status.
     const vctx = { timeOfDay: 'night', presence: {}, videoPlayer: {} }
-    assertTrue(cov.evaluateRule({ 'video-player': { tv: ['unreachable', 'unknown'] } }, vctx), 'no-state baseline matches unknown-opt-in list')
+    assertTrue(cov.evaluateRule({ 'video-player': { tv: ['offline'] } }, vctx), 'no-state baseline matches an offline list')
     assertEqual(cov.evaluateRule({ 'video-player': { tv: ['playing'] } }, vctx), false, 'no-state baseline does not match concrete statuses')
+    assertEqual(cov.evaluateRule({ 'video-player': { tv: ['paused', 'stopped'] } }, vctx), false, 'no-state baseline does not match a list without offline')
     assertTrue(cov.evaluateRule({ 'video-player': { tv: 'paused' } }, { ...vctx, videoPlayer: { tv: 'paused' } }), 'scalar status matches when recorded')
     assertEqual(cov.evaluateRule({ 'video-player': { tv: 'paused' } }, { ...vctx, videoPlayer: { tv: 'playing' } }), false, 'recorded mismatch rejects')
+    assertTrue(cov.evaluateRule({ 'video-player': { tv: ['offline'] } }, { ...vctx, videoPlayer: { tv: 'offline' } }), 'recorded offline matches an offline list')
 
     // Season pass-through and extra-key tolerance.
     assertTrue(cov.evaluateRule({ season: 'winter' }, ctx), 'season condition passes when analysis pins none')

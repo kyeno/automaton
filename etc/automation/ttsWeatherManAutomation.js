@@ -50,6 +50,7 @@ import AiAssistant from '../../src/ai/aiAssistant.js'
 import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 import { round } from '../../src/lib/math.js'
+import { readRandomLine } from '../../src/lib/randomLine.js'
 import temporal from '../../src/lib/date.js'
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,12 @@ const CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tts
 
 /** Root directory containing per-locale i18n subdirectories. */
 const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
+
+/** Per-locale proverb list -- one proverb per line, drawn when add_proverb is true. */
+const PROVERBS_FILENAME = 'proverbs.txt'
+
+/** Line prefix treated as a comment in the proverb file (header docs are not proverbs). */
+const PROVERBS_COMMENT_CHAR = '#'
 
 /** Fallback text when a device or property is not found during interpolation. */
 const INTERPOLATION_MISSING = 'N/A'
@@ -341,17 +348,30 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /**
      * Assemble the ordered day-position speech segments for a run -- an optional single
-     * opener (first / last / only), then the core message, then an optional "next update"
-     * closer. Excludes the creative ai_prefix entirely; these are plain sentences meant to
-     * be spoken verbatim on BOTH output paths. The closer now appears on every run except
-     * the last (and whenever a next tick can be predicted), so first runs announce it too.
+     * opener (first / last / only), then the core message, then an optional proverb,
+     * then an optional "next update" closer. Excludes the creative ai_prefix entirely;
+     * these are plain sentences meant to be spoken verbatim on BOTH output paths. The
+     * closer appears on every run except the last (and whenever a next tick can be
+     * predicted), so first runs announce it too.
+     *
+     * When `add_proverb` is enabled, the proverb sits BETWEEN the core message and the
+     * "next update" closer, so the next-update time stays the very last thing said.
+     * That placement is deliberate and the i18n wording depends on it:
+     *   - ai_proverb carries NO positional claim of its own (it asks the model to
+     *     "remind listeners of a proverb"), because the prompt's own line order already
+     *     places the proverb. A "close with this" wording would now be false, since the
+     *     next-update line follows it; and reusing ai_prefix's "Na koniec / Finally"
+     *     anchor would collide with the anecdote instruction the prefix already carries.
+     *   - the caller picks the wording via `proverbKey` because the two output paths
+     *     need different text: an instruction for the model vs. a line to speak.
      * @private
      * @param {string} message - Interpolated core speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
      *   Day position computed by {@link computeDayPosition}
+     * @param {string} [proverbKey] - i18n key for the proverb line, per output path
      * @returns {string[]} Ordered segments (message always present)
      */
-    #speechSegments(message, meta = {}) {
+    #speechSegments(message, meta = {}, proverbKey) {
         const parts = []
 
         // Opening day-position marker -- exactly one of first / last / only applies per run.
@@ -365,6 +385,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
 
         parts.push(message)
+
+        // Proverb -- directly after the report body, ahead of the next-update closer.
+        const proverb = this.#buildProverbSegment(proverbKey)
+        if (proverb) parts.push(proverb)
 
         // Closing "next update" line -- every run except the last, when a next tick is known.
         if (!meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
@@ -394,7 +418,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * @returns {string} Full AI prompt (creative prefix + day-position markers + core message)
      */
     buildAiPrompt(message, meta = {}) {
-        const segments = this.#speechSegments(message, meta)
+        // The AI leg gets the instruction phrasing: the model reads it as a direction and
+        // announces the proverb in its own voice rather than reciting the sentence verbatim.
+        const segments = this.#speechSegments(message, meta, 'weatherman.ai_proverb')
         const body = segments.join('\n')          // keep the newline layout the model expects
 
         // Creative instruction prefix (existing behaviour). Only the AI leg carries it --
@@ -423,7 +449,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * @returns {string} Speech text with markers (no ai_prefix)
      */
     buildDirectTtsText(message, meta = {}) {
-        const segments = this.#speechSegments(message, meta)
+        // Direct TTS gets the spoken phrasing -- there is no model to obey an instruction,
+        // so the line must read as natural speech on its own.
+        const segments = this.#speechSegments(message, meta, 'weatherman.tts_proverb')
         return segments.join(' ').trim()
     }
 
@@ -528,6 +556,43 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
 
     // -- Private Helpers ----------------------------------------------------
+
+    /**
+     * Build the closing proverb segment, or '' when it should not be spoken.
+     *
+     * Gated on `config.add_proverb: true` (strict boolean, like the greeter/gardener
+     * `use_ai` switch) and on `proverbKey`, which the caller supplies so each output
+     * path uses its own wording. A fresh proverb is drawn on every call -- there is no
+     * "last spoken" memory, so a small file will repeat; that is the file's business,
+     * not the automation's.
+     *
+     * Degrades silently to '' (segment simply dropped) when the flag is off, the bundle
+     * has no such key, or the proverb file is missing/empty -- a missing proverb must
+     * never cost the listener the whole weather report.
+     * @private
+     * @param {string} [proverbKey] - i18n key to resolve, e.g. 'weatherman.ai_proverb'
+     * @returns {string} Interpolated proverb line, or '' when unavailable
+     */
+    #buildProverbSegment(proverbKey) {
+        if (!proverbKey || this.config?.add_proverb !== true) return ''
+
+        const template = this.#resolveI18n(proverbKey, '')
+        if (!template) {
+            this.log(`add_proverb is on but "${proverbKey}" is missing from the bundle`, 'warn')
+            return ''
+        }
+
+        const filePath = path.join(I18N_ROOT, I18nLoader.getLocale(), PROVERBS_FILENAME)
+        // readRandomLine streams the file -- it is never loaded whole, so an oversized
+        // proverb list costs the same as a three-line one.
+        const proverb = readRandomLine(filePath, { commentChar: PROVERBS_COMMENT_CHAR })
+        if (!proverb) {
+            this.log(`add_proverb is on but no proverb could be read from ${filePath}`, 'warn')
+            return ''
+        }
+
+        return this.#interpolate(template, null, { proverb })
+    }
 
     /**
      * Pick the variant template for a moment within bundle.time_sentence. Exact clock

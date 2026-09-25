@@ -15,7 +15,7 @@
  * .dist templates) are skipped, not failed.
  *
  * Section 3 covers engine & provider semantics: video-player conditions
- * including the explicit `unknown` token, override_human_interaction wiring,
+ * including the enumerated `offline` status, override_human_interaction wiring,
  * and MPC/VLC provider parse normalization.
  *
  * The video-player status is injected directly into the VideoPlayerMonitor
@@ -87,7 +87,7 @@ function assert(condition, label) {
  * Uses the monitor's test hook, which seeds the in-memory cache without a live
  * player or a running sweep.
  * @param {string} host - Host name
- * @param {string|null} status - Normalized status (or null for unknown)
+ * @param {string|null} status - Status; legacy/raw labels (`unreachable`, `unknown`, null) normalize to `offline`
  */
 async function setVideoStatus(host, status) {
     await videoPlayerMonitor.setTestStatus(host, status)
@@ -186,7 +186,7 @@ const RULES_OFFICE = [
     // Player gone (offline): hand the room back to its owners in one rule -- the array form
     // force-fires BOTH the roller owner and the ambient-lights owner. Keyed on the player
     // state alone (no separate presence gate).
-    { name: 'Office: player gone - hand back to the room owners', conditions: { 'video-player': { htpc: ['unknown', 'unreachable'] } }, invoke_automation: [{ name: 'HomeOfficeRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
+    { name: 'Office: player gone - hand back to the room owners', conditions: { 'video-player': { htpc: ['offline'] } }, invoke_automation: [{ name: 'HomeOfficeRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
     // Online player that has paused/stopped: restore the lamp set locally (the salon dimmer
     // comes back at l1 50% / l2 25%). A GONE player instead delegates to the ambient-lights
     // owner via the rule above, so the two never fight over the same lamps.
@@ -201,8 +201,8 @@ const RULES_BUNDLED = [
     // ambient-lights owner (array form), while its not-playing rule delegates the lamp restore
     // for every non-playing state. This exercises the base class's flexibility to mix a
     // local-restore room (office) with a fully-delegating room (bedroom) in one instance.
-    { name: 'Bedroom: player gone - hand back to the room owners', conditions: { 'video-player': { bedroom: ['unknown', 'unreachable'] } }, invoke_automation: [{ name: 'BedroomRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
-    { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video-player': { bedroom: ['paused', 'stopped', 'unreachable', 'unknown'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
+    { name: 'Bedroom: player gone - hand back to the room owners', conditions: { 'video-player': { bedroom: ['offline'] } }, invoke_automation: [{ name: 'BedroomRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
+    { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video-player': { bedroom: ['paused', 'stopped', 'offline'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
     { name: 'Bedroom: playing - dark mode (lights off)', conditions: { 'video-player': { bedroom: ['playing'] } }, targets: { Bedroom_Plug: 'OFF' } }
 ]
 
@@ -380,10 +380,11 @@ console.log('\n── Home theater (bundled instance): roller ownership lifecycl
 
 {
     // Rollers are owned while the player answers HTTP (any state); when it disappears
-    // (unknown/null or unreachable) home-theater hands control back to the room's roller
-    // owner instead of re-opening locally. The bedroom player is gone throughout, so its
-    // roller is never closed by us -- only ever delegated. Redundant CLOSE/OFF commands are
-    // still dispatched whenever their rule matches; the delegation counts below are what matter.
+    // (offline -- player not answering, or host powered down; both enumerate to one status)
+    // home-theater hands control back to the room's roller owner instead of re-opening locally.
+    // The bedroom player is gone throughout, so its roller is never closed by us -- only ever
+    // delegated. Redundant CLOSE/OFF commands are still dispatched whenever their rule matches;
+    // the delegation counts below are what matter.
     resetInvocations()
     const devices = await runSequence('bundled', makeBundledDevices(), [
         { htpc: 'playing', bedroom: null },
@@ -448,10 +449,10 @@ console.log('\n── Home theater (bundled instance): rollers found closed are 
         'ambient restore delegated both not-playing ticks, forced')
 }
 
-console.log('\n── Home theater (bundled instance): players vanish mid-movie (unknown) -- full hand-back ──\n')
+console.log('\n── Home theater (bundled instance): players vanish mid-movie (offline) -- full hand-back ──\n')
 
 {
-    // Both machines disappear (unknown/null): home-theater hands the rollers back to each
+    // Both machines disappear (offline): home-theater hands the rollers back to each
     // room's owner and delegates light restore to ambient-lights -- nothing is re-opened or
     // switched on locally anymore. Each device only ever sees its single dark-mode command.
     resetInvocations()
@@ -587,10 +588,10 @@ console.log('\n── Home theater (Gone rule): player-state-only condition forc
 
 {
     // The Gone rule is keyed on the player state ALONE (no separate presence gate): when the
-    // player is unknown/unreachable it force-fires BOTH the roller owner and the ambient-lights
-    // owner in a single rule. This scenario proves the condition is player-state-only and that
-    // both owners are poked (forced) on one offline tick, while the local lamps stay quiet
-    // (the restore is delegated, not re-asserted here).
+    // player is offline it force-fires BOTH the roller owner and the ambient-lights owner in a
+    // single rule. This scenario proves the condition is player-state-only and that both owners
+    // are poked (forced) on one offline tick, while the local lamps stay quiet (the restore is
+    // delegated, not re-asserted here).
     resetInvocations()
     const devices = await runSequence('office', makeOfficeDevices(), [
         { htpc: null }
@@ -621,10 +622,11 @@ console.log('\n── Home theater (timer gate): idle ticks do not re-fire or re
     const auto = makeInstance(devices, 'office')
     await sleep(25)   // ensure any later Date.now() is strictly greater than the construction baseline
 
-    // First transition: the player goes offline (unknown). Record it so the gate sees a change,
-    // then let the first timer tick run.
+    // First transition: the player goes offline. setVideoStatus records the enumerated `offline`
+    // status durably (the store is the gate's baseline), so the first timer tick sees a change
+    // and runs; the extra recordTransition documents that intent explicitly.
     await setVideoStatus('htpc', null)
-    await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: 'htpc', toState: 'unknown' })
+    await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: 'htpc', toState: 'offline' })
     await auto.execute({ trigger: 'timer' })
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'first timer tick after the offline transition fires the Gone rule (rollers owner)')
@@ -740,31 +742,31 @@ console.log('\n── video-player condition (conditionsMatch) ──\n')
         'video-player: htpc=playing rejected by [paused, stopped]')
     // paused matches the not-playing list
     await setVideoStatus('htpc', 'paused')
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unreachable'] } }, CONTEXT),
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'offline'] } }, CONTEXT),
         'video-player: htpc=paused matches not-playing list')
     assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
         'video-player: htpc=paused rejected by [playing]')
-    // unreachable matches the not-playing list
+    // offline matches the not-playing list; both raw causes (player not answering, host down)
+    // normalize to it, so the raw input form is irrelevant to matching.
     await setVideoStatus('htpc', 'unreachable')
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unreachable'] } }, CONTEXT),
-        'video-player: htpc=unreachable matches not-playing list')
-    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['unknown'] } }, CONTEXT)),
-        'video-player: unreachable is a real status, not the unknown token')
-    // Unknown (null) status: matches ONLY lists that explicitly opt in via the
-    // 'unknown' token (ambient restore, ownership hand-back). Playback
-    // requirements and plain not-playing lists stay inert on a guess.
-    await setVideoStatus('htpc', null)
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'offline'] } }, CONTEXT),
+        'video-player: htpc=offline (raw unreachable) matches not-playing list')
     assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
-        'video-player: unknown status does not satisfy a "playing" requirement')
+        'video-player: offline rejected by [playing]')
+    // No recorded status (raw null) enumerates to the same `offline` status: rules that list it
+    // match, playback requirements and not-playing lists WITHOUT it stay inert.
+    await setVideoStatus('htpc', null)
+    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['offline'] } }, CONTEXT),
+        'video-player: null status enumerates to offline')
+    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
+        'video-player: offline does not satisfy a "playing" requirement')
     assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
-        'video-player: unknown status does not match a list without the unknown token')
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'unknown'] } }, CONTEXT),
-        'video-player: unknown status matches a list that opts in via unknown')
+        'video-player: offline does not match a list without offline')
 
     // Pin the exact condition shape of the office instance's local restore rule: it must fire
     // for afternoon/evening/night darkness and reject morning or readings at/above 900 lux.
     const restoreConditions = {
-        'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] },
+        'video-player': { htpc: ['paused', 'stopped', 'offline'] },
         'time-of-day': ['afternoon', 'evening', 'night'],
         illuminance: { lt: 900 }
     }

@@ -22,6 +22,18 @@ silence_between: "0230-1030"     # Suppress execution between these local times 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 
+# OPTIONAL -- Add a proverb to every announcement, placed after the report body and
+# BEFORE the "next update" closer (so the next-update time stays last). The proverb is
+# drawn at random from etc/i18n/<locale>/proverbs.txt (one per line) and fills the
+# {% proverb %} token of the weatherman bundle's proverb keys.
+#
+# Two keys exist because the two output paths need different wording:
+#   ai_proverb -- direction carried in the AI prompt, so the model announces the
+#                 proverb in its own voice;
+#   tts_proverb -- spoken verbatim by direct TTS when AI is unavailable.
+# Remove the block to go back to plain announcements.
+add_proverb: false
+
 sensors:
   illuminance: 'Outdoor Luminance'
   temperature: 'Outdoor Temperature'

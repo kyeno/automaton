@@ -31,9 +31,22 @@ base: 'Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} sto
 # first/last mark the opening/closing announcement of each daily session (the stretch
 # between two silence windows); only marks sessions shorter than the timer interval.
 ai_message_first: 'To jest pierwsza wiadomość dzisiejszego dnia.'
-ai_message_last: 'To jest ostatnia wiadomość dzisiejszej nocy.'
+ai_message_last: 'To jest ostatnia wiadomość dzisiejszej nocy. Następna wiadomość już jutro.'
 ai_message_only: 'To jest jedyna wiadomość tej doby.'
 ai_message_next: 'Następna wiadomość za {% next_interval %}.'
+
+# Closing proverb -- added when add_proverb: true in etc/automation/tts-weatherman.yaml.
+# {% proverb %} is filled with a random line from etc/i18n/<locale>/proverbs.txt.
+# Placement: after the report body, BEFORE the next-update closer, so the next-update
+# time stays last. See Weatherman Speech Rendering -> Segment Order.
+#
+# ai_proverb deliberately makes NO positional claim ("przypomnij sluchaczom..."), because
+# the prompt's own line order already places the proverb. Do NOT change it to a
+# "close with this" / "na koniec" phrasing: ai_prefix already anchors its anecdote to
+# "Na koniec" (before the next-update line), so a second end-anchor would compete with
+# it. tts_proverb is the spoken wording for the direct-TTS path.
+ai_proverb: 'Przypomnij słuchaczom przysłowie: {% proverb %}'
+tts_proverb: 'I pamiętajcie: {% proverb %}'
 
 # Posted in the chat window when the AI leg fails or returns nothing -- explains why no
 # rewritten report appears before the raw message is spoken instead.
@@ -50,5 +63,9 @@ warning_chill_night: 'Wychodząc na spacer załóż bluzę lub lekką kurtkę.'
 soothing_warm_day: 'Pogoda jest doskonała! Idealna na spacer, lub pracę na zewnątrz!'
 soothing_warm_evening: 'Piękny wieczór za oknem! Idealny na orzeźwiający spacer.'
 soothing_warm_night: 'Jest przepiękna noc. Można wyjść w krótkich spodenkach i koszulce by podziwiać gwiazdy.'
+
+# Autumn
+warning_cool_night: 'Wychodząc na spacer załóż sweter, ciepłą bluzę, kufaję lub kurtkę.'
+warning_cold_night: 'Wychodząc na zewnątrz załóż bluzę, kurtkę i grubsze spodnie.'
 
 # TODO: Other seasons of the year

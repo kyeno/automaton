@@ -31,9 +31,22 @@ ai_prefix: 'You are a weather announcer. Rewrite the following information creat
 # first/last mark the opening/closing update of each daily session (the stretch between
 # two silence windows); only marks sessions shorter than the timer interval.
 ai_message_first: 'This is the first update of today.'
-ai_message_last: 'This is the last update of tonight.'
+ai_message_last: 'This is the last update of tonight. The next update is tomorrow.'
 ai_message_only: 'This is the only update of today.'
 ai_message_next: 'Next update in {% next_interval %}.'
+
+# Closing proverb -- added when add_proverb: true in etc/automation/tts-weatherman.yaml.
+# {% proverb %} is filled with a random line from etc/i18n/<locale>/proverbs.txt.
+# Placement: after the report body, BEFORE the next-update closer, so the next-update
+# time stays last. See Weatherman Speech Rendering -> Segment Order.
+#
+# ai_proverb deliberately makes NO positional claim ("remind your listeners..."), because
+# the prompt's own line order already places the proverb. Do NOT change it to a
+# "close with this" / "Finally" phrasing: ai_prefix already anchors its anecdote to
+# "Finally" (before the next-update line), so a second end-anchor would compete with it.
+# tts_proverb is the spoken wording for the direct-TTS path.
+ai_proverb: 'Remind your listeners of this proverb: {% proverb %}'
+tts_proverb: 'And remember: {% proverb %}'
 
 # Posted in the chat window when the AI leg fails or returns nothing -- explains why no
 # rewritten report appears before the raw message is spoken instead.

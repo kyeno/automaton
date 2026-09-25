@@ -1,0 +1,18 @@
+# Proverb list (English) -- one proverb per line, separated by a line feed.
+#
+# Read by src/lib/randomLine.js, which streams the file and returns one randomly
+# chosen line without loading it. The WeatherMan automation draws from here when
+# `add_proverb: true` is set in etc/automation/tts-weatherman.yaml, filling the
+# {% proverb %} token of the weatherman bundle's ai_proverb / tts_proverb keys.
+#
+# Format rules (enforced by the reader, not by YAML):
+#   - exactly one proverb per line, no quoting, no numbering
+#   - blank lines are skipped, so you can group visually with empty lines
+#   - a trailing newline at end of file is fine and never yields an empty proverb
+#   - a '#' comment is NOT supported -- a comment line would be read as a proverb
+#
+# Copy this file to "proverbs.txt" in the same directory, then add your own
+# lines below; the shipped set is a clean starting point.
+A stitch in time saves nine.
+Don't count your chickens before they hatch.
+Fortune favours the bold.
