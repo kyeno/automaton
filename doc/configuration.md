@@ -334,6 +334,17 @@ timer_interval: "3m 45s"   # tokens combine: every 3 minutes 45 seconds
 - Omitting the key disables the timer entirely -- the automation becomes event-driven only. Legacy numeric `timer_interval_ms` remains supported; when both keys are present, `timer_interval` wins.
 - Invalid values log a warning and disable the timer (fail-open). Values above ~24.8 days (the 32-bit `setInterval` limit) are rejected.
 
+### React-On-Change Gate (`trigger_on_change_only`)
+
+The optional `trigger_on_change_only: true` key turns the periodic timer into a pure safety net. When enabled, a scheduled (`timer`) tick is **skipped entirely** unless one of the automation's monitored subjects actually transitioned since its last evaluation. Monitored subjects are derived automatically from the `presence` (network) and `video-player` rule conditions -- the hosts those conditions watch. Event-driven runs (a real EventBus topic) and forced runs always proceed regardless, since they already represent an explicit reason to act.
+
+This is what stops a "sticky" automation (one that opts into `override_human_interaction`) from re-firing its rules on every timer tick while its conditions still hold -- e.g., a home-theater instance whose player is stably offline used to re-assert its restore rule on every 15-minute tick. With the gate, the rule fires once on the transition that made its conditions true, then stays quiet until a monitored subject changes again. The gate fails open: if no subjects are monitored, or the state-history store is unavailable, the tick proceeds as usual.
+
+```yaml
+timer_interval: "15m"          # safety-net cadence
+trigger_on_change_only: true   # skip a tick unless a monitored player/presence state changed
+```
+
 ### Silence Periods (`silence_between`)
 
 The optional `silence_between` key defines a time window during which an automation's `execute()` call is suppressed entirely. It applies per-automation file — each `.yaml` can have its own independent schedule.
@@ -393,19 +404,27 @@ With `restore_state_aware: true` (automation level), restore commands are filter
 
 ### Delegating to Other Automations (`invoke_automation`)
 
-A rule can hand control to another loaded automation instead of -- or alongside -- issuing device commands itself. This is how [Home Theater Mode](automations/home-theater-mode.md) hands rollers back to their room's owner when a player goes offline, and how its bedroom instance still delegates pause-time light restore to the ambient-lights automation (the HTPC instance restores that lamp set locally from its own rules now):
+A rule can hand control to one or more loaded automations instead of -- or alongside -- issuing device commands itself. This is how [Home Theater Mode](automations/home-theater-mode.md) hands a room back to its owners when a player goes offline: a single gone rule force-fires both the roller owner and the ambient-lights owner in one rule.
 
 ```yaml
 rules:
-  - name: 'HTPC: player gone - hand Salon rollers back'
+  - name: 'HTPC: player gone - hand back to the room owners'
     conditions: { video-player: { htpc: [unknown, unreachable] } }
-    invoke_automation: { name: HomeOfficeRollersAutomation, force: true }
+    invoke_automation:
+      - { name: HomeOfficeRollersAutomation, force: true }
+      - { name: AmbientLightsAutomation, force: true }
 ```
 
+Every form below resolves to the same set of `{name, force}` targets:
+
+- **Bare string** -- `invoke_automation: SomeName` (equivalent to `{ name: SomeName }`, no force).
+- **Single object** -- `invoke_automation: { name: SomeName, force: true }`.
+- **Array** -- `invoke_automation: [NameA, { name: NameB, force: true }]`; each element is a bare name or a `{name, force}` object, and per-element force is honored.
+- **Names object** -- `invoke_automation: { names: [NameA, NameB], force: true }`; one shared force flag applied to every listed name.
+
 - `name` must match an automation registered by the container exactly; unknown names log a warning and are skipped without aborting the run.
-- The bare-string form (`invoke_automation: SomeName`) is equivalent to `{ name: SomeName }`.
 - Invocations fire **after** a rule matches but **before** any device dispatch, so a rule whose only action is invoking still works even though it issues no device command of its own (the automation just needs at least one device in scope for `execute()` to proceed).
-- If several matched rules reference the same target within one run, that automation fires **once**; `force: true` is OR-merged across those references.
+- If several matched rules -- or several entries within one rule -- reference the same target within one run, that automation fires **once**; `force: true` is OR-merged across all those references.
 - A mutual `A -> B -> A` chain is capped at a fixed nesting depth (5) to break accidental cycles.
 
 ### Force Semantics and Once Markers
@@ -418,7 +437,7 @@ Adding `once: true` to a rule makes it act **at most once per local calendar day
 
 ### Invoke-Only Rules (`forced_only`)
 
-Adding `forced_only: true` to a rule makes it participate **only in forced or delegated runs** -- `/automation force <n>` or another automation's forced `invoke_automation`. Natural timer/sensor ticks skip such rules entirely, even when their conditions hold and no once-marker is set. This is how the ambient-lights late-night restore works: its `[night]` window answers home-theater pause hand-offs for movies watched past midnight without ever switching lamps on uninvited at pre-dawn darkness. Because forced runs neither check nor write once-markers, an invoke-only rule can re-fire on every delegation -- each pause restores the lights again.
+Adding `forced_only: true` to a rule makes it participate **only in forced or delegated runs** -- `/automation force <n>` or another automation's forced `invoke_automation`. Natural timer/sensor ticks skip such rules entirely, even when their conditions hold and no once-marker is set. This is useful for rules that should only act when explicitly poked by another automation (e.g., a restore rule that answers a hand-off) without ever firing on their own. Because forced runs neither check nor write once-markers, an invoke-only rule can re-fire on every delegation.
 
 ### Season Conditions
 

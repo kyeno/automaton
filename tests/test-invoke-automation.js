@@ -4,8 +4,9 @@
  * Covers the delegation mechanics that home-theater mode relies on but which are a general
  * engine feature, exercised here directly against RuleBasedAutomationBase.execute():
  *   - multiple rules referencing the same target dedupe to ONE invocation per run, with force OR-merged,
- *   - both spec shapes resolve to the same name (`name:` object form and bare-string form),
- *   - non-forced specs propagate no force flag,
+ *   - all spec shapes resolve to the same names: bare-string, `{name, force}` object, an array
+ *     of strings/objects, and the `{ names: [...], force }` object form,
+ *   - non-forced specs propagate no force flag; per-element and shared force flags are honored,
  *   - pure-invoke rules still fire even when they produce zero device commands,
  *   - an invoke can coexist with normal device dispatch in the same matched rule,
  *   - invoking an unknown automation warns and returns without throwing (execution continues),
@@ -137,6 +138,78 @@ console.log('\n\u2500\u2500 invoke_automation delegation semantics \u2500\u2500\
     assert(invocations.length === 1 && invocations[0].name === 'StringTarget',
         'bare-string invoke_automation resolves to that automation name')
     assert(invocations[0].force === false, 'non-forced spec does not set the force flag')
+    invocations.length = 0
+}
+
+{
+    // Array of bare strings: one rule hands off to several owners at once; each fires once,
+    // none forced (no per-element force flag).
+    const auto = makeProbe([
+        'rules:',
+        '  - name: "array of strings"',
+        '    invoke_automation:',
+        '      - TargetA',
+        '      - TargetB'
+    ].join('\n'))
+    await auto.execute({ trigger: 'test' })
+    const names = invocations.map((i) => i.name).sort()
+    assert(invocations.length === 2 && names.join(',') === 'TargetA,TargetB',
+        'array-form invoke_automation fires every listed automation once')
+    assert(invocations.every((i) => i.force === false), 'array of bare strings carries no force flag')
+    invocations.length = 0
+}
+
+{
+    // Array of mixed objects/strings: per-element force is honored (TargetA forced, TargetB not).
+    const auto = makeProbe([
+        'rules:',
+        '  - name: "mixed array"',
+        '    invoke_automation:',
+        '      - { name: TargetA, force: true }',
+        '      - TargetB'
+    ].join('\n'))
+    await auto.execute({ trigger: 'test' })
+    const a = invocations.find((i) => i.name === 'TargetA')
+    const b = invocations.find((i) => i.name === 'TargetB')
+    assert(invocations.length === 2, 'mixed array fires both listed automations')
+    assert(a && a.force === true, 'array element with force:true propagates the force flag')
+    assert(b && b.force === false, 'array element without force propagates no force flag')
+    invocations.length = 0
+}
+
+{
+    // Object form with a `names` array and a shared force flag: every listed name is forced.
+    const auto = makeProbe([
+        'rules:',
+        '  - name: "names object"',
+        '    invoke_automation: { names: [TargetA, TargetB], force: true }'
+    ].join('\n'))
+    await auto.execute({ trigger: 'test' })
+    const names = invocations.map((i) => i.name).sort()
+    assert(invocations.length === 2 && names.join(',') === 'TargetA,TargetB',
+        '{ names: [...] } form fires every listed automation once')
+    assert(invocations.every((i) => i.force === true), '{ names: [...], force: true } forces every listed automation')
+    invocations.length = 0
+}
+
+{
+    // Deduplication across array and single forms: the same name referenced by an array element
+    // and a separate single-object rule fires exactly once, with force OR-merged.
+    const auto = makeProbe([
+        'rules:',
+        '  - name: "array ref"',
+        '    invoke_automation:',
+        '      - TargetX',
+        '      - TargetY',
+        '  - name: "single ref"',
+        '    invoke_automation: { name: TargetX, force: true }'
+    ].join('\n'))
+    await auto.execute({ trigger: 'test' })
+    const x = invocations.find((i) => i.name === 'TargetX')
+    const y = invocations.find((i) => i.name === 'TargetY')
+    assert(invocations.length === 2, 'array + single references dedupe to one invocation per name')
+    assert(x && x.force === true, 'TargetX deduped across array and single forms carries force (OR-merged)')
+    assert(y && y.force === false, 'TargetY (array-only) carries no force flag')
     invocations.length = 0
 }
 

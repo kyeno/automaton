@@ -31,10 +31,13 @@
 import { config } from 'dotenv'
 config()
 
+import fs from 'node:fs'
+import os from 'node:os'
 import { join, resolve } from 'node:path'
 
 import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
+import DatabaseService from '../src/service/databaseService.js'
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
 import AutomationContainer from '../src/automation/container/automationContainer.js'
@@ -89,6 +92,9 @@ function assert(condition, label) {
 async function setVideoStatus(host, status) {
     await videoPlayerMonitor.setTestStatus(host, status)
 }
+
+/** Sleep helper for timing-sensitive scenarios (e.g., the react-on-change gate). */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
  * Create a stub device that records received commands and mimics the base
@@ -177,15 +183,25 @@ function makeBundledDevices(dark = false) {
 // presence on the light/roller rules.
 const RULES_OFFICE = [
     { name: 'Office: player reachable - close rollers', conditions: { 'video-player': { htpc: ['playing', 'paused', 'stopped'] } }, targets: { Living_Room_Roller_Left: 'CLOSE' } },
-    { name: 'Office: player gone - hand rollers back to their owner', conditions: { 'video-player': { htpc: ['unknown', 'unreachable'] } }, invoke_automation: { name: 'HomeOfficeRollersAutomation', force: true } },
-    { name: 'Office: not playing - restore ambient lighting', conditions: { 'video-player': { htpc: ['paused', 'stopped', 'unreachable', 'unknown'] }, 'time-of-day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
+    // Player gone (offline): hand the room back to its owners in one rule -- the array form
+    // force-fires BOTH the roller owner and the ambient-lights owner. Keyed on the player
+    // state alone (no separate presence gate).
+    { name: 'Office: player gone - hand back to the room owners', conditions: { 'video-player': { htpc: ['unknown', 'unreachable'] } }, invoke_automation: [{ name: 'HomeOfficeRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
+    // Online player that has paused/stopped: restore the lamp set locally (the salon dimmer
+    // comes back at l1 50% / l2 25%). A GONE player instead delegates to the ambient-lights
+    // owner via the rule above, so the two never fight over the same lamps.
+    { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video-player': { htpc: ['paused', 'stopped'] }, 'time-of-day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
     { name: 'Office: playing - dark mode (lights off)', conditions: { 'video-player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
 ]
 
 const RULES_BUNDLED = [
     ...RULES_OFFICE,
     { name: 'Bedroom: player reachable - close rollers', conditions: { 'video-player': { bedroom: ['playing', 'paused', 'stopped'] } }, targets: { Bedroom_Roller_Left: 'CLOSE' } },
-    { name: 'Bedroom: player gone - hand rollers back to their owner', conditions: { 'video-player': { bedroom: ['unknown', 'unreachable'] } }, invoke_automation: { name: 'BedroomRollersAutomation', force: true } },
+    // The bedroom is a "delegating" room: its gone rule hands the rollers back AND pokes the
+    // ambient-lights owner (array form), while its not-playing rule delegates the lamp restore
+    // for every non-playing state. This exercises the base class's flexibility to mix a
+    // local-restore room (office) with a fully-delegating room (bedroom) in one instance.
+    { name: 'Bedroom: player gone - hand back to the room owners', conditions: { 'video-player': { bedroom: ['unknown', 'unreachable'] } }, invoke_automation: [{ name: 'BedroomRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
     { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video-player': { bedroom: ['paused', 'stopped', 'unreachable', 'unknown'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
     { name: 'Bedroom: playing - dark mode (lights off)', conditions: { 'video-player': { bedroom: ['playing'] } }, targets: { Bedroom_Plug: 'OFF' } }
 ]
@@ -198,9 +214,10 @@ const RULES_BUNDLED = [
  * @returns {TestHomeTheater} Configured automation instance
  */
 function makeInstance(devices, shape) {
-    const auto = new TestHomeTheater(devices, CONTEXT)
+        const auto = new TestHomeTheater(devices, CONTEXT)
     auto.config = {
         override_human_interaction: true,
+        trigger_on_change_only: true,
         targets: Array.from(devices.values(), (d) => d.getName()),
         triggers_video: shape === 'office' ? ['htpc'] : ['htpc', 'bedroom'],
         triggers_network: shape === 'office' ? ['htpc'] : ['htpc', 'bedroom'],
@@ -378,12 +395,15 @@ console.log('\n── Home theater (bundled instance): roller ownership lifecycl
     ])
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE', 'CLOSE', 'CLOSE'],
         'Living_Room_Roller_Left: re-closed on each reachable tick (t1,t2,t5); offline ticks delegate')
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'ON' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
-        'Living_Room_Plug: OFF on each playing tick (t1,t5); local restore on every other tick')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'ON' }, { state: 'ON' }, { state: 'OFF' }, { state: 'ON' }],
-        'Kitchen_Plug: mirrors the plug sequence (local restore on t2,t3,t4,t6)')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }],
-        'dimmer OFF on each playing tick (t1,t5); restored ON at l1 50% / l2 25% on each not-playing tick (t2,t3,t4,t6)')
+    // The office restores locally ONLY on the paused tick (t2); on the offline ticks (t3,t4,t6)
+    // the gone rule delegates the lamp restore to the ambient-lights owner instead of re-asserting
+    // it here, so the local plugs/dimmer stay quiet on those ticks.
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'OFF' }],
+        'Living_Room_Plug: OFF on each playing tick (t1,t5); local restore only on the paused tick (t2)')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }, { state: 'OFF' }],
+        'Kitchen_Plug: mirrors the plug sequence (local restore only on t2)')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }, { state: 'OFF' }],
+        'dimmer OFF on each playing tick (t1,t5); restored ON at l1 50% / l2 25% only on the paused tick (t2)')
     assertCalls(devices, 'Bedroom_Roller_Left', [],
         'Bedroom_Roller_Left: never closed by us -- only ever delegated')
     assertCalls(devices, 'Bedroom_Plug', [],
@@ -412,10 +432,12 @@ console.log('\n── Home theater (bundled instance): rollers found closed are 
     ])
     assertCalls(after, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: re-closed on the playing tick; hand-back delegated (never opened)')
-    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
-        'Living_Room_Plug: OFF on play; restored locally when HTPC goes offline')
-    assertCalls(after, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after')
-    assertCalls(after, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on play; restored ON at l1 50% / l2 25% on the offline tick')
+    // On the offline tick the office delegates the lamp restore to the ambient-lights owner
+    // (gone rule) rather than re-asserting it locally, so the local plugs/dimmer stay quiet.
+    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }],
+        'Living_Room_Plug: OFF on play; restore delegated to ambient-lights when HTPC goes offline')
+    assertCalls(after, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF on the playing tick; restore delegated after')
+    assertCalls(after, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }], 'dimmer OFF on play; restore delegated on the offline tick')
     assertCalls(after, 'Bedroom_Roller_Left', [], 'Bedroom_Roller_Left: never opened')
     // Delegation happened even though the local rollers stayed put.
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
@@ -437,23 +459,28 @@ console.log('\n── Home theater (bundled instance): players vanish mid-movie 
         { htpc: 'playing', bedroom: 'playing' },
         { htpc: null, bedroom: null }
     ])
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
-        'Living_Room_Plug: OFF on play; restored locally on the vanished tick')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after vanish')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on play; restored ON at l1 50% / l2 25% when both players vanish')
+    // Both players vanish: the office no longer restores its lamps locally -- the gone rule
+    // delegates the restore to the ambient-lights owner, so each local device only ever sees
+    // its single dark-mode command.
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
+        'Living_Room_Plug: OFF on play; restore delegated to ambient-lights when the player vanishes')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF on the playing tick; restore delegated after vanish')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }], 'dimmer OFF on play; restore delegated when both players vanish')
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: CLOSE then delegated hand-back (no local OPEN)')
     assertCalls(devices, 'Bedroom_Plug', [{ state: 'OFF' }],
         'Bedroom_Plug: OFF on play; its not-playing restore stays delegated')
     assertCalls(devices, 'Bedroom_Roller_Left', ['CLOSE'],
         'Bedroom_Roller_Left: CLOSE then delegated hand-back')
-    // Full hand-back in one offline tick: each owner invoked once, forced.
+    // Full hand-back in one offline tick: each owner invoked once, forced. The ambient-lights
+    // owner is poked by BOTH the office gone rule and the bedroom gone/not-playing rules, but
+    // the base class deduplicates it to a single forced invocation per run.
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'office rollers handed back to HomeOfficeRollersAutomation (forced)')
     assert(invocationCount('BedroomRollersAutomation') === 1 && allForced('BedroomRollersAutomation'),
         'bedroom rollers handed back to BedroomRollersAutomation (forced)')
     assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
-        'light restore delegated via the bedroom rule only (forced); office restores locally')
+        'light restore delegated to AmbientLightsAutomation once (forced), deduplicated across both rooms')
 }
 
 console.log('\n── Home theater (single-room instance): dark mode, pause restores only what was on ──\n')
@@ -491,16 +518,19 @@ console.log('\n── Home theater (single-room instance): player gone -- hands 
     ])
     assertCalls(devices, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: CLOSE then delegated hand-back (no local OPEN)')
-    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
-        'Living_Room_Plug: OFF on play; restored locally when the player goes offline')
-    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }, { state: 'ON' }], 'Kitchen_Plug: OFF on the playing tick; local restore after')
-    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }, { state: 'ON', brightness: { l1: 50, l2: 25 } }], 'dimmer OFF on play; restored ON at l1 50% / l2 25% on the offline tick')
+    // The single-room instance now delegates the lamp restore to the ambient-lights owner on
+    // the offline tick (gone rule) instead of restoring it locally, so the local devices only
+    // ever see their single dark-mode command.
+    assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }],
+        'Living_Room_Plug: OFF on play; restore delegated to ambient-lights when the player goes offline')
+    assertCalls(devices, 'Kitchen_Plug', [{ state: 'OFF' }], 'Kitchen_Plug: OFF on the playing tick; restore delegated after')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [{ state: 'OFF' }], 'dimmer OFF on play; restore delegated on the offline tick')
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'rollers handed back to this room\'s owner exactly once (forced)')
     assert(invocationCount('BedroomRollersAutomation') === 0,
         "a foreign room's owner is never invoked from a single-room instance")
-    assert(invocationCount('AmbientLightsAutomation') === 0,
-        'light restore is local now -- no AmbientLightsAutomation delegation for the offline tick')
+    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
+        'light restore delegated to AmbientLightsAutomation once (forced) on the offline tick')
 }
 
 console.log('\n── Home theater (single-room instance): rollers found closed are never opened on hand-back ──\n')
@@ -518,8 +548,10 @@ console.log('\n── Home theater (single-room instance): rollers found closed 
     ])
     assertCalls(after, 'Living_Room_Roller_Left', ['CLOSE'],
         'Living_Room_Roller_Left: re-closed on the playing tick; hand-back delegated (never opened)')
-    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
-        'Living_Room_Plug: OFF on play; restored locally when the player goes offline')
+    // The offline tick delegates the lamp restore to the ambient-lights owner (gone rule), so
+    // the local plug only ever sees its single dark-mode command.
+    assertCalls(after, 'Living_Room_Plug', [{ state: 'OFF' }],
+        'Living_Room_Plug: OFF on play; restore delegated to ambient-lights when the player goes offline')
     assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
         'hand-back delegated once when the player went offline, forced')
     assert(invocationCount('BedroomRollersAutomation') === 0,
@@ -533,9 +565,10 @@ console.log('\n── Home theater (single-room instance): daylight pause -- res
     // the time-of-day + illuminance gate rejects it exactly like the old delegation did.
     resetInvocations()
     const devices = makeOfficeDevices()
-    const auto = new TestHomeTheater(devices, { timeOfDay: 'afternoon', illuminance: 1500 })
+        const auto = new TestHomeTheater(devices, { timeOfDay: 'afternoon', illuminance: 1500 })
     auto.config = {
         override_human_interaction: true,
+        trigger_on_change_only: true,
         targets: Array.from(devices.values(), (d) => d.getName()),
         triggers_video: ['htpc'],
         triggers_network: ['htpc'],
@@ -548,6 +581,82 @@ console.log('\n── Home theater (single-room instance): daylight pause -- res
     assertCalls(devices, 'Kitchen_Plug', [], 'kitchen plug also stays dark in bright daylight')
     assertCalls(devices, 'Salon_Ambient_Dimmer', [], 'dimmer untouched when the restore gate rejects')
     assert(invocationCount('AmbientLightsAutomation') === 0, 'bright-daylight pause delegates to nothing either')
+}
+
+console.log('\n── Home theater (Gone rule): player-state-only condition force-fires both owners ──\n')
+
+{
+    // The Gone rule is keyed on the player state ALONE (no separate presence gate): when the
+    // player is unknown/unreachable it force-fires BOTH the roller owner and the ambient-lights
+    // owner in a single rule. This scenario proves the condition is player-state-only and that
+    // both owners are poked (forced) on one offline tick, while the local lamps stay quiet
+    // (the restore is delegated, not re-asserted here).
+    resetInvocations()
+    const devices = await runSequence('office', makeOfficeDevices(), [
+        { htpc: null }
+    ])
+    assertCalls(devices, 'Living_Room_Plug', [], 'Living_Room_Plug: silent -- restore delegated to ambient-lights')
+    assertCalls(devices, 'Kitchen_Plug', [], 'Kitchen_Plug: silent -- restore delegated to ambient-lights')
+    assertCalls(devices, 'Salon_Ambient_Dimmer', [], 'dimmer silent -- restore delegated to ambient-lights')
+    assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
+        'Gone rule force-fires the roller owner (HomeOfficeRollersAutomation)')
+    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
+        'Gone rule force-fires the ambient-lights owner (AmbientLightsAutomation)')
+}
+
+console.log('\n── Home theater (timer gate): idle ticks do not re-fire or re-poke ──\n')
+
+{
+    // The timer is a safety net only: with trigger_on_change_only, a scheduled tick is skipped
+    // unless a monitored subject (the video-player status) actually transitioned since the last
+    // evaluation. This proves a second idle tick -- with the player stably offline and no new
+    // transition -- neither re-fires the Gone rule nor re-pokes the owners, which is what used
+    // to force the ambient lamps back on every 15 minutes.
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'automaton-htpc-gate-'))
+    const dbFile = join(dir, 'state.db')
+    assert(await DatabaseService.init(dbFile), 'database available for the timer-gate scenario')
+
+    resetInvocations()
+    const devices = makeOfficeDevices()
+    const auto = makeInstance(devices, 'office')
+    await sleep(25)   // ensure any later Date.now() is strictly greater than the construction baseline
+
+    // First transition: the player goes offline (unknown). Record it so the gate sees a change,
+    // then let the first timer tick run.
+    await setVideoStatus('htpc', null)
+    await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: 'htpc', toState: 'unknown' })
+    await auto.execute({ trigger: 'timer' })
+    assert(invocationCount('HomeOfficeRollersAutomation') === 1 && allForced('HomeOfficeRollersAutomation'),
+        'first timer tick after the offline transition fires the Gone rule (rollers owner)')
+    assert(invocationCount('AmbientLightsAutomation') === 1 && allForced('AmbientLightsAutomation'),
+        'first timer tick after the offline transition pokes the ambient-lights owner')
+
+    // Second idle tick: no new transition since the last evaluation, so the gate skips it.
+    // Capture the device call counts first so we can prove the skipped tick adds nothing.
+    const rollerCallsBefore = devices.get('Living_Room_Roller_Left').calls.length
+    const plugCallsBefore = devices.get('Living_Room_Plug').calls.length
+    resetInvocations()
+    await auto.execute({ trigger: 'timer' })
+    assert(invocationCount('HomeOfficeRollersAutomation') === 0,
+        'second idle timer tick is skipped -- no re-fire of the Gone rule (rollers owner)')
+    assert(invocationCount('AmbientLightsAutomation') === 0,
+        'second idle timer tick is skipped -- no re-poke of the ambient-lights owner')
+    assert(devices.get('Living_Room_Roller_Left').calls.length === rollerCallsBefore,
+        'second idle timer tick sends no new roller commands')
+    assert(devices.get('Living_Room_Plug').calls.length === plugCallsBefore,
+        'second idle timer tick sends no new plug commands')
+
+    // A real new transition (player comes back) unblocks the next tick, but the reachable
+    // (not gone) rule does not re-poke the owners.
+    await sleep(25)   // ensure the new transition's timestamp is strictly after the last eval baseline
+    await setVideoStatus('htpc', 'playing')
+    await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: 'htpc', toState: 'playing' })
+    await auto.execute({ trigger: 'timer' })
+    assert(invocationCount('HomeOfficeRollersAutomation') === 0,
+        'a new transition unblocks the tick, but the reachable rule (not gone) does not re-poke the owners')
+
+    await DatabaseService.close()
+    fs.rmSync(dir, { recursive: true, force: true })
 }
 
 console.log('\n── Deployment consistency (shipped etc/automation instances) ──\n')

@@ -1,12 +1,12 @@
 # Ambient Lights Automation Configuration
 # Morning: turns off leftover lights once natural light becomes sufficient.
-# Evening: turns on ambient lamps (socket-powered) once dusk settles.
+# Dusk: turns on ambient lamps (socket-powered) once it gets dark enough -- the
+# "Settled dusk" rule covers the evening/night windows and both fires autonomously
+# and answers a home-theater player-gone hand-off (a forced poke re-evaluates it
+# without consuming its once-per-day budget).
 # Each autonomous rule acts at most once per calendar day PER TIME WINDOW ("once: true"),
 # so an early firing never eats the budget of a later darkness window on the same day.
 # Humans keep full control within a window after it fires.
-# Late night (pre-dawn): the restore rule is invoke-only (forced_only) -- it answers forced
-# delegations (e.g., a home-theater pause hand-off for late-night movies) but never fires
-# on its own, so no unannounced midnight lights-on.
 #
 # Copy this file to "ambient-lights.yaml" and customize device names/thresholds.
 
@@ -20,6 +20,10 @@ triggers_zigbee:
   - 'Outdoor Luminance'
 
 timer_interval: "30s"
+
+# Only re-evaluate on real sensor/player/presence transitions, not every interval tick:
+# prevents stale conditions from re-asserting light states on idle intervals.
+trigger_on_change_only: true
 
 # Stand-down guard: while either player is actively playing, Home Theater Mode owns
 # the lights and we stand down so we do not fight it over the same devices. Replace
@@ -39,23 +43,14 @@ rules:
       Hallway_Outlet: OFF
       Living_Room_Switch: OFF
 
+  # Covers every dark window (evening/night) in one rule: fires autonomously once per window
+  # when it gets dark enough, AND answers a home-theater player-gone hand-off -- a forced
+  # poke re-evaluates it without consuming the once-per-day budget, so a movie that ends
+  # past midnight still gets these lamps back while pre-dawn ticks never fire uninvited.
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:
-      time-of-day: [evening]
-      illuminance: { lt: 900 }
-    targets:
-      Kitchen_Outlet: ON
-      Hallway_Outlet: ON
-
-  # Invoke-only (forced_only): acts solely when another automation delegates to this one
-  # with force: true -- e.g., restoring these lamps after a late-night movie is paused.
-  # Natural timer/sensor ticks skip it entirely, so pre-dawn darkness alone never switches
-  # anything on. Remove the flag if you DO want autonomous pre-dawn lighting too.
-  - name: 'Late-night restore - turn on ambient lamps'
-    forced_only: true
-    conditions:
-      time-of-day: [night]
+      time-of-day: [evening, night]
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON

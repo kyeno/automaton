@@ -104,13 +104,13 @@ class SToolBuilder {
         const setDeviceNameDesc = I18nLoader.t('tools.set_device_state.parameters.device_name',
             'Exact friendly name of the device, e.g. "Living Room Shutter", "Kitchen Socket".')
         const setActionDesc = I18nLoader.t('tools.set_device_state.parameters.action',
-            'Action to perform. For shutters use OPEN/CLOSE/STOP, for lights and sockets use ON/OFF, TOGGLE to flip current state.')
+            'Action to perform. For shutters use OPEN/CLOSE/STOP, for lights/switches/sockets use ON, OFF, or TOGGLE (flips current state). These are the ONLY valid values -- never invent other verbs (to change brightness use the brightness parameter, not an action like SET_BRIGHTNESS).')
         const setPositionDesc = I18nLoader.t('tools.set_device_state.parameters.position',
             'Optional shutter position in percentage (0=closed, 100=open). Use instead of action for precise setting.')
         const setChannelDesc = I18nLoader.t('tools.set_device_state.parameters.channel',
             'Channel on multi-channel devices (dual switches/dimmers): ONE or TWO. Omit to affect all channels at once.')
         const setBrightnessDesc = I18nLoader.t('tools.set_device_state.parameters.brightness',
-            'Optional brightness level in percent (0-100) for dimmable devices. Combine with channel to target one output only.')
+            'Optional brightness level in percent (0-100) for dimmable devices. Pass it here as a number -- never inside action. Add action: ON to also switch the light on. Combine with channel to target one output only.')
 
         const getDesc = I18nLoader.t('tools.get_device_state.description',
             'Check the current state of any device (sensor, remote, or executive device). Returns sensors, batteries, or current binary state.')

@@ -452,12 +452,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         {
             const invocations = new Map()   // name -> force (OR-merged across referencing rules)
             for (const rule of matchingRules) {
-                const spec = rule.invoke_automation
-                if (!spec) continue
-                const name = typeof spec === 'string' ? spec : spec.name
-                if (!name || typeof name !== 'string') continue
-                const force = typeof spec === 'object' && spec.force === true
-                invocations.set(name, (invocations.get(name) ?? false) || force)
+                for (const { name, force } of this.#normalizeInvokeSpec(rule.invoke_automation)) {
+                    invocations.set(name, (invocations.get(name) ?? false) || force)
+                }
             }
             for (const [name, force] of invocations.entries()) {
                 try {
@@ -498,6 +495,53 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 }
             }
         }
+    }
+
+    /**
+     * Normalize an `invoke_automation` spec into a list of {name, force} entries.
+     *
+     * Accepted forms (the first two are the original single-target syntax, kept fully
+     * backward-compatible; the array forms let one rule hand off to several owners at once,
+     * e.g. a home-theater "player gone" rule delegating both the roller owner and the
+     * ambient-lights owner in a single rule):
+     *   - "Name"                          -> [{ name: 'Name', force: false }]
+     *   - { name: 'Name', force: true }   -> [{ name: 'Name', force: true }]
+     *   - ['A', 'B']                      -> [{ name: 'A', force: false }, { name: 'B', force: false }]
+     *   - [{ name: 'A', force: true }, 'B']-> [{ name: 'A', force: true }, { name: 'B', force: false }]
+     *   - { names: ['A', 'B'], force: true } -> [{ name: 'A', force: true }, { name: 'B', force: true }]
+     *
+     * Unusable entries (non-string names, empty strings) are dropped rather than failing
+     * closed, consistent with the rest of the rule engine's lenient parsing.
+     *
+     * @private
+     * @param {string|Object|string[]|Object[]|null|undefined} spec - Raw `invoke_automation` value from a rule
+     * @returns {Array<{name: string, force: boolean}>} Normalized entries (empty when the spec is absent or unusable)
+     */
+    #normalizeInvokeSpec(spec) {
+        if (!spec) return []
+        // Object with a `names` array: one shared force flag applied to every listed name.
+        if (typeof spec === 'object' && !Array.isArray(spec) && Array.isArray(spec.names)) {
+            const force = spec.force === true
+            return spec.names
+                .filter((n) => typeof n === 'string' && n)
+                .map((n) => ({ name: n, force }))
+        }
+        // Array form: each element is a bare name or a {name, force} object.
+        if (Array.isArray(spec)) {
+            const out = []
+            for (const item of spec) {
+                if (typeof item === 'string' && item) {
+                    out.push({ name: item, force: false })
+                } else if (item && typeof item === 'object' && typeof item.name === 'string' && item.name) {
+                    out.push({ name: item.name, force: item.force === true })
+                }
+            }
+            return out
+        }
+        // Legacy single-target forms: bare string or {name, force}.
+        const name = typeof spec === 'string' ? spec : spec?.name
+        if (!name || typeof name !== 'string') return []
+        return [{ name, force: typeof spec === 'object' && spec.force === true }]
     }
 
     /**

@@ -5,8 +5,11 @@
  * fabricated sensor contexts against a self-contained rule set modeled on
  * ambient-lights.yaml.dist (no local configuration required):
  *   - bright morning turns off every listed device (sockets + wall switch)
- *   - settled dusk turns on only the outlets (asymmetric target sets)
+ *   - the merged "Settled dusk" rule (evening/night) turns on only the outlets
  *   - still-bright evening does nothing
+ *   - per-window once semantics: one slot per time window per calendar day
+ *   - a forced poke (home-theater player-gone hand-off) re-evaluates the dusk rule
+ *     without consuming its once budget, while a later natural tick stays blocked
  *   - flat per-rule "action" fallback dispatches commands (regression test)
  *   - season conditions and temporal helpers (stubbed Date)
  * Redis/MQTT are not required -- unavailable services fail open by design.
@@ -141,28 +144,13 @@ writeFileSync(TEST_CONFIG_PATH, [
     '      Hallway_Outlet: OFF',
     '      Living_Room_Switch: OFF',
     '',
+    // Merged dusk rule: covers every dark window (evening/night) in one rule. Fires
+    // autonomously once per window, AND answers a home-theater player-gone hand-off -- a
+    // forced poke re-evaluates it without consuming the once-per-day budget.
     "  - name: 'Settled dusk - turn on ambient lamps'",
     '    once: true',
     '    conditions:',
-    '      time-of-day: [evening]',
-    '      illuminance: { lt: 2000 }',
-    '    targets:',
-    '      Kitchen_Outlet: ON',
-    '      Hallway_Outlet: ON',
-    '',
-    "  - name: 'Multi-window dusk - turn on ambient lamps'",
-    '    once: true',
-    '    conditions:',
     '      time-of-day: [evening, night]',
-    '      illuminance: { lt: 900 }',
-    '    targets:',
-    '      Kitchen_Outlet: ON',
-    '      Hallway_Outlet: ON',
-    '',
-    "  - name: 'Late-night restore - invoke only'",
-    '    forced_only: true',
-    '    conditions:',
-    '      time-of-day: [night]',
     '      illuminance: { lt: 900 }',
     '    targets:',
     '      Kitchen_Outlet: ON',
@@ -219,7 +207,7 @@ let devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
 for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
 
 // Settled dusk -> ON only for the two outlets; the wall switch stays untouched
-devices = await runScenario({ illuminance: 1500, timeOfDay: 'evening' })
+devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
 for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPayload(devices, id, null)
 
@@ -227,10 +215,10 @@ for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPaylo
 devices = await runScenario({ illuminance: 8000, timeOfDay: 'evening' })
 for (const id of ALL_IDS) expectPayload(devices, id, null)
 
-// Multi-window once semantics (regression): an [evening, night] rule gets ONE slot per
-// window per calendar day -- a pre-dawn firing must not consume actual dusk's budget,
-// while re-firing within the SAME window stays blocked for the rest of that day.
-// Marker state is stubbed via the CacheService prototype (same approach as
+// Multi-window once semantics (regression): the merged [evening, night] "Settled dusk" rule
+// gets ONE slot per window per calendar day -- a pre-dawn firing must not consume actual
+// dusk's budget, while re-firing within the SAME window stays blocked for the rest of that
+// day. Marker state is stubbed via the CacheService prototype (same approach as
 // test-automation-force.js) so these assertions hold with or without live Redis.
 {
     const cacheProto = Object.getPrototypeOf(CacheService)
@@ -253,8 +241,8 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 
         const keys = [...onceStore.keys()]
-        assert(keys.includes('auto:AmbientLightsAutomation:once:multi-window_dusk_-_turn_on_ambient_lamps:evening')
-            && keys.includes('auto:AmbientLightsAutomation:once:multi-window_dusk_-_turn_on_ambient_lamps:night'),
+        assert(keys.includes('auto:AmbientLightsAutomation:once:settled_dusk_-_turn_on_ambient_lamps:evening')
+            && keys.includes('auto:AmbientLightsAutomation:once:settled_dusk_-_turn_on_ambient_lamps:night'),
             'per-window markers stored under distinct :evening / :night keys')
     } finally {
         cacheProto.get = origGet
@@ -262,9 +250,11 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     }
 }
 
-// Invoke-only semantics (forced_only): a night-window rule must answer delegated late-night
-// light restore (home-theater pause hand-off for movies watched past midnight) while never
-// firing on natural pre-dawn ticks -- even when its conditions hold and no marker is set.
+// Forced-poke re-evaluation: a home-theater player-gone hand-off pokes this automation with
+// force: true. Forced runs neither check nor write the once-per-day markers, so a poke
+// re-evaluates the "Settled dusk" rule and restores the lamps even after the natural tick
+// already consumed that window's budget -- and repeated pokes keep working. Crucially, the
+// pokes do NOT consume the budget, so a later NATURAL tick in the same window stays blocked.
 {
     const cacheProto = Object.getPrototypeOf(CacheService)
     const origGet = cacheProto.get
@@ -273,22 +263,28 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
     cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
     try {
-        // Natural pre-dawn tick: seed the other night-matching rule's consumed slot so that ANY
-        // dispatch would have to come from the invoke-only rule -> expect total silence.
-        onceStore.set('auto:AmbientLightsAutomation:once:multi-window_dusk_-_turn_on_ambient_lamps:night',
-            { date: temporal.getLocalDayString(), at: Date.now() })
-        let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        // Natural evening tick #1 -> dispatches and consumes today's EVENING slot.
+        let devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+
+        // Natural evening tick #2, same day -> the consumed EVENING slot blocks it.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
         for (const id of ALL_IDS) expectPayload(devices, id, null)
 
-        // Forced delegation #1 (movie paused at ~03:00): restore fires via its own window...
-        onceStore.clear()
-        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        // Forced poke #1 (home-theater player-gone hand-off): re-evaluates and restores again,
+        // even though the EVENING slot is already consumed -- forced runs bypass the once check.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' }, { force: true })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 
-        // ...and forced delegation #2 shortly after still restores again -- forced runs neither
-        // check nor write markers, so repeated pauses keep working all night long.
-        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        // Forced poke #2 shortly after still restores again -- forced runs neither check nor
+        // write markers, so repeated hand-offs keep working.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' }, { force: true })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+
+        // The forced pokes did NOT consume the once budget: a subsequent NATURAL tick in the
+        // same window is still blocked by the original natural marker.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        for (const id of ALL_IDS) expectPayload(devices, id, null)
     } finally {
         cacheProto.get = origGet
         cacheProto.set = origSet
