@@ -244,6 +244,20 @@ class SInteractionContainer {
     }
 
     /**
+     * Register a single YAML-style interaction by its config object -- runs the same per-item
+     * instantiation used for discovered YAML configs, so tests and plugins can contribute
+     * neutrally-named interactions without touching disk or re-running full discovery.
+     * @param {Object} config - Interaction config ({name, actions:[{type, targets:[...]}]}).
+     * @returns {string|null} The registered name, or null when no name was supplied.
+     */
+    registerInteractionConfig(config) {
+        const name = config?.name
+        if (!name) return null
+        this.#interactions.set(name, { instance: this.#createYamlInteraction(name, config), config, isYaml: true })
+        return name
+    }
+
+    /**
      * Trigger an interaction's execute method by name.
      * @param {string} name - Interaction name
      * @param {Object} [data={}] - Data to pass to execute()

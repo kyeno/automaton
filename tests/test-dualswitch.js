@@ -4,8 +4,8 @@
  * (all-channel fan-out, per-channel targeting, unknown-channel rejection, legacy
  * fallback without channels), brightness percentage mapping against config
  * overrides / reported bounds / Zigbee defaults, and -- critically -- preservation
- * of YAML interaction routing for physical button presses so Kuchnia Wlacznik
- * Jadalnia keeps driving kitchen outlets through its right button after being
+ * of YAML interaction routing for physical button presses so a wall switch keeps
+ * routing its buttons through the shared interaction registry after being
  * reclassified from Remote to a dual switch mechanism. Also exercises the AI tool
  * dispatch path with the new channel/brightness parameters and suffix-aware state
  * filtering.
@@ -29,6 +29,7 @@ import DeviceContainer from '../src/device/container/deviceContainer.js'
 import ToolBuilder from '../src/ai/toolBuilder.js'
 import MqttService from '../src/service/mqttService.js'
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
+import { slugify } from '../src/lib/string.js'
 
 // Set minimal env vars so ConfigService won't throw on missing required keys
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
@@ -106,14 +107,14 @@ async function countCooldownWrites(fn) {
 console.log('\n── DualSwitch command translation ──\n')
 
 {
-    const sw = new DualSwitch('Kuchnia Wlacznik Zlew', '0x1111', { channels: ['left', 'right'] })
+    const sw = new DualSwitch('Wall Switch A', '0x1111', { channels: ['left', 'right'] })
     const mock = new MockMqttService()
     sw.setMqttService(mock)
 
     // Bare ON fans out to every configured channel in one combined payload.
     sw.receiveCommand('ON')
     assertEqual(lastPublish(mock)?.payload, { state_left: 'ON', state_right: 'ON' }, 'bare "ON" -> combined state_left/state_right payload')
-    assert(lastPublish(mock)?.topic.endsWith('/Kuchnia Wlacznik Zlew/set'), 'published on the device /set topic')
+    assert(lastPublish(mock)?.topic.endsWith('/Wall Switch A/set'), 'published on the device /set topic')
 
     // TOGGLE likewise targets all channels and is never redundancy-suppressed.
     mock.reset()
@@ -159,7 +160,7 @@ console.log('\n── DualDimmer brightness mapping ──\n')
 
 {
     // Config override on l1 ([54,254]); l2 has no override -> defaults [1,254].
-    const dm = new DualDimmer('Salon Ambient', '0x2222', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const dm = new DualDimmer('Dimmer A', '0x2222', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
     const mock = new MockMqttService()
     dm.setMqttService(mock)
 
@@ -188,7 +189,7 @@ console.log('\n── DualDimmer brightness mapping ──\n')
 
 {
     // Device-reported bounds win over defaults when sane...
-    const rep = new DualDimmer('Salon Swiatlo', '0x3333', { channels: ['l1', 'l2'] })
+    const rep = new DualDimmer('Dimmer B', '0x3333', { channels: ['l1', 'l2'] })
     await rep.setCachedState({ min_brightness_l2: 1, max_brightness_l2: 100 })
     const mock = new MockMqttService()
     rep.setMqttService(mock)
@@ -210,7 +211,7 @@ console.log('\n── DualDimmer brightness mapping ──\n')
 console.log('\n── SET_BRIGHTNESS sentinel & split-publish behavior ──\n')
 
 {
-    const dm = new DualDimmer('Salon Ambient', '0x7777', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const dm = new DualDimmer('Dimmer A', '0x7777', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
     const mock = new MockMqttService()
     dm.setMqttService(mock)
 
@@ -244,7 +245,7 @@ console.log('\n── SET_BRIGHTNESS sentinel & split-publish behavior ──\n'
 console.log('\n── Per-channel brightness maps ──\n')
 
 {
-    const dm = new DualDimmer('Salon Ambient', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const dm = new DualDimmer('Dimmer A', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
     const mock = new MockMqttService()
     dm.setMqttService(mock)
 
@@ -296,7 +297,7 @@ console.log('\n── Per-channel brightness maps ──\n')
 console.log('\n── Channel alias resolution (ONE/TWO vocabulary) ──\n')
 
 {
-    const sw = new DualSwitch('Kuchnia Wlacznik Zlew', '0x1111', { channels: ['left', 'right'] })
+    const sw = new DualSwitch('Wall Switch A', '0x1111', { channels: ['left', 'right'] })
     const mock = new MockMqttService()
     sw.setMqttService(mock)
 
@@ -331,69 +332,74 @@ console.log('\n── Channel alias resolution (ONE/TWO vocabulary) ──\n')
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n── Kuchnia Wlacznik Jadalnia button routing (regression) ──\n')
+console.log('\n── DualSwitch button routing via the interaction registry ──\n')
 
 {
-    // Load the real YAML interaction registry -- kuchnia_wlacznik_jadalnia maps
-    // single_right -> Kuchnia Gniazdo TOGGLE and double_right -> Kuchnia Gniazdo LED TOGGLE.
-    await InteractionContainer.init()
-    assert(InteractionContainer.getInteraction('kuchnia_wlacznik_jadalnia') !== null, 'kuchnia_wlacznik_jadalnia interaction registered from YAML')
+    // Self-contained regression coverage for the Remote->DualSwitch reclassification: no production
+    // YAML is loaded. We register one synthetic, neutrally-named interaction through the same factory
+    // used for discovered configs, wire two target outlets to mock MQTT recorders, and verify the
+    // routing/debounce contract generically -- which outlet each action drives is arbitrary; only that
+    // the registry routes it correctly matters.
+    const SWITCH_NAME = 'Test Wall Switch'
+    const OUTLET_A = 'Outlet A'
+    const OUTLET_B = 'Outlet B'
 
-    // Target outlets as plain mechanisms wired to their own MQTT recorders.
-    const gniazdo = new Mechanism('Kuchnia Gniazdo', '0xaaaa', {})
-    const gniazdoLed = new Mechanism('Kuchnia Gniazdo LED', '0xbbbb', {})
-    const mockGniazdo = new MockMqttService()
-    const mockGniazdoLed = new MockMqttService()
-    gniazdo.setMqttService(mockGniazdo)
-    gniazdoLed.setMqttService(mockGniazdoLed)
-    Object.assign(DeviceContainer.getAll(), {
-        'Kuchnia Gniazdo': gniazdo,
-        'Kuchnia Gniazdo LED': gniazdoLed
+    const outletA = new Mechanism(OUTLET_A, '0xaaaa', {})
+    const outletB = new Mechanism(OUTLET_B, '0xbbbb', {})
+    const mockA = new MockMqttService()
+    const mockB = new MockMqttService()
+    outletA.setMqttService(mockA)
+    outletB.setMqttService(mockB)
+    Object.assign(DeviceContainer.getAll(), { [OUTLET_A]: outletA, [OUTLET_B]: outletB })
+
+    InteractionContainer.registerInteractionConfig({
+        name: slugify(SWITCH_NAME),
+        actions: [
+            { type: 'single_right', targets: [{ device: OUTLET_A, command: 'TOGGLE' }] },
+            { type: 'double_right', targets: [{ device: OUTLET_B, command: 'TOGGLE' }] }
+        ]
     })
+    assert(InteractionContainer.getInteraction(slugify(SWITCH_NAME)) !== null, 'synthetic interaction registered under the slugified switch name')
 
-    // The wall switch itself -- now a DualSwitch instead of the old Remote.
-    const jadalnia = new DualSwitch('Kuchnia Wlacznik Jadalnia', '0xcccc', { channels: ['left', 'right'] })
-    const mockJad = new MockMqttService()
-    jadalnia.setMqttService(mockJad)
+    // The wall switch itself -- a DualSwitch (the reclassified mechanism keeps this routing path).
+    const sw = new DualSwitch(SWITCH_NAME, '0xcccc', { channels: ['left', 'right'] })
+    sw.setMqttService(new MockMqttService())
 
     const pressAction = async (action) => {
-        jadalnia.handleMqttMessage({
-            topic: 'zigbee2mqtt/Kuchnia Wlacznik Jadalnia',
-            message: JSON.stringify({ action })
-        })
+        sw.handleMqttMessage({ topic: `zigbee2mqtt/${SWITCH_NAME}`, message: JSON.stringify({ action }) })
         await new Promise((r) => setTimeout(r, 50))
     }
 
-    // Single right press -> kitchen socket toggles, exactly as before the reclassification.
+    // Single right -> exactly its bound outlet toggles; the other outlet is untouched.
     await pressAction('single_right')
-    assertEqual(lastPublish(mockGniazdo)?.payload, { state: 'TOGGLE' }, 'single_right still toggles Kuchnia Gniazdo via interaction registry')
-    assertEqual(mockGniazdoLed.published.length, 0, 'single_right does not touch the LED outlet')
+    assertEqual(lastPublish(mockA)?.payload, { state: 'TOGGLE' }, 'single_right routes to its bound outlet via the registry')
+    assertEqual(mockB.published.length, 0, 'single_right does not touch the unbound outlet')
 
-    // Double right press -> LED outlet toggles. (Wait past the deliberate 800ms
+    // Double right -> exactly its (other) bound outlet toggles. (Wait past the deliberate 800ms
     // per-instance debounce window -- same protection Remote applies today.)
-    mockGniazdo.reset(); mockGniazdoLed.reset()
+    mockA.reset(); mockB.reset()
     await new Promise((r) => setTimeout(r, 900))
     await pressAction('double_right')
-    assertEqual(lastPublish(mockGniazdoLed)?.payload, { state: 'TOGGLE' }, 'double_right still toggles Kuchnia Gniazdo LED')
-    assertEqual(mockGniazdo.published.length, 0, 'double_right does not touch the plain socket')
+    assertEqual(lastPublish(mockB)?.payload, { state: 'TOGGLE' }, 'double_right routes to its bound outlet via the registry')
+    assertEqual(mockA.published.length, 0, 'double_right does not touch the unbound outlet')
 
     // Unmapped actions are ignored without crashing or dispatching anything.
-    mockGniazdo.reset(); mockGniazdoLed.reset()
+    mockA.reset(); mockB.reset()
     await new Promise((r) => setTimeout(r, 900))
     await pressAction('triple_left')
-    assertEqual(mockGniazdo.published.length + mockGniazdoLed.published.length, 0, 'unmapped action type dispatches nothing')
+    assertEqual(mockA.published.length + mockB.published.length, 0, 'unmapped action type dispatches nothing')
 
     // The switch report itself is still cached through the mechanism path (same as Remote did).
-    assert(jadalnia.getStateLast()?.action === 'triple_left', 'button reports are still cached via super.handleMqttMessage')
+    assert(sw.getStateLast()?.action === 'triple_left', 'button reports are still cached via super.handleMqttMessage')
 
     // Debounce: rapid duplicate presses within the window route only once.
-    const debounced = new DualSwitch('Kuchnia Wlacznik Jadalnia', '0xcccc', { channels: ['left', 'right'] })
+    const debounced = new DualSwitch(SWITCH_NAME, '0xcccc', { channels: ['left', 'right'] })
     debounced.setMqttService(new MockMqttService())
-    mockGniazdo.reset()
-    debounced.handleMqttMessage({ topic: 'zigbee2mqtt/Kuchnia Wlacznik Jadalnia', message: JSON.stringify({ action: 'single_right' }) })
-    debounced.handleMqttMessage({ topic: 'zigbee2mqtt/Kuchnia Wlacznik Jadalnia', message: JSON.stringify({ action: 'single_right' }) })
+    mockA.reset()
+    debounced.handleMqttMessage({ topic: `zigbee2mqtt/${SWITCH_NAME}`, message: JSON.stringify({ action: 'single_right' }) })
+    debounced.handleMqttMessage({ topic: `zigbee2mqtt/${SWITCH_NAME}`, message: JSON.stringify({ action: 'single_right' }) })
     await new Promise((r) => setTimeout(r, 50))
-    assertEqual(mockGniazdo.published.length, 1, 'rapid double event within debounce window routes exactly once')
+    assertEqual(mockA.published.length, 1, 'rapid double event within debounce window routes exactly once')
 }
 }
 
@@ -402,14 +408,14 @@ console.log('\n── AI tool dispatch (channel/brightness params) ──\n')
 
 {
     // Register a live dual dimmer in the device registry for name resolution.
-    const aiDimmer = new DualDimmer('Salon Wlacznik Ambient', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
+    const aiDimmer = new DualDimmer('Dimmer A', '0x5555', { channels: ['l1', 'l2'], brightness_range: { l1: [54, 254] } })
     const mockAI = new MockMqttService()
     aiDimmer.setMqttService(mockAI)
-    Object.assign(DeviceContainer.getAll(), { 'Salon Wlacznik Ambient': aiDimmer })
+    Object.assign(DeviceContainer.getAll(), { 'Dimmer A': aiDimmer })
 
     // Native function-call shape with the positional channel vocabulary -> mapped suffixed payload.
     const result1 = JSON.parse(await ToolBuilder.execute({
-        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient', channel: 'ONE', brightness: 50 }) }
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'dimmer a', channel: 'ONE', brightness: 50 }) }
     }))
     assertEqual(result1.status, 'sent', 'tool call reports sent status')
     assertEqual(lastPublish(mockAI)?.payload, { brightness_l1: 154 }, 'AI channel ONE + brightness reaches device as mapped brightness_l1=154')
@@ -417,7 +423,7 @@ console.log('\n── AI tool dispatch (channel/brightness params) ──\n')
     // The second positional channel maps to the second wire channel.
     mockAI.reset()
     await ToolBuilder.execute({
-        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient', channel: 'TWO', brightness: 100 }) }
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'dimmer a', channel: 'TWO', brightness: 100 }) }
     })
     assertEqual(lastPublish(mockAI)?.payload, { brightness_l2: 254 }, 'AI channel TWO reaches device as brightness_l2=254')
 
@@ -425,25 +431,25 @@ console.log('\n── AI tool dispatch (channel/brightness params) ──\n')
     // an honest error to the model instead of a silent drop.
     mockAI.reset()
     const badResult = JSON.parse(await ToolBuilder.execute({
-        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient', channel: 'MIDDLE', state: 'ON' }) }
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'dimmer a', channel: 'MIDDLE', state: 'ON' }) }
     }))
     assert(typeof badResult.error === 'string' && badResult.error.includes('Unknown channel'), 'unknown channel returns honest error to the model')
     assertEqual(mockAI.published.length, 0, 'unknown channel published nothing')
 
     // TOGGLE action now allowed by schema and fanned out across all channels.
-    const aiSwitch = new DualSwitch('Kuchnia Wlacznik Zlew', '0x6666', { channels: ['left', 'right'] })
+    const aiSwitch = new DualSwitch('Wall Switch A', '0x6666', { channels: ['left', 'right'] })
     const mockAISw = new MockMqttService()
     aiSwitch.setMqttService(mockAISw)
-    Object.assign(DeviceContainer.getAll(), { 'Kuchnia Wlacznik Zlew': aiSwitch })
+    Object.assign(DeviceContainer.getAll(), { 'Wall Switch A': aiSwitch })
 
     await ToolBuilder.execute({
-        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'kuchnia wlacznik zlew', action: 'TOGGLE' }) }
+        function: { name: 'set_device_state', arguments: JSON.stringify({ device_name: 'wall switch a', action: 'TOGGLE' }) }
     })
     assertEqual(lastPublish(mockAISw)?.payload, { state_left: 'TOGGLE', state_right: 'TOGGLE' }, 'bare AI TOGGLE fans out to both switch channels')
 
     // Text-intent path (small models): loose pseudo-call with the positional
     // channel vocabulary survives parsing and normalization.
-    const intents = ToolBuilder.parseJsonIntent('set_device_state(device_name:"Salon Wlacznik Ambient", channel:two, brightness:80)')
+    const intents = ToolBuilder.parseJsonIntent('set_device_state(device_name:"Dimmer A", channel:two, brightness:80)')
     assert(intents !== null && intents.length === 1, 'loose text intent parsed into one record')
     if (intents?.length === 1) {
         assertEqual(intents[0].channel, 'TWO', 'text intent normalizes channel to positional TWO')
@@ -456,7 +462,7 @@ console.log('\n── AI tool dispatch (channel/brightness params) ──\n')
     const aiState = { state_l1: 'ON', brightness_l1: 180, linkquality: 99, last_seen: new Date().toISOString() }
     aiDimmer.getCachedState = async () => ({ stateLast: aiState, stateLastAt: new Date().toISOString(), stateOrigin: 'human' })
     const readResult = JSON.parse(await ToolBuilder.execute({
-        function: { name: 'get_device_state', arguments: JSON.stringify({ device_name: 'salon wlacznik ambient' }) }
+        function: { name: 'get_device_state', arguments: JSON.stringify({ device_name: 'dimmer a' }) }
     }))
     assert(readResult.state?.state_one === 'ON', 'AI state view renames state_l1 -> state_one')
     assert(!('state_l1' in (readResult.state ?? {})), 'wire-suffixed key not leaked into AI state view')
@@ -472,7 +478,7 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
     // A) Human-directed command on a dual switch: inherited Mechanism machinery must
     //    still mark origin human immediately at publish time and start the Redis
     //    cooldown -- payload shape (suffixed fan-out) must not matter here.
-    const swH = new DualSwitch('Kuchnia Wlacznik Zlew', '0xh1', { channels: ['left', 'right'] })
+    const swH = new DualSwitch('Wall Switch A', '0xh1', { channels: ['left', 'right'] })
     swH.setMqttService(new MockMqttService())
     const writesA = await countCooldownWrites(async () => {
         swH.receiveCommand('TOGGLE')
@@ -497,22 +503,22 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
     assert(writesB >= 1, `channel flip started the automation cooldown (${writesB} writes)`)
 
     // Brightness variant on a dimmer: a real level change counts...
-    const dmB = new DualDimmer('Salon Ambient', '0xb2', { channels: ['l1', 'l2'] })
+    const dmB = new DualDimmer('Dimmer A', '0xb2', { channels: ['l1', 'l2'] })
     dmB.setMqttService(new MockMqttService())
     await dmB.setCachedState({ brightness_l1: 180 }, { origin: 'automation' })
     const writesB2 = await countCooldownWrites(async () => {
-        dmB.handleMqttMessage({ topic: 'zigbee2mqtt/Salon Ambient', message: JSON.stringify({ brightness_l1: 90 }) })
+        dmB.handleMqttMessage({ topic: 'zigbee2mqtt/Dimmer A', message: JSON.stringify({ brightness_l1: 90 }) })
         await sleep(30)
     })
     assertEqual(dmB.getStateOrigin(), 'human', 'brightness_l1 change (180 -> 90) classified as HUMAN')
     assert(writesB2 >= 1, `brightness change started the cooldown (${writesB2} writes)`)
 
     // ...but bridge jitter within tolerance does NOT read as input.
-    const dmC = new DualDimmer('Salon Swiatlo', '0xb3', { channels: ['l1', 'l2'] })
+    const dmC = new DualDimmer('Dimmer B', '0xb3', { channels: ['l1', 'l2'] })
     dmC.setMqttService(new MockMqttService())
     await dmC.setCachedState({ brightness_l1: 180 }, { origin: 'automation' })
     const writesC = await countCooldownWrites(async () => {
-        dmC.handleMqttMessage({ topic: 'zigbee2mqtt/Salon Swiatlo', message: JSON.stringify({ brightness_l1: 179 }) })
+        dmC.handleMqttMessage({ topic: 'zigbee2mqtt/Dimmer B', message: JSON.stringify({ brightness_l1: 179 }) })
         await sleep(30)
     })
     assertEqual(dmC.getStateOrigin(), 'automation', 'jitter-sized brightness delta stays automation (no false human mark)')
@@ -522,11 +528,11 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
 {
     // C) Button action reports on a dual switch keep parity with plain wall switches:
     //    an event payload against a cached suffixed state counts as interaction...
-    const swD = new DualSwitch('Kuchnia Wlacznik Jadalnia', '0xd1', { channels: ['left', 'right'] })
+    const swD = new DualSwitch('Wall Switch B', '0xd1', { channels: ['left', 'right'] })
     swD.setMqttService(new MockMqttService())
     await swD.setCachedState({ state_left: 'ON', state_right: 'OFF' }, { origin: 'automation' })
     const writesD = await countCooldownWrites(async () => {
-        swD.handleMqttMessage({ topic: 'zigbee2mqtt/Kuchnia Wlacznik Jadalnia', message: JSON.stringify({ action: 'single_right' }) })
+        swD.handleMqttMessage({ topic: 'zigbee2mqtt/Wall Switch B', message: JSON.stringify({ action: 'single_right' }) })
         await sleep(30)
     })
     assertEqual(swD.getStateOrigin(), 'human', 'button press report classified as HUMAN (parity with plain switches)')
@@ -534,7 +540,7 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
 
     // ...while an identical periodic re-advertisement adds nothing.
     const writesE = await countCooldownWrites(async () => {
-        swD.handleMqttMessage({ topic: 'zigbee2mqtt/Kuchnia Wlacznik Jadalnia', message: JSON.stringify({ action: 'single_right' }) })
+        swD.handleMqttMessage({ topic: 'zigbee2mqtt/Wall Switch B', message: JSON.stringify({ action: 'single_right' }) })
         await sleep(30)
     })
     assertEqual(writesE, 0, 'identical periodic report wrote no additional cooldown')
@@ -544,7 +550,7 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
     // D) Automation-driven command + its own suffixed echo stays AUTOMATION for the whole
     //    token window (pins current correlator fallback semantics so they cannot silently
     //    regress; see doc/TODO.md for the larger-scope echo-matching follow-up).
-    const swF = new DualSwitch('Kuchnia Wlacznik Zlew', '0xf1', { channels: ['left', 'right'] })
+    const swF = new DualSwitch('Wall Switch A', '0xf1', { channels: ['left', 'right'] })
     const mockF = new MockMqttService()
     swF.setMqttService(mockF)
     await swF.setCachedState({ state_left: 'OFF', state_right: 'OFF' }, { origin: 'unknown' })
@@ -554,10 +560,10 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
         await sleep(30) // _onPublish: register instant token, origin=automation
         assertEqual(swF.getStateOrigin(), 'automation', 'AUTOMATION dispatch marks origin automation immediately')
         // z2m echoes the combined state back -- suffixed fields only.
-        swF.handleMqttMessage({ topic: 'zigbee2mqtt/Kuchnia Wlacznik Zlew', message: JSON.stringify({ state_left: 'ON', state_right: 'ON' }) })
+        swF.handleMqttMessage({ topic: 'zigbee2mqtt/Wall Switch A', message: JSON.stringify({ state_left: 'ON', state_right: 'ON' }) })
         await sleep(30)
         // Identical periodic re-advertisement right after.
-        swF.handleMqttMessage({ topic: 'zigbee2mqtt/Kuchnia Wlacznik Zlew', message: JSON.stringify({ state_left: 'ON', state_right: 'ON' }) })
+        swF.handleMqttMessage({ topic: 'zigbee2mqtt/Wall Switch A', message: JSON.stringify({ state_left: 'ON', state_right: 'ON' }) })
         await sleep(30)
     })
     assertEqual(lastPublish(mockF)?.payload, { state_left: 'ON', state_right: 'ON' }, 'AUTOMATION ON fanned out to both channels')
@@ -597,10 +603,10 @@ console.log('\n── MQTT dedup signature for suffixed payloads (regression) �
     await MqttService.init({ connectFn: () => fake })
 
     const received = []
-    MqttService.subscribe('zigbee2mqtt/Salon Wlacznik Ambient', (topic, message) => received.push(message))
+    MqttService.subscribe('zigbee2mqtt/Dimmer A', (topic, message) => received.push(message))
     await sleep(10) // let the subscription callback register
 
-    const emit = (obj) => fake.emit('message', 'zigbee2mqtt/Salon Wlacznik Ambient', Buffer.from(JSON.stringify(obj)))
+    const emit = (obj) => fake.emit('message', 'zigbee2mqtt/Dimmer A', Buffer.from(JSON.stringify(obj)))
 
     // Identical report twice within the dedupe window -> delivered exactly once.
     emit({ state_l1: 'ON', state_l2: 'OFF', brightness_l1: 120, brightness_l2: 200 })
