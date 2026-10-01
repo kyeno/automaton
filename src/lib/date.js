@@ -500,6 +500,22 @@ class STemporal {
     }
 
     /**
+     * First clock hour covered by a named day-period.
+     *
+     * Inverse of {@link getHourToPeriodMap}: given a period name, returns the start boundary
+     * of its range so callers can anchor "start-of-morning"-style instants to a concrete hour
+     * (e.g. 'morning' -> 5). Used by merged-gate conditions that mix sun events with
+     * clock/period boundaries.
+     *
+     * @param {string} period - Period name ('morning' | 'noon' | 'afternoon' | 'evening' | 'night').
+     * @returns {number|null} First hour (0-23) covered by the period, or null when unknown.
+     */
+    getPeriodStartHour(period) {
+        const range = typeof period === 'string' ? DAY_PERIODS[period] : undefined
+        return Array.isArray(range) ? range[0] : null
+    }
+
+    /**
      * Return a human-readable string for the current season.
      * Every month maps to exactly one meteorological season, so this always resolves.
      * @returns {'spring'|'summer'|'autumn'|'winter'} The matching season name.

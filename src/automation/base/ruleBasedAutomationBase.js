@@ -21,6 +21,7 @@
 import fs from 'node:fs'
 
 import temporal from '../../lib/date.js'
+import solar from '../../lib/sun.js'
 
 import CacheService from '../../service/cacheService.js'
 import DatabaseService from '../../service/databaseService.js'
@@ -190,17 +191,23 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Time period -- always included regardless of config
         ctx.timeOfDay = temporal.getCurrentTimePeriod()
 
+        // Sun-event instants (epoch ms) powering merged-gate conditions ("sundawn"/"sundusk"); null when geo is unconfigured/invalid.
+        const sunTimes = solar.getSunTimes(new Date())
+        ctx.sundawn = sunTimes.sundawn ? sunTimes.sundawn.getTime() : null
+        ctx.sundusk = sunTimes.sundusk ? sunTimes.sundusk.getTime() : null
+
         return ctx
     }
 
     /**
      * Evaluate a single rule's conditions against the built context.
      *
-     * Checks `time-of-day`, actual wall-clock `hour`, `season`, numeric sensor ranges (`illuminance`, `temperature`, ...), and `presence` constraints.
+     * Checks `time-of-day`, actual wall-clock `hour`, `season`, numeric sensor ranges (`illuminance`, `temperature`, ...), and `presence` constraints, plus the merged-gate
+     * conditions `after_latest_of` / `after_earliest_of` (fire once now has passed the latest/earliest instant of a list of sun/clock candidates).
      * A condition key that is absent or falsy is treated as "always passes".
      *
      * @param {Record<string, unknown>} [conditions] - Conditions object from YAML rule
-     * @param {{illuminance: number|null, temperature: number|null, timeOfDay: string}} context
+     * @param {{illuminance?: number|null, temperature?: number|null, timeOfDay: string, sundawn: number|null, sundusk: number|null}} context
      * @returns {Promise<boolean>}
      */
     async conditionsMatch(conditions, context) {
@@ -229,7 +236,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             if (typeof constraint === 'number') {
                 if (!Number.isFinite(constraint) || Math.trunc(constraint) !== nowHour) return false
             } else if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
-                if (!this.#matchesNumericRange(nowHour, constraint)) return false
+                // A bound may be a sun shorthand ('sunrise'/'sunset', ...) resolving to today's real
+                // fractional hour; plain numbers keep integer-hour semantics. Absent ops impose no bound.
+                if (!this.#matchesHourBounds(nowHour, constraint, context)) return false
             } else {
                 return false
             }
@@ -287,11 +296,27 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
+        // Sun/clock merged gates -- fire once now has passed the LATEST (after_latest_of) or EARLIEST
+        // (after_earliest_of) of a list of candidate instants. Each candidate is a sun shorthand
+        // ("sundusk"/"sundawn"), a clock hour (number / {hour:N}), or a day-period name ('morning', ...).
+        for (const [gateKey, candidates] of Object.entries(conditions)) {
+            if (gateKey !== 'after_latest_of' && gateKey !== 'after_earliest_of') continue
+            if (!Array.isArray(candidates) || candidates.length === 0) return false // malformed -> fail closed
+            const instants = []
+            for (const candidate of candidates) {
+                const instantMs = this.#resolveGateInstant(candidate, context)
+                if (instantMs !== null && Number.isFinite(instantMs)) instants.push(instantMs)
+            }
+            if (instants.length === 0) return false // nothing resolvable -> fail closed
+            const thresholdMs = gateKey === 'after_latest_of' ? Math.max(...instants) : Math.min(...instants)
+            if (Date.now() < thresholdMs) return false
+        }
+
         // Dynamic: any remaining condition key -> numeric range check against context.
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'hour' || key === 'season' || key === 'presence' || key === 'video-player' || key === 'state-changed-ago-minutes') continue // handled above
+            if (key === 'time-of-day' || key === 'hour' || key === 'season' || key === 'presence' || key === 'video-player' || key === 'state-changed-ago-minutes' || key === 'after_latest_of' || key === 'after_earliest_of') continue // handled above
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -917,6 +942,113 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             this.log(`Error storing once-marker for rule "${rule.name}": ${error.message}`, 'warn')
         }
     }
+    /**
+     * Epoch-ms instant for the given local clock hour on the current calendar day.
+     * @private
+     * @param {number} hour - Hour of day (0-23).
+     * @returns {number} Epoch milliseconds at HH:00:00 today.
+     */
+    #todayAtHour(hour) {
+        const now = new Date()
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0).getTime()
+    }
+
+    /**
+     * Resolve one merged-gate candidate to an absolute epoch-ms instant.
+     *
+     * Accepts a sun shorthand ("sundusk"/"sunset", "sundawn"/"sunrise") sourced from the per-tick context snapshot,
+     * a clock hour as a bare number or `{hour:N}`, and a day-period name ('morning', ... -> that period's start-of-day
+     * hour), also via `{'time-of-day':name}`. Returns null when unresolvable so callers can drop the candidate rather
+     * than fail the whole gate.
+     *
+     * @private
+     * @param {*} spec - Candidate value from an after_latest_of / after_earliest_of list.
+     * @param {{}} context - Evaluation context carrying sundawn/sundusk epoch-ms (or null).
+     * @returns {number|null} Epoch-ms instant, or null when the candidate cannot be resolved.
+     */
+    #resolveGateInstant(spec, context) {
+        if (typeof spec === 'string') {
+            const normalized = spec.trim().toLowerCase()
+            if (normalized === 'sundusk' || normalized === 'sunset') return context.sundusk ?? null
+            if (normalized === 'sundawn' || normalized === 'sunrise') return context.sundawn ?? null
+            const startHour = temporal.getPeriodStartHour(normalized)
+            return startHour !== null ? this.#todayAtHour(startHour) : null
+        }
+
+        if (typeof spec === 'number' && Number.isFinite(spec)) {
+            const hour = Math.trunc(spec)
+            return (hour >= 0 && hour <= 23) ? this.#todayAtHour(hour) : null
+        }
+
+        if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
+            if ('hour' in spec) return this.#resolveGateInstant(spec.hour, context)
+            if ('time-of-day' in spec) return this.#resolveGateInstant(spec['time-of-day'], context)
+        }
+
+        return null
+    }
+
+    /**
+     * Whether a value is one of the recognized sun-event shorthands usable as an `hour:` bound.
+     * Accepts both spellings for each event so rule authors can mix them freely.
+     * @private
+     * @param {*} value - Candidate bound value from an `hour:` condition object.
+     * @returns {boolean} True when the value is 'sunrise'/'sundawn', 'sunset' or 'sundusk'.
+     */
+    #isSunShorthand(value) {
+        return typeof value === 'string' && ['sunrise', 'sundawn', 'sunset', 'sundusk'].includes(value.trim().toLowerCase())
+    }
+
+    /**
+     * Resolve a single `hour:` bound (number or sun shorthand) to a finite number on the hour axis.
+     * Sun shorthands map to today's dawn/dusk fractional hour derived from the context instants; plain
+     * numbers pass through unchanged. Returns NaN for anything unresolvable so callers fail closed.
+     * @private
+     * @param {*} value - Bound value from an `hour:` condition object.
+     * @param {{}} context - Evaluation context carrying sundawn/sundusk epoch-ms (or null).
+     * @param {number} startOfTodayMs - Epoch ms at local midnight, used to derive fractional hours.
+     * @returns {number} Resolved numeric hour, or NaN when the value cannot be resolved.
+     */
+    #resolveHourValue(value, context, startOfTodayMs) {
+        if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+        const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+        let instantMs = null
+        if (normalized === 'sunrise' || normalized === 'sundawn') instantMs = context.sundawn ?? null
+        else if (normalized === 'sunset' || normalized === 'sundusk') instantMs = context.sundusk ?? null
+        if (instantMs === null || !Number.isFinite(instantMs)) return NaN
+        return (instantMs - startOfTodayMs) / 3_600_000
+    }
+
+    /**
+     * Evaluate an `hour:` bounds object against the current time, supporting sun-event shorthands.
+     * Plain-numeric bounds keep the legacy integer-hour semantics exactly; when any bound is a sun
+     * shorthand every bound resolves to a fractional hour and comparison runs on sub-hour precision so
+     * e.g. `{ gte: sunrise }` fires at/after the real sunrise moment rather than the next whole hour.
+     * @private
+     * @param {number} nowHour - Current local clock hour (integer 0-23).
+     * @param {{lt?: number|string, lte?: number|string, gt?: number|string, gte?: number|string}} constraints - Hour bounds object.
+     * @param {{}} context - Evaluation context carrying sundawn/sundusk epoch-ms (or null).
+     * @returns {boolean} True when all present bounds hold.
+     */
+    #matchesHourBounds(nowHour, constraints, context) {
+        const ops = ['lt', 'lte', 'gt', 'gte']
+        const usesSun = ops.some((op) => constraints[op] !== undefined && this.#isSunShorthand(constraints[op]))
+        if (!usesSun) return this.#matchesNumericRange(nowHour, constraints)
+
+        // At least one sun shorthand -> precise path: resolve every bound to a fractional hour and
+        // compare against the exact current time-of-day (sub-hour granularity).
+        const startOfTodayMs = new Date().setHours(0, 0, 0, 0)
+        const nowFractional = (Date.now() - startOfTodayMs) / 3_600_000
+        const resolved = {}
+        for (const op of ops) {
+            if (constraints[op] === undefined) continue
+            const value = this.#resolveHourValue(constraints[op], context, startOfTodayMs)
+            if (!Number.isFinite(value)) return false // unresolvable/malformed bound -> fail closed
+            resolved[op] = value
+        }
+        return this.#matchesNumericRange(nowFractional, resolved)
+    }
+
     /**
      * Check if a numeric value satisfies range bounds defined in config.
      * Supports: lt, lte, gt, gte

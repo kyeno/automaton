@@ -9,7 +9,8 @@
  * evaluable condition type: time-of-day period membership, actual wall-clock hour bounds (`hour:`), season, numeric range bounds
  * (`lt`/`lte`/`gt`/`gte`) on arbitrary sensor keys, network presence maps, and video-player
  * status lists (no recorded state enumerates to the `offline` status). Conditions that require live state
- * (`state-changed-ago-minutes`) are treated as satisfied and noted in the report meta.
+ * (`state-changed-ago-minutes`) or a location/date-dependent sun event (`after_latest_of`,
+ * `after_earliest_of`) are treated as satisfied and noted in the report meta.
  *
  * The hour-to-period mapping is injected per analysis so callers can evaluate against the
  * current fixed partition ({@link lib/date getHourToPeriodMap()}) or against an alternative
@@ -44,7 +45,14 @@ const RESERVED_CONDITION_KEYS = new Set([
     'presence',
     'video-player',
     'state-changed-ago-minutes',
+    // Sun/clock merged gates resolve against real dawn/dusk instants + geo -- not part of the
+    // static hour/sensor grid, so they are treated as satisfied (like state-changed-ago-minutes).
+    'after_latest_of',
+    'after_earliest_of',
 ])
+
+/** Sun-event shorthands usable as an `hour:` bound; depend on real dawn/dusk, not the static clock grid. */
+const SUN_HOUR_SHORTHANDS = new Set(['sunrise', 'sundawn', 'sunset', 'sundusk'])
 
 /** Enumerated status meaning "no usable player signal" -- absent/unreachable/offline all map here. */
 const VIDEO_PLAYER_OFFLINE = 'offline'
@@ -227,7 +235,10 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
         if (typeof constraint === 'number') {
             if (!Number.isInteger(ctx.hour) || Math.trunc(constraint) !== ctx.hour) return false
         } else if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
-            if (!matchesNumericRange(ctx.hour ?? null, constraint)) return false
+            // Sun-event shorthands ('sunrise'/'sunset', ...) depend on real dawn/dusk instants that are not part
+            // of the static clock grid -- treat them as satisfied (like after_latest_of/after_earliest_of).
+            const usesSunShorthand = ['lt', 'lte', 'gt', 'gte'].some((op) => SUN_HOUR_SHORTHANDS.has(String(constraint[op] ?? '').trim().toLowerCase()))
+            if (!usesSunShorthand && !matchesNumericRange(ctx.hour ?? null, constraint)) return false
         } else {
             return false
         }
@@ -536,7 +547,7 @@ export function analyzeRules(options) {
             ruleCount: rules.length,
             scenarioCount: scenarios.length,
             season: options.season ?? null,
-            note: 'state-changed-ago-minutes conditions are treated as satisfied in static analysis',
+            note: 'state-changed-ago-minutes and after_latest_of/after_earliest_of conditions are treated as satisfied in static analysis',
         },
         hours,
         gaps,

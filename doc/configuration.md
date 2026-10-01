@@ -75,6 +75,18 @@ locale:
 - **`locale.language`** -- Full BCP 47 locale code selecting the bundle directory under `etc/i18n/{code}/`. Determines the system prompt language, tool descriptions, UI greetings AND the TTS voice model/effects. Does NOT change the app/UI interface language.
 - **`locale.time_format`** -- How time is displayed throughout the UI (`"12h"` or `"24h"`).
 
+### Geolocation (under `locale`)
+
+Observer coordinates that power the sun-based rule shorthands (`sundawn` / `sundusk`) used by the merged-gate conditions and `hour:` bounds described in [Automation Rules](#4-automation-rules-etcautomationyaml). They live inside the `locale:` section alongside language/time format:
+
+```yaml
+locale:
+  geo_latitude: 52.2307   # WGS84 decimal degrees; positive = north (-90..90)
+  geo_longitude: 21.0122  # WGS84 decimal degrees; positive = east  (-180..180)
+```
+
+- **`locale.geo_latitude`** / **`locale.geo_longitude`** -- Your site's position (decimal degrees, WGS84). Both are optional numbers; when missing/invalid the sun shorthands resolve to nothing and any gate relying on them fails closed (the rule simply never fires) rather than guessing. The values feed `sunrise-sunset-js`, which computes real dawn/dusk instants for the current calendar day.
+
 ### TTS Configuration
 
 TTS is configured entirely through environment variables and locale-specific i18n bundles — there is no `tts:` section in `automaton.yaml`.
@@ -304,17 +316,50 @@ These replaced the older sun-derived boundaries in commit `c1e8c6f` -- rules wri
 
 ### Wall-Clock Hour (`hour`)
 
-The optional `hour:` condition gates rules against the **actual local clock hour** (0-23) instead of calendar-derived day-period labels. It accepts either an exact number or a single comparison bound:
+The optional `hour:` condition gates rules against the **actual local clock hour** (0-23) instead of calendar-derived day-period labels. It accepts either an exact number or comparison bounds (`lt`/`lte`/`gt`/`gte`); each bound may also be a sun-event token that resolves to today's real dawn/dusk moment:
 
 | Form | Meaning |
 |------|---------|
 | `hour: 4` | Exactly 04:00-04:59 |
 | `hour: { gt: 22 }` / `{ gte: 23 }` | After / at-or-after that hour |
 | `hour: { lt: 5 }` / `{ lte: 2 }` | Before / up-to-and-including that hour |
+| `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | At/after real sunrise, before/at real sunset (also `sundawn`/`sundusk`) |
 
-Unlike `time-of-day`, it is evaluated directly from `new Date().getHours()` on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Granularity is one hour; minute-level gating would need additional work. Malformed values fail closed (the rule never matches) rather than passing silently.
+Unlike `time-of-day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
 
-The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports.
+The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports; a sun-token bound is treated as satisfied there since real dawn/dusk times are not part of the static clock grid.
+
+### Merged Sun/Clock Gate Conditions (`after_latest_of` / `after_earliest_of`)
+
+Where `time-of-day`, `hour` and `season` each assert one fixed boundary, these two conditions let a single rule wait for the **later** of several candidate moments ("whichever is later") or open at the **earlier** of them ("whichever is earlier"). Each condition takes a list of candidates; the rule fires once "now" has passed the selected extreme of those candidates' resolved instants:
+
+| Key | Fires when now >= ... | Use case |
+|-----|----------------------|----------|
+| `after_latest_of: [a, b]` | the **latest** (max) of the candidates | "at dusk *but not before* 19h" -- summer sunset ~21h wins, winter falls back to 19h |
+| `after_earliest_of: [a, b]` | the **earliest** (min) of the candidates | "at dawn *or by* morning start" -- early summer dawn wins, late winter defers to 05h |
+
+Each candidate resolves to an absolute instant on the current day:
+
+| Candidate form | Resolves to |
+|----------------|-------------|
+| `"sundusk"` / `"sunset"` | today's real sunset (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
+| `"sundawn"` / `"sunrise"` | today's real sunrise |
+| `19` or `{ hour: 19 }` | today at 19:00 local |
+| `'morning'` / `{ 'time-of-day': 'morning' }` | the start-of-day hour of that period (e.g. morning -> 05:00) |
+
+Examples:
+
+```yaml
+# Turn ambient lamps on at dusk, but never before 7pm (the later of the two governs).
+conditions:
+  after_latest_of: [sundusk, { hour: 19 }]
+
+# Switch off leftover lights at first light, no later than the morning window opens.
+conditions:
+  after_earliest_of: [sundawn, 'morning']
+```
+
+They compose with every other condition as usual (all must hold), so a rule can pair them with strict gates -- e.g. `season: spring` + `illuminance: { lte: 15 }` + `after_latest_of: [sundusk, { hour: 19 }]`. Unresolvable candidates are dropped; if **none** resolve (no geo configured, unknown shorthand, empty list) the gate fails closed and the rule never fires. The static coverage analyzer treats both keys as reserved/satisfied (like `state-changed-ago-minutes`) since they depend on real sun times rather than the clock-hour grid.
 
 ### Target Keys (`targets:`)
 

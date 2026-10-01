@@ -15,6 +15,10 @@ locale:
   language: en_US
   # Time display format: "12h" (01:30pm) or "24h" (13:30)
   time_format: "24h"
+  # Observer coordinates driving the sun-based rule shorthands ("sundawn"/"sundusk").
+  # WGS84 decimal degrees; latitude positive north, longitude positive east. Set to your site.
+  geo_latitude: 52.0        # your site's latitude (e.g. 52.0)
+  geo_longitude: 21.0       # your site's longitude (e.g. 21.0)
 
 # ----------------------------------------------------------------
 # AI -- provider + conversation settings (API secret stays in .env)

@@ -35,7 +35,10 @@ export default {
         required: true,
         properties: {
             language:    { type: 'string', required: true },
-            time_format: { type: 'string', enum: ['12h', '24h'], required: true }
+            time_format: { type: 'string', enum: ['12h', '24h'], required: true },
+            // Geolocation -- observer coordinates driving sun-based rule shorthands ("sundawn"/"sundusk").
+            geo_latitude:  { type: 'number', required: false },
+            geo_longitude: { type: 'number', required: false }
         }
     },
 

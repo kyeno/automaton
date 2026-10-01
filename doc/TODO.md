@@ -1,6 +1,8 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- BUG: After running /automaton run, it re-runs the whole timer - not just runs
+  proper rule. This causes the automation to overlap with 2 timers
 - Add simple chat web UI for AI interaction that will share the same state with
   CLI, so that non-tech house dwellers would be able to interact with it.
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
