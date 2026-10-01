@@ -45,18 +45,15 @@ interactions:
             command: 'TOGGLE'
 
   # Example: Pilot remote controlling bedroom roller shutters while delegating
-  # outlet on/off logic to a custom JS interaction (see bedroomRollersInteraction.js.dist).
-  # OPEN/CLOSE move the shutters directly via `targets:` AND call the interaction,
-  # which reads outdoor light before deciding whether to toggle a paired outlet.
-  # STOP only moves the shutters (no outlet side-effect).
+  # travel to a custom JS interaction (see bedroomRollersInteraction.js.dist).
+  # That interaction moves the shutters itself so it can read their cached
+  # positions first: a single press runs them fully open/closed, a double press
+  # steps each one 20%, and a press against an end stop the group already sits
+  # at is answered with a beep instead of a command. Only STOP, which needs no
+  # position logic, stays declarative here.
   - name: 'bedroom_pilot_remote'
     actions:
       - type: '1_single'
-        targets:
-          - device: 'Bedroom Roller Left'
-            command: 'OPEN'
-          - device: 'Bedroom Roller Right'
-            command: 'OPEN'
         calls: 'bedroomRollersInteraction'
       - type: '2_single'
         targets:
@@ -65,9 +62,8 @@ interactions:
           - device: 'Bedroom Roller Right'
             command: 'STOP'
       - type: '3_single'
-        targets:
-          - device: 'Bedroom Roller Left'
-            command: 'CLOSE'
-          - device: 'Bedroom Roller Right'
-            command: 'CLOSE'
+        calls: 'bedroomRollersInteraction'
+      - type: '1_double'
+        calls: 'bedroomRollersInteraction'
+      - type: '3_double'
         calls: 'bedroomRollersInteraction'

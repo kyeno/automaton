@@ -45,13 +45,36 @@ rules:
 
 The companion interaction pairs a physical remote with the shutters *and* an outlet:
 
-| Button | YAML action (`interaction.yaml`) | Delegated JS logic (`bedroomRollersInteraction.js`) |
-|--------|----------------------------------|------------------------------------------------------|
-| OPEN   | sends `OPEN` to every shutter via `targets:` | if outdoor light is bright → schedule the paired outlet **OFF** after a short delay |
-| STOP   | sends `STOP` to every shutter | — (no outlet side-effect) |
-| CLOSE  | sends `CLOSE` to every shutter via `targets:` | if it's dark outside → turn the paired outlet **ON** immediately |
+| Button | Action | Behavior |
+|--------|--------|----------|
+| Open   | `1_single` | runs every shutter fully **open**; if outdoor light is bright, schedules the paired outlet **OFF** after a short delay |
+| Open +  | `1_double` | steps every shutter **20% further open** from its current position (no outlet side effect) |
+| Stop   | `2_single` | sends `STOP` to every shutter - no position logic, so it stays declarative |
+| Pause  | `2_double` | toggles both bedroom ambient outlets together (declarative) |
+| Close  | `3_single` | runs every shutter fully **closed**; if it's dark outside, turns the paired outlet **ON** immediately |
+| Close + | `3_double` | steps every shutter **20% further closed** from its current position (no outlet side effect) |
 
-The YAML entry uses `calls: 'bedroomRollersInteraction'` on the OPEN and CLOSE actions. The container resolves that string to the custom class by its filename slug and invokes its `execute()`, which reads the illuminance sensor and conditionally toggles the outlet(s). This keeps simple "move the shutter" commands declarative in YAML while housing the stateful, sensor-aware outlet decision in code.
+### End-Stop Feedback
+
+When *every* shutter in the group already sits at the requested end stop, the press is answered with a short double beep and **no command is sent** - the same acknowledgement the balcony light button gives when its timed cycle is already running. Pressing "close" on a fully closed group beeps; pressing "open" on a fully open group beeps. A +/-2% tolerance counts as "at the limit".
+
+The gate deliberately requires *all* shutters to be at the end stop. If even one can still move, the whole group is commanded and the shutters that are already there are dropped by DeviceBase's own redundancy check, so no pointless MQTT traffic is generated.
+
+### How the Split Works
+
+Travel lives in `RollerShuttersBase` (`src/interaction/base/rollerShuttersBase.js`), which reads each shutter's cached position from DeviceContainer, computes the target, and decides whether to beep or command. The YAML entry therefore only delegates via `calls:` for the four travel actions - the shutter commands can no longer sit in declarative `targets:`, because the engine runs `targets` before `calls` and there is no way to veto a target once it has been sent. `2_single` (STOP) keeps using `targets:` since it needs no position lookup.
+
+A concrete room only fixes its identity and its shutter list:
+
+```javascript
+export default class SalonRollersInteraction extends RollerShuttersBase {
+    constructor() {
+        super({ name: 'SalonRollersInteraction', shutters: SALON_SHUTTERS })
+    }
+}
+```
+
+Side effects attach through the `onOpened()` / `onClosed()` hooks, which fire only on a real full travel - never on a 20% nudge and never on a beep-gated press (nothing moved in either case).
 
 Released as obfuscated templates so they work out of the box once you rename devices to your own:
 

@@ -7,8 +7,11 @@
  * entry using `calls:` on the OPEN/CLOSE actions (see interaction.yaml.dist,
  * "bedroom_pilot_remote").
  *
- * Shutter OPEN/CLOSE commands are sent directly by the YAML engine via `targets:`;
- * this handler only adds sensor-aware outlet logic:
+ * Shutter travel comes from RollerShuttersBase: a single press runs the group
+ * fully open/closed, a double press steps each shutter 20% from its cached
+ * position, and a press against an end stop the group already sits at beeps
+ * instead of sending a command. This handler only adds the sensor-aware outlet
+ * side effects, which fire on a real open/close but never on a 20% nudge:
  *   - OPEN  -> if outdoor light is bright, schedule the paired outlet OFF after a delay
  *   - CLOSE -> if it is dark outside, turn the paired outlet ON immediately
  *
@@ -18,7 +21,7 @@
 'use strict'
 
 import DeviceContainer from '../../src/device/container/deviceContainer.js'
-import InteractionBase from '../../src/interaction/base/interactionBase.js'
+import RollerShuttersBase from '../../src/interaction/base/rollerShuttersBase.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -29,9 +32,10 @@ import InteractionBase from '../../src/interaction/base/interactionBase.js'
  * zigbee.yaml requires updating one place per module. Replace each value with
  * your real device name before activating.
  * @readonly
- * @type {{outlets: string[], illuminance: string}}
+ * @type {{shutters: string[], outlets: string[], illuminance: string}}
  */
 const DEVICES = Object.freeze({
+    shutters: ['Bedroom Roller Left', 'Bedroom Roller Right'], // <-- replace with your shutter names
     outlets: ['Bedroom Outlet'],       // <-- replace with your outlet device name(s)
     illuminance: 'Outdoor Luminance',  // <-- replace with your outdoor light sensor
 })
@@ -49,49 +53,19 @@ const OPEN_OUTLET_OFF_DELAY_MS = 5000
 // BedroomRollersInteraction class
 // ---------------------------------------------------------------------------
 
-export default class BedroomRollersInteraction extends InteractionBase {
-
-    /** Processing lock to prevent overlapping executions. @type {boolean} */
-    #processing = false
+/**
+ * BedroomRollersInteraction class.
+ *
+ * Extends {@link RollerShuttersBase} with the room's shutter group and the
+ * illuminance-driven outlet logic attached to its open/close hooks.
+ */
+export default class BedroomRollersInteraction extends RollerShuttersBase {
 
     /** Timer reference for delayed OFF command after OPEN. @type {NodeJS.Timeout|null} */
     #offTimer = null
 
     constructor() {
-        super({ name: 'BedroomRollersInteraction' })
-    }
-
-    /**
-     * Main execution logic -- dispatches to OPEN or CLOSE handler based on trigger action.
-     * Shutter commands are sent by the YAML engine; this only handles outlet side-effects.
-     *
-     * @param {Object} [triggerData] - Data from the event trigger
-     */
-    async execute(triggerData = null) {
-        if (this.#processing) {
-            this.log('Already processing an action -- ignoring')
-            return
-        }
-
-        const action = triggerData?.action || null
-
-        if (action === '1_single') {
-            this.#processing = true
-            try {
-                await this.#handleOpen()
-            } finally {
-                this.#processing = false
-            }
-        } else if (action === '3_single') {
-            this.#processing = true
-            try {
-                await this.#handleClose()
-            } finally {
-                this.#processing = false
-            }
-        } else {
-            this.log(`Unknown action: ${action}`, 'warn')
-        }
+        super({ name: 'BedroomRollersInteraction', shutters: DEVICES.shutters })
     }
 
     /** Clean up timers on shutdown. */
@@ -100,11 +74,12 @@ export default class BedroomRollersInteraction extends InteractionBase {
         this.#clearTimer()
     }
 
-    // -- Private helpers --------------------------------------------------
-
-    /** Handle OPEN action: conditionally turn off outlets based on illuminance. @private */
-    #handleOpen() {
-        this.log('OPEN triggered -- handling outlet logic')
+    /**
+     * Handle OPEN: conditionally turn off outlets based on illuminance.
+     * Invoked by the base class only after the shutters were actually commanded.
+     */
+    onOpened() {
+        this.log('OPEN dispatched -- handling outlet logic')
 
         const illuminance = this.#getOutdoorIlluminance()
         if (illuminance === null) {
@@ -126,9 +101,12 @@ export default class BedroomRollersInteraction extends InteractionBase {
         }
     }
 
-    /** Handle CLOSE action: conditionally turn on outlets based on illuminance. @private */
-    #handleClose() {
-        this.log('CLOSE triggered -- handling outlet logic')
+    /**
+     * Handle CLOSE: conditionally turn on outlets based on illuminance.
+     * Invoked by the base class only after the shutters were actually commanded.
+     */
+    onClosed() {
+        this.log('CLOSE dispatched -- handling outlet logic')
 
         const illuminance = this.#getOutdoorIlluminance()
         if (illuminance === null) {

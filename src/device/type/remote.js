@@ -36,6 +36,21 @@ import DeviceCommandSource from '../../enum/deviceCommandSource.js'
  */
 const DEFAULT_DEBOUNCE_WINDOW_MS = 800
 
+/**
+ * Debounce scope: any action inside the window is ignored.
+ * @type {string}
+ */
+const DEBOUNCE_ANY_ACTION = 'any_action'
+
+/**
+ * Debounce scope: only a repeat of the *same* action inside the window is
+ * ignored, so a distinct follow-up action (e.g. the `1_double` that follows a
+ * `1_single` when a physical double press is reported as two events) still
+ * gets through. Opt-in per remote via `debounce_scope` in etc/device/zigbee.yaml.
+ * @type {string}
+ */
+const DEBOUNCE_SAME_ACTION = 'same_action'
+
 // ---------------------------------------------------------------------------
 // Remote class
 // ---------------------------------------------------------------------------
@@ -78,6 +93,13 @@ export default class Remote extends DeviceBase {
      */
     #debounceWindow = DEFAULT_DEBOUNCE_WINDOW_MS
 
+    /**
+     * Which actions the debounce window applies to: DEBOUNCE_ANY_ACTION
+     * (default, historical behavior) or DEBOUNCE_SAME_ACTION (opt-in).
+     * @type {string}
+     */
+    #debounceScope = DEBOUNCE_ANY_ACTION
+
     // -- Constructor ------------------------------------------------------
 
     /**
@@ -92,6 +114,15 @@ export default class Remote extends DeviceBase {
     constructor(name, id, data, actionMap = {}) {
         super(name, id, data)
         this.#actionMap = actionMap
+
+        // Opt-in, per-device debounce scoping. Declared in etc/device/zigbee.yaml
+        // as an object entry:  - name: 'Salon Pilot Rolety'
+        //                           debounce_scope: 'same_action'
+        // Remotes that omit it keep the historical "ignore anything in the
+        // window" behavior untouched.
+        if (data?.debounce_scope === DEBOUNCE_SAME_ACTION) {
+            this.#debounceScope = DEBOUNCE_SAME_ACTION
+        }
     }
 
     // -- Accessors --------------------------------------------------------
@@ -210,6 +241,12 @@ export default class Remote extends DeviceBase {
      * Check whether an action falls within the debounce window.
      * Logs and returns true if debounced.
      *
+     * With the default DEBOUNCE_ANY_ACTION scope any action inside the window is
+     * dropped. Under the opt-in DEBOUNCE_SAME_ACTION scope only a repeat of the
+     * *same* action is dropped, so a genuinely different follow-up event -- such
+     * as the `1_double` arriving right after the `1_single` of one physical
+     * double press -- is still processed. See DEBOUNCE_SAME_ACTION above.
+     *
      * @param {string} action - Action identifier
      * @returns {boolean} true if the action was debounced (ignored)
      * @private
@@ -218,16 +255,20 @@ export default class Remote extends DeviceBase {
         if (!this.#lastActionTime) return false
 
         const elapsed = Date.now() - this.#lastActionTime
-        if (elapsed < this.#debounceWindow) {
-            this.log(
-                `Debounced action: ${action} (` +
-                `${temporal.millisecondsToHumanReadable(elapsed)} ago, ` +
-                `window ${temporal.millisecondsToHumanReadable(this.#debounceWindow)})`
-            )
-            return true
+        if (elapsed >= this.#debounceWindow) return false
+
+        // Scoped debounce: a different action is a distinct user intent, not a
+        // device re-publishing its own state, so it passes straight through.
+        if (this.#debounceScope === DEBOUNCE_SAME_ACTION && this.#lastAction !== action) {
+            return false
         }
 
-        return false
+        this.log(
+            `Debounced action: ${action} (` +
+            `${temporal.millisecondsToHumanReadable(elapsed)} ago, ` +
+            `window ${temporal.millisecondsToHumanReadable(this.#debounceWindow)})`
+        )
+        return true
     }
 
     /**
