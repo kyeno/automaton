@@ -13,12 +13,14 @@
  *   /automation coverage <n> legacy
  *                             Also diffs against the pre-c1e8c6f sun-derived day periods so
  *                             you can see how each shifted hour's behavior changed
- *   /automation run <n>      Call that automation's execute() now; the log shows
- *                             "Triggered by: manual" under its Auto:<name> context
- *   /automation force <n>    Same as run but bypasses the silent period and any
- *                             already-consumed once-per-day rule markers without consuming or
- *                             refreshing them; human-interaction cooldowns still apply so a
- *                             manual poke never fights a device someone just touched
+ *   /automation run <n>      One-shot evaluation: walks the rules exactly once and executes
+ *                             whatever matches right now ("Triggered by: manual" in the log).
+ *                             The periodic timer is not involved -- it keeps running on its own
+ *                             schedule, untouched by the poke
+ *   /automation force <n>    Same one-shot run, but goes past the obvious gates: the silent
+ *                             period, already-consumed once-per-day rule markers (without
+ *                             consuming or refreshing them) and per-device human-interaction
+ *                             cooldowns -- an explicit operator poke wins over a recent touch
  *   /automation force <n> first
  *                             As force, but also forces the first-of-day day-position
  *                             so the dated opening time line renders (debug poke)
@@ -270,7 +272,7 @@ class AutomationCmd extends CommandBase {
      * @param {Object} container - AutomationContainer instance
      * @param {string} rawName - Name argument after "run" or "force" (may be empty)
      * @param {boolean} [force=false] - When true, dispatch carries force:true so automations
-     *   bypass their silent-period and once-per-day guards; human-interaction cooldowns apply either way
+     *   bypass their silent-period, once-per-day and human-interaction-cooldown guards
      * @param {boolean} [forceFirst=false] - When true, dispatch carries forceFirst:true so
      *   automations force the first-of-day day-position (dated opening time line)
      */
@@ -299,10 +301,10 @@ class AutomationCmd extends CommandBase {
 
     /**
      * Force-run an automation: identical to run except the dispatch carries force:true,
-     * which lets automations skip both checking and writing of their silent-period suppression
-     * and per-rule once-per-day markers (a forced/delegated run consumes no daily budget).
-     * Human-interaction cooldowns are intentionally NOT bypassed so a manual poke never
-     * fights a device someone just physically touched. An optional trailing "first"
+     * which lets automations go past the obvious gates -- skipping both checking and writing
+     * of their silent-period suppression and per-rule once-per-day markers (a forced/delegated
+     * run consumes no daily budget) as well as per-device human-interaction cooldowns, since
+     * an explicit operator poke wins over a recent touch. An optional trailing "first"
      * token (e.g. "force <name> first") additionally carries forceFirst:true so the
      * automation forces its first-of-day day-position -- a debug poke for the dated
      * opening time line.

@@ -247,6 +247,10 @@ export default class AutomationBase {
             }
         }
 
+        // Defensive re-entry guard: never leak a previous handle -- two live intervals for one
+        // automation would overlap its ticks forever (stopTimer() is the normal path).
+        if (this._timer != null) clearInterval(this._timer)
+
         this._timer = setInterval(_tick, intervalMs)
         LoggerService.info(
             `${this.name} timer started with interval ${temporal.millisecondsToHumanReadable(intervalMs)}`,
@@ -450,9 +454,17 @@ export default class AutomationBase {
      * This prevents silently failing open when Redis is down.
      *
      * @param {object} device - Device instance with getName() method
+     * @param {{bypassCooldown?: boolean}} [options] - When bypassCooldown is true (forced manual
+     *   runs), the check short-circuits to "not in cooldown" so an explicit operator poke wins
+     *   over a recent touch; natural and delegated runs always perform the full check
      * @returns {Promise<boolean>} true if the device should be skipped due to recent human interaction
      */
-    async checkAndLogHumanInteraction(device) {
+    async checkAndLogHumanInteraction(device, { bypassCooldown = false } = {}) {
+        if (bypassCooldown) {
+            this.log(`Human-interaction cooldown bypassed for ${device.getName()} (forced run)`, 'debug')
+            return false
+        }
+
         const slug = slugify(device.getName())
 
         try {

@@ -251,6 +251,18 @@ class SAutomationContainer {
         return [...this.getAll().keys()].sort()
     }
 
+    /**
+     * Register an externally constructed automation under a name. Test seam mirroring what
+     * #instantiateAutomations() does for discovered classes: lets unit tests drive the real
+     * callAutomation()/cleanupAutomations() paths without MQTT, YAML fixtures or autoloading.
+     * Production startup never calls this.
+     * @param {string} name - Registry key (the automation's display name)
+     * @param {Object} instance - AutomationBase subclass instance
+     */
+    registerInstance(name, instance) {
+        this.#automations.set(name, { instance })
+    }
+
     // -- Lifecycle helpers ------------------------------------------------
 
     /**

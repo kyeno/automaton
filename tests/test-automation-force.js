@@ -7,8 +7,8 @@
  *   - natural runs are still suppressed inside the silence window (baseline),
  *   - force:true bypasses the silent period AND an already-consumed once-per-day marker,
  *     without writing or refreshing any marker (a forced/delegated run never consumes a slot),
- *   - human-interaction cooldowns are intentionally NOT bypassed by force -- even a forced
- *     run defers to a device someone just touched.
+ *   - human-interaction cooldowns ARE bypassed by force -- a forced run dispatches even when
+ *     someone just touched the device, while natural runs still defer to them.
  * No MQTT broker or live Redis required; the clock is stubbed like test-silence-between.js.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -217,9 +217,9 @@ try {
         restore()
     }
 
-    // -- S5: human-interaction cooldowns are NOT bypassed by force --------------------
+    // -- S5: forced runs bypass the human-interaction cooldown -------------------------
 
-    console.log('\n\u2500\u2500 Human-interaction cooldown (kept under force) \u2500\u2500\n')
+    console.log('\n\u2500\u2500 Human-interaction cooldown (bypassed under force) \u2500\u2500\n')
 
     {
         redisMock.onceStore.clear()   // isolate the cooldown guard from the once-marker
@@ -231,7 +231,7 @@ try {
         assert(auto.device.received.length === receivedBefore, 'baseline: natural run defers to recent human interaction')
 
         await auto.execute({ trigger: 'manual', force: true })
-        assert(auto.device.received.length === receivedBefore, 'force still respects an active human-interaction cooldown')
+        assert(auto.device.received.length === receivedBefore + 1, 'forced run dispatches despite an active human-interaction cooldown')
         restore()
 
         redisMock.cooldownRemainingMs = null

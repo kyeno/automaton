@@ -378,6 +378,7 @@ timer_interval: "3m 45s"   # tokens combine: every 3 minutes 45 seconds
 
 - Omitting the key disables the timer entirely -- the automation becomes event-driven only. Legacy numeric `timer_interval_ms` remains supported; when both keys are present, `timer_interval` wins.
 - Invalid values log a warning and disable the timer (fail-open). Values above ~24.8 days (the 32-bit `setInterval` limit) are rejected.
+- Manual `/automation run <n>` / `/automation force <n>` pokes perform a single one-shot evaluation and never touch this schedule -- no tick is started, skipped or re-anchored by them.
 
 ### React-On-Change Gate (`trigger_on_change_only`)
 

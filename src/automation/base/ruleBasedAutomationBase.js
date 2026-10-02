@@ -341,8 +341,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @param {Object} [triggerData] - Info about what triggered this run
      * @param {string} [triggerData.trigger] - Trigger source identifier
      * @param {boolean} [triggerData.force] - When true (e.g., "/automation force" or an `invoke_automation` action), bypasses both checks and writes of
-     *   silent-period suppression and per-rule once-per-day markers (both checking and writing them); human-interaction cooldowns still
-     *   apply, and the top-level video_player_suppression stand-down guard is never bypassed
+     *   silent-period suppression and per-rule once-per-day markers (both checking and writing them) as well as per-device
+     *   human-interaction cooldowns; the top-level video_player_suppression stand-down guard is never bypassed
      */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
@@ -499,7 +499,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         if (devices.size === 0) {
             this.log('No target devices declared or resolvable -- only non-device actions applied', 'debug')
         } else {
-            const outcome = await this.#dispatchDeviceCommands(devices, matchingRules)
+            const outcome = await this.#dispatchDeviceCommands(devices, matchingRules, forced)
             dispatchedCount = outcome.dispatchedCount
             humanSkippedCount = outcome.humanSkippedCount
         }
@@ -575,9 +575,11 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @private
      * @param {Map<string, DeviceBase>} devices - Resolved target key -> mechanism map
      * @param {{}[]} matchingRules - Rules whose conditions matched
+     * @param {boolean} [bypassHumanCooldown=false] - When true (forced runs), per-device
+     *   human-interaction cooldowns are skipped so an explicit operator poke wins over a recent touch
      * @returns {Promise<{dispatchedCount: number, humanSkippedCount: number}>} Outcome counters
      */
-    async #dispatchDeviceCommands(devices, matchingRules) {
+    async #dispatchDeviceCommands(devices, matchingRules, bypassHumanCooldown = false) {
         const tasks = []
         let dispatchedCount = 0   // devices that actually received a command
         let humanSkippedCount = 0 // devices deferred to recent human interaction
@@ -589,8 +591,10 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
             tasks.push(async () => {
                 // Skip recently touched devices (Redis-only check), unless this
-                // automation overrides the human-interaction cooldown (e.g., home theater mode).
-                if (!this.getOverrideHumanInteraction() && await this.checkAndLogHumanInteraction(dev)) {
+                // automation overrides the human-interaction cooldown (e.g., home theater mode)
+                // or the run is forced (an explicit operator poke wins over a recent touch).
+                if (!this.getOverrideHumanInteraction()
+                    && await this.checkAndLogHumanInteraction(dev, { bypassCooldown: bypassHumanCooldown })) {
                     humanSkippedCount++
                     return
                 }
