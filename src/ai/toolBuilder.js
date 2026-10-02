@@ -2,8 +2,8 @@
  * AI Tool Builder & Executor.
  *
  * Provides a minimal, static set of generic tools to ensure 100% Prompt Cache
- * matching across LLM requests. Exposes two function schemas
- * (`set_device_state`, `get_device_state`) and resolves device names back to
+ * matching across LLM requests. Exposes three function schemas
+ * (`set_device_state`, `get_device_state`, `get_time`) and resolves device names back to
  * live DeviceContainer instances at call time.
  *
  * Also handles all tool execution logic: resolving devices, dispatching
@@ -26,6 +26,7 @@ import EventBus from '../service/eventBus.js'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { round } from '../lib/math.js'
+import temporal from '../lib/date.js'
 import { normalizeChannelRef, positionalNameFor, resolveChannelAlias, POSITIONAL_NAMES } from '../lib/channelAliases.js'
 import DeviceCommandSource from '../enum/deviceCommandSource.js'
 
@@ -116,6 +117,8 @@ class SToolBuilder {
             'Check the current state of any device (sensor, remote, or executive device). Returns sensors, batteries, or current binary state.')
         const getDeviceNameDesc = I18nLoader.t('tools.get_device_state.parameters.device_name',
             'Exact friendly name of the device to check.')
+        const getTimeDesc = I18nLoader.t('tools.get_time.description',
+            'Get the current date and time of day (period such as morning/evening, weekday, clock time, hour and minutes). Use it for any question about the time -- never guess.')
 
         this.#tools = [
             {
@@ -173,6 +176,17 @@ class SToolBuilder {
                         required: ['device_name']
                     }
                 }
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'get_time',
+                    description: getTimeDesc,
+                    parameters: {
+                        type: 'object',
+                        properties: {}
+                    }
+                }
             }
         ]
 
@@ -181,7 +195,7 @@ class SToolBuilder {
 
     /**
      * Return the number of cached tool definitions.
-     * Always 2 in the generic version (`set_device_state`, `get_device_state`).
+     * Always 3 in the generic version (`set_device_state`, `get_device_state`, `get_time`).
      * @returns {number}
      */
     getToolCount() {
@@ -237,23 +251,36 @@ class SToolBuilder {
             })
         }
 
+        // Time queries need no device -- answer directly from lib/date before any lookup.
+        if (funcName === 'get_time') {
+            return this.#executeGetTime()
+        }
+
         const action = args.action != null ? String(args.action).toUpperCase() : null
 
         // Resolve device via args.device_name
         const device = this.resolveDevice(args)
 
         if (!device) {
+            // Distinguish a configured device that has dropped off the Zigbee network
+            // ("offline") from a name we have never seen ("unknown") so the model can tell
+            // the user "that light is offline" rather than guessing at a similar-sounding one.
+            const status = this.#classifyMissingDevice(args.device_name)
             // Surface the failed attempt in chat as well -- otherwise a small model's slightly-off
             // name vanishes from the UI and only shows up in logs.
             EventBus.emit('ai:deviceInteraction', {
                 device: args.device_name || 'unknown',
                 action,
                 tool: funcName,
-                ok: false
+                ok: false,
+                status
             })
             return JSON.stringify({
-                error: `Device "${args.device_name || 'unknown'}" not found in current registry.`,
-                device: args.device_name || undefined
+                error: status === 'offline'
+                    ? `Device "${args.device_name}" is known but currently offline (not on the Zigbee network). It will reappear automatically once it reconnects.`
+                    : `Device "${args.device_name || 'unknown'}" not found in current registry.`,
+                device: args.device_name || undefined,
+                status
             })
         }
 
@@ -276,6 +303,26 @@ class SToolBuilder {
             toolLabel: funcName,
             readState,
             rawArgs: args
+        })
+    }
+
+    /**
+     * Execute the get_time tool: returns the current time of day from lib/date
+     * (morning/noon/afternoon/evening/night) plus the localized weekday string,
+     * the locale-formatted clock time, and the raw hour/minutes so small models can
+     * answer "what time is it" without doing any date math themselves.
+     * @returns {string} JSON-stringified result for the model.
+     * @private
+     */
+    #executeGetTime() {
+        const now = new Date()
+        LoggerService.info(`AI tool call: get_time({}) -> ${now.toISOString()}`, 'AiAssistant')
+        return JSON.stringify({
+            time_of_day: temporal.getCurrentTimePeriod(now),
+            day: temporal.getLocalDayString(now),
+            clock: temporal.formatClockTime(now),
+            hour: now.getHours(),
+            minute: now.getMinutes()
         })
     }
 
@@ -442,17 +489,24 @@ class SToolBuilder {
         const device = this.resolveDevice({ device_name: intent.device })
 
         if (!device) {
+            // Distinguish a configured-but-offline device ("offline") from an unknown name so
+            // the model reports "that light is offline" instead of guessing at a similar one.
+            const status = this.#classifyMissingDevice(intent.device)
             // Surface the failed attempt in chat as well -- otherwise a small model's slightly-off
             // name vanishes from the UI and only shows up in logs.
             EventBus.emit('ai:deviceInteraction', {
                 device: intent.device || 'unknown',
                 action,
                 tool: 'json_intent',
-                ok: false
+                ok: false,
+                status
             })
             return JSON.stringify({
-                error: `Device "${intent.device}" not found in current registry.`,
-                device: intent.device || undefined
+                error: status === 'offline'
+                    ? `Device "${intent.device}" is known but currently offline (not on the Zigbee network). It will reappear automatically once it reconnects.`
+                    : `Device "${intent.device}" not found in current registry.`,
+                device: intent.device || undefined,
+                status
             })
         }
 
@@ -874,20 +928,54 @@ class SToolBuilder {
     }
 
     /**
+     * Classify why a device lookup failed so callers can give the model an accurate reason.
+     *
+     * Returns 'offline' when the requested name matches a configured device (per
+     * DeviceContainer.getKnownDeviceNames()) that is simply not currently instantiated -- i.e.,
+     * it has dropped off the Zigbee network -- and 'unknown' otherwise. Comparison uses the same
+     * diacritic-stripped, underscore-normalized form as resolveDevice() so both sides agree on
+     * names such as "Salon Wlacznik Swiatlo" vs "Salon Włacznik Światło".
+     *
+     * @param {string|undefined} name - The requested device name.
+     * @returns {'offline'|'unknown'} 
+     * @private
+     */
+    #classifyMissingDevice(name) {
+        if (!name) return 'unknown'
+        const target = this.#sanitizeToolName(String(name))
+        const knownNames = DeviceContainer.getKnownDeviceNames?.() ?? []
+        return knownNames.some(known => this.#sanitizeToolName(known) === target) ? 'offline' : 'unknown'
+    }
+
+    /**
      * Normalize a human-readable device name into an ASCII-safe identifier
      * suitable for comparison with LLM-supplied argument values.
      *
-     * Strips diacritics (NFD decomposition), replaces non-alphanumeric chars
-     * and whitespace with underscores, collapses duplicates, and lowercases.
+     * Normalizes via NFKD (canonical + compatibility decomposition) so letters such as
+     * "ł", "Ś", "ó" reduce to their base ASCII form, strips any remaining combining marks,
+     * replaces non-alphanumeric chars and whitespace with underscores, collapses duplicates,
+     * and lowercases.
      *
      * @param {string} name - The original friendly device name.
      * @returns {string} Normalized identifier.
      * @private
      */
     #sanitizeToolName(name) {
-        return name
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
+        return String(name)
+            // Explicit ASCII folding for common Latin letters whose decomposition is
+            // compatibility-only or whose combining marks fall outside \u0300-\u036f -- e.g.,
+            // Polish "l-stroke" and ogonek-bearing "a"/"e". Keeps matching portable across Node
+            // builds where NFKD may not perform full compatibility decomposition.
+            .replace(/[\u0105\u0104]/g, 'a')   // a-ogonek (upper/lower) -> a
+            .replace(/[\u0107\u0106]/g, 'c')   // c-acute  (upper/lower) -> c
+            .replace(/[\u0119\u0118]/g, 'e')   // e-ogonek (upper/lower) -> e
+            .replace(/[\u0142\u0141]/g, 'l')   // l-stroke (upper/lower) -> l
+            .replace(/[\u0144\u0143]/g, 'n')   // n-acute  (upper/lower) -> n
+            .replace(/[\u00F3\u00D3]/g, 'o')   // o-acute  (upper/lower) -> o
+            .replace(/[\u015B\u015A]/g, 's')   // s-acute  (upper/lower) -> s
+            .replace(/[\u017A\u0179\u017C\u017B]/g, 'z') // z-acute / z-dotabove (upper/lower) -> z
+            .normalize('NFKD')
+            .replace(/\p{M}/gu, '')            // strip any remaining combining marks (broad)
             .replace(/[^a-zA-Z0-9]\s*/g, '_')
             .replace(/_+/g, '_')
             .replace(/^_|_$/g, '')

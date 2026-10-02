@@ -51,6 +51,9 @@ tools:
     parameters:
       device_name: "Device name to check."
 
+  get_time:
+    description: "Get the current date and time of day (period such as morning/evening, weekday, clock time, hour and minutes). Use it for any question about the time -- never guess."
+
 # Number formatting rules for this locale
 formatting:
   decimal_separator: "."

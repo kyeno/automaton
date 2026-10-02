@@ -50,6 +50,9 @@ tools:
     parameters:
       device_name: "Nazwa urządzenia do sprawdzenia."
 
+  get_time:
+    description: "Pobierz aktualną datę i godzinę (okres doby np. poranek/wieczór, dzień tygodnia, czas zegarowy, godzina i minuty). Używaj przy każdym pytaniu o czas -- nigdy nie zgaduj."
+
 # Number formatting rules for this locale
 formatting:
   decimal_separator: ","
