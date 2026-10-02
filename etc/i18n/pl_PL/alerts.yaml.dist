@@ -1,0 +1,7 @@
+# Alert Sentences -- Polish Locale (distribution template)
+# ---------------------------------------------------------
+# Spoken warnings for notable system events (see src/monitor/deviceOfflineMonitor.js).
+# The {device} placeholder is replaced with the removed device's friendly name.
+
+# A configured Zigbee device left the network
+device_offline: "Uwaga, urządzenie {device} zeszło z sieci Zigbee."

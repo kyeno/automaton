@@ -433,6 +433,24 @@ class SDeviceContainer {
         return Object.keys(this.getAll({ includeBridge }))
     }
 
+    /**
+     * Get every "known" device friendly name declared in etc/device/zigbee.yaml,
+     * regardless of whether it is currently instantiated.
+     *
+     * This is the source-of-truth set for distinguishing a device that has simply
+     * dropped off the Zigbee network (configured but not present -> offline) from a
+     * name we have never seen at all (unknown). Callers such as the AI tool layer use
+     * this to report "that light is offline" instead of a bare "not found".
+     *
+     * Note: reflects only names declared in config; a dynamically-paired device that was
+     * never added to zigbee.yaml is not considered "known" here.
+     *
+     * @returns {string[]} Array of configured device friendly names.
+     */
+    getKnownDeviceNames() {
+        return Object.keys(this.#deviceTypeMap)
+    }
+
     // -- Dynamic device management ------------------------------------
 
     /**
@@ -494,6 +512,10 @@ class SDeviceContainer {
 
         delete this.#devices[friendlyName]
         LoggerService.info(`Removed device: ${friendlyName}`, 'DeviceContainer')
+
+        // Notify listeners so monitors/UI can react to the departure (e.g., spoken
+        // offline warnings) -- mirrors the devices:ready event fired on dynamic adds.
+        EventBus.emit('devices:removed', friendlyName)
         return true
     }
 
