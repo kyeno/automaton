@@ -20,6 +20,7 @@ import ConfigService from '../service/configService.js'
 import CacheService  from '../service/cacheService.js'
 import LoggerService from '../service/loggerService.js'
 import EventBus      from '../service/eventBus.js'
+import StateService  from '../service/stateService.js'
 import DeviceContainer from '../device/container/deviceContainer.js'
 import OpenAiProvider from './providers/openaiProvider.js'
 import ToolBuilder    from './toolBuilder.js'
@@ -87,6 +88,12 @@ class SAiAssistant {
      * @type {Promise<unknown>}
      */
     #queue = Promise.resolve()
+
+    /** Number of turns currently holding the FIFO lock; drives the ai.busy shared state. */
+    #busyCount = 0
+
+    /** Epoch ms when the current busy streak began (null while idle); kept on deactivation so observers can report elapsed time. */
+    #busySince = null
 
     // -- Singleton --------------------------------------------------------
 
@@ -218,7 +225,10 @@ class SAiAssistant {
       * Turns are serialized through an internal FIFO chain: concurrent callers
       * (interactive chat vs periodic automation ticks) each receive their own promise,
       * but the shared conversation is only ever driven one turn at a time -- in request
-      * order. A failing turn still releases the queue for the next caller.
+      * order. A failing turn still releases the queue for the next caller. While any turn
+      * holds the FIFO lock the shared state key `ai.busy` carries `{ active, since }`
+      * (via StateService) so UI components drive their "AI thinking..." indicators from
+      * that state instead of inline print logic.
       *
       * System-origin turns ({@link ChatMessageOrigin.SYSTEM}) are isolated from the shared
       * history either way they run: by default they execute standalone against a fresh
@@ -240,10 +250,35 @@ class SAiAssistant {
             return Promise.resolve('[AI is currently unavailable - check provider configuration.]')
         }
 
-        const run = () => this.#runTurnIsolated(userInput, options)
+        const run = () => {
+            this.#setAiBusy(true)
+            return this.#runTurnIsolated(userInput, options).finally(() => this.#setAiBusy(false))
+        }
         const next = this.#queue.then(run, run)
         this.#queue = next.catch(() => {})   // keep the internal chain alive regardless of outcome
         return next
+    }
+
+    /**
+     * Update the shared `ai.busy` state while turns hold the FIFO lock. A counter keeps
+     * the streak active across back-to-back serialized turns; `since` records when the
+     * current streak began and is preserved on deactivation so observers (e.g., AiWindow)
+     * can report how long inference took.
+     * @param {boolean} active - true when a turn starts holding the lock, false when it releases it
+     * @private
+     */
+    #setAiBusy(active) {
+        if (active) {
+            if (this.#busyCount === 0) this.#busySince = Date.now()
+            this.#busyCount += 1
+            StateService.set('ai.busy', { active: true, since: this.#busySince })
+        } else {
+            this.#busyCount = Math.max(0, this.#busyCount - 1)
+            if (this.#busyCount === 0) {
+                StateService.set('ai.busy', { active: false, since: this.#busySince })
+                this.#busySince = null
+            }
+        }
     }
 
     /**

@@ -17,6 +17,7 @@
 
 import ConfigService from '../../service/configService.js'
 import EventBus from '../../service/eventBus.js'
+import StateService from '../../service/stateService.js'
 import AiAssistant from '../../ai/aiAssistant.js'
 import I18nLoader from '../../service/i18nLoader.js'
 import { tsPrefix } from '../../lib/terminal.js'
@@ -37,6 +38,7 @@ class AiWindow extends BaseWindow {
     #interactionUnsub = null
     #systemMessageUnsub = null
     #periodicResponseUnsub = null
+    #busyUnsub = null
     #channelShortcut
     #channelName
 
@@ -56,6 +58,7 @@ class AiWindow extends BaseWindow {
         this.#subscribeToInteractions()
         this.#subscribeToSystemMessages()
         this.#subscribeToPeriodicResponses()
+        this.#subscribeToBusyState()
     }
 
     // -- Public API -------------------------------------------------------
@@ -91,9 +94,8 @@ class AiWindow extends BaseWindow {
         this.printMessage(trimmed, userPrefix)
 
         try {
-            // Show typing indicator before waiting for response
-            this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* AI is thinking...${AnsiColors.reset}`)
-
+            // The "* AI is thinking..." indicator is driven by the shared ai.busy state
+            // (set while processMessage holds its FIFO lock) -- see #subscribeToBusyState().
             const response = await AiAssistant.processMessage(trimmed)
 
             // Emit activity for the status bar (AI response arrived)
@@ -122,6 +124,10 @@ class AiWindow extends BaseWindow {
         if (this.#periodicResponseUnsub) {
             this.#periodicResponseUnsub()
             this.#periodicResponseUnsub = null
+        }
+        if (this.#busyUnsub) {
+            this.#busyUnsub()
+            this.#busyUnsub = null
         }
         this.hide()
         this.clear()
@@ -178,6 +184,32 @@ class AiWindow extends BaseWindow {
             const aiPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `
             this.printMessage(text, aiPrefix)
             EventBus.emit('window:activity', this.#channelShortcut)
+        })
+    }
+
+    /**
+     * Subscribe to the shared `ai.busy` state and render the thinking indicator from it
+     * instead of inline print logic in submitMessage(). While a turn holds the AI FIFO
+     * lock the window shows "* AI is thinking..."; when the streak ends it appends an
+     * IRC /me-style follow-up with how long inference took ("* AI thought for N seconds").
+     * Works for any caller (UI submits, weatherman ticks, MQTT bridge prompts) because
+     * the state lives in AiAssistant, not in this window.
+     * @private
+     */
+    #subscribeToBusyState() {
+        this.#busyUnsub = StateService.on('ai.busy', (state) => {
+            if (!state || typeof state !== 'object') return
+
+            if (state.active) {
+                this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* AI is thinking...${AnsiColors.reset}`)
+                return
+            }
+
+            // Turn finished -- report elapsed time only when we actually showed the indicator.
+            if (typeof state.since === 'number' && Number.isFinite(state.since)) {
+                const seconds = Math.max(1, Math.round((Date.now() - state.since) / 1000))
+                this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.dim}* AI thought for ${seconds} second${seconds === 1 ? '' : 's'}${AnsiColors.reset}`)
+            }
         })
     }
 
