@@ -55,7 +55,7 @@ rules:
   - name: 'Office: player reachable - close rollers'
     conditions:
       presence: { my-pc: true }
-      video-player: { my-pc: [playing, paused, stopped] }
+      video_player: { my-pc: [playing, paused, stopped] }
     targets:
       Living_Room_Roller_Left: CLOSE
 
@@ -66,7 +66,7 @@ rules:
   # host, so no separate `presence` gate is needed.
   - name: 'Office: player gone - hand back to the room owners'
     conditions:
-      video-player: { my-pc: [offline] }
+      video_player: { my-pc: [offline] }
     invoke_automation:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
@@ -81,8 +81,8 @@ rules:
   # Tuya/AVATTO converter drops combined payloads).
   - name: 'Office: paused/stopped - restore ambient lighting'
     conditions:
-      video-player: { my-pc: [paused, stopped] }
-      time-of-day: [afternoon, evening, night]
+      video_player: { my-pc: [paused, stopped] }
+      time_of_day: [afternoon, evening, night]
       illuminance: { lt: 900 }
     targets:
       Living_Room_Plug: ON
@@ -92,7 +92,7 @@ rules:
   - name: 'Office: playing - dark mode (lights off)'
     conditions:
       presence: { my-pc: true }
-      video-player: { my-pc: [playing] }
+      video_player: { my-pc: [playing] }
     targets:
       Living_Room_Plug: OFF
       Kitchen_Plug: OFF

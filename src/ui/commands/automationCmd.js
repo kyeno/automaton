@@ -79,7 +79,7 @@ class AutomationCmd extends CommandBase {
      * string when there are no conditions at all.
      *
      * @param {Object|null|undefined} conditions - Conditions object from a YAML rule
-     * @returns {string} Compact summary, e.g. "time-of-day=morning | illuminance>=400"
+     * @returns {string} Compact summary, e.g. "time_of_day=morning | illuminance>=400"
      */
     static formatConditionSummary(conditions) {
         if (!conditions || typeof conditions !== 'object') return ''

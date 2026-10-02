@@ -92,8 +92,8 @@ function createHarness(container) {
 const ambientConfig = {
     silence_between: '2300-0600',
     rules: [
-        { name: 'Dawn cleanup', conditions: { 'time-of-day': 'morning', illuminance: { gte: 400 } }, once: true },
-        { name: 'Dusk ambience', conditions: { 'time-of-day': ['evening', 'night'] } },
+        { name: 'Dawn cleanup', conditions: { 'time_of_day': 'morning', illuminance: { gte: 400 } }, once: true },
+        { name: 'Dusk ambience', conditions: { 'time_of_day': ['evening', 'night'] } },
     ],
 }
 const ambient = new FakeRuleBasedAutomation('AmbientLightsAutomation', ambientConfig)
@@ -208,8 +208,8 @@ console.log('\n\u2500\u2500 Debug view \u2500\u2500\n')
         '\u2502   \u251c\u2500 triggers: --',
         '\u2502   \u251c\u2500 silence: 2300-0600',
         '\u2502   \u251c\u2500 rules: 2',
-        '\u2502   \u251c\u2500 rule 1: "Dawn cleanup" -- time-of-day=morning | illuminance>=400 [once/day]',
-        '\u2502   \u2514\u2500 rule 2: "Dusk ambience" -- time-of-day=[evening|night]',
+        '\u2502   \u251c\u2500 rule 1: "Dawn cleanup" -- time_of_day=morning | illuminance>=400 [once/day]',
+        '\u2502   \u2514\u2500 rule 2: "Dusk ambience" -- time_of_day=[evening|night]',
     ].join('\n')
     assertEqual(h.printed[0], expected, 'debug renders base props plus silence and per-rule detail')
 }
@@ -353,8 +353,8 @@ assertEqual(AutomationCmd.formatConditionSummary(undefined), '', 'undefined cond
 assertEqual(AutomationCmd.formatConditionSummary({ illuminance: { gte: 400 } }), 'illuminance>=400', 'gte bound renders as >=')
 assertEqual(AutomationCmd.formatConditionSummary({ temperature: { lt: 5, lte: 9 } }), 'temperature<5 | temperature<=9', 'multiple bounds join with pipe separator')
 assertEqual(
-    AutomationCmd.formatConditionSummary({ 'time-of-day': ['morning', 'evening'], season: 'winter' }),
-    'time-of-day=[morning|evening] | season=winter',
+    AutomationCmd.formatConditionSummary({ 'time_of_day': ['morning', 'evening'], season: 'winter' }),
+    'time_of_day=[morning|evening] | season=winter',
     'arrays and scalars mix in one summary'
 )
 assertEqual(AutomationCmd.formatConditionSummary({ presence: { kyeno: true } }), 'presence={"kyeno":true}', 'non-range objects fall back to JSON')

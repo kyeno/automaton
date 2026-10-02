@@ -254,7 +254,7 @@ console.log('')
     const bothRules = [
         {
             name: 'afternoon past 16h',
-            conditions: { 'time-of-day': ['afternoon'], hour: { gt: 16 }, illuminance: { lte: 15 } },
+            conditions: { 'time_of_day': ['afternoon'], hour: { gt: 16 }, illuminance: { lte: 15 } },
             targets: { Roller_Left: 'CLOSE' }
         }
     ]

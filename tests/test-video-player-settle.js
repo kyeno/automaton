@@ -284,7 +284,7 @@ console.log('\n── End-to-end: dark-mode + suppression gate on settle ──\
     {   // Dark-mode rule requires playing -> INACTIVE before settle.
         const d = devMap()
         const auto = new TestLights(d, { timeOfDay: 'night' })
-        auto.config = { rules: [{ name: 'Dark mode', conditions: { 'video-player': { [host]: ['playing'] } }, targets: { Light_Dim: 'ON' } }] }
+        auto.config = { rules: [{ name: 'Dark mode', conditions: { 'video_player': { [host]: ['playing'] } }, targets: { Light_Dim: 'ON' } }] }
         await auto.execute({ trigger: 'test' })
         expectCalls(d, 'Light_Dim', [], 'dark-mode INACTIVE before settle')
     }
@@ -303,7 +303,7 @@ console.log('\n── End-to-end: dark-mode + suppression gate on settle ──\
     {   // Dark-mode rule now matches -> ACTIVE after settle.
         const d = devMap()
         const auto = new TestLights(d, { timeOfDay: 'night' })
-        auto.config = { rules: [{ name: 'Dark mode', conditions: { 'video-player': { [host]: ['playing'] } }, targets: { Light_Dim: 'ON' } }] }
+        auto.config = { rules: [{ name: 'Dark mode', conditions: { 'video_player': { [host]: ['playing'] } }, targets: { Light_Dim: 'ON' } }] }
         await auto.execute({ trigger: 'test' })
         expectCalls(d, 'Light_Dim', ['ON'], 'dark-mode ACTIVE after settle')
     }

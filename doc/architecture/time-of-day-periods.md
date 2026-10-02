@@ -1,6 +1,6 @@
 # Time-of-Day Periods
 
-The rule engine's `time-of-day:` condition matches against five **fixed clock-based** day periods defined once in [`src/lib/date.js`](../../src/lib/date.js) (`DAY_PERIODS`). This page is the single source of truth for what those boundaries are, why they changed from sun-derived ones, how rules interact with them, and where production configs still carry assumptions from the old scheme.
+The rule engine's `time_of_day:` condition matches against five **fixed clock-based** day periods defined once in [`src/lib/date.js`](../../src/lib/date.js) (`DAY_PERIODS`). This page is the single source of truth for what those boundaries are, why they changed from sun-derived ones, how rules interact with them, and where production configs still carry assumptions from the old scheme.
 
 ## Current Partition
 
@@ -29,7 +29,7 @@ That made rule behavior hard to reason about ("why did this fire at 7am in June 
 ## How Rules Use Periods
 
 - **Matching.** [`conditionsMatch()`](../../src/automation/base/ruleBasedAutomationBase.js) checks membership of the current period name in the rule's scalar or array value. Absent condition = always passes; a present one that doesn't include the live period rejects the whole rule before any other condition is considered.
-- **`once:` scoping.** A per-rule daily marker (`once: true`) is scoped per time window when the rule carries a `time-of-day:` condition — see [Configuration Guide → once](../configuration.md). In practice: a morning-only cleanup rule re-arms automatically after its window ends, while an all-day rule fires at most once until midnight.
+- **`once:` scoping.** A per-rule daily marker (`once: true`) is scoped per time window when the rule carries a `time_of_day:` condition — see [Configuration Guide → once](../configuration.md). In practice: a morning-only cleanup rule re-arms automatically after its window ends, while an all-day rule fires at most once until midnight.
 - **Priority & overlap.** When several rules match simultaneously, higher `priority` wins (ties keep config order); the losing rules' targets are still merged under most-closed-wins semantics where applicable. `/automation debug <name>` shows each rule's condition summary so overlaps stay visible.
 
 ## History: What Changed in c1e8c6f
@@ -65,7 +65,7 @@ Running the static sweep (`/automation coverage <name> legacy`) against the ship
 
 ## Rule Design Guidance
 
-When writing or reviewing a `time-of-day:` condition:
+When writing or reviewing a `time_of_day:` condition:
 
 1. **Check the table above first.** The period name is a clock label, not a sun phase. If you need "when it gets dark", pair the period with an illuminance bound instead of hoping for seasonal drift.
 2. **List every period you mean.** A rule that should cover dusk-to-midnight needs `[evening, night]`; omitting one silently drops half the day.
@@ -82,5 +82,5 @@ When writing or reviewing a `time-of-day:` condition:
 | Static gap/overlap analyzer (pure module) | [`src/lib/ruleCoverage.js`](../../src/lib/ruleCoverage.js) |
 | In-app command surface: `/automation coverage <name> [legacy]` | [`src/ui/commands/automationCmd.js`](../../src/ui/commands/automationCmd.js) |
 | Analyzer tests (partition, legacy maps, evaluation, grid, report rendering) | [`tests/test-rule-coverage.js`](../../tests/test-rule-coverage.js) |
-| Config reference for `time-of-day:` / `once:` scoping | [Configuration Guide](../configuration.md) |
+| Config reference for `time_of_day:` / `once:` scoping | [Configuration Guide](../configuration.md) |
 | Command quick-reference entry | [UI Commands Reference](../ui/commands/index.md) |

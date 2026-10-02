@@ -13,7 +13,7 @@
  *     - clock candidates accept bare numbers, {hour:N}, and day-period names ('morning', ...).
  *     - buildContext() exposes real numeric sundawn/sundusk instants computed from configured geo.
  *   static analyzer -- ruleCoverage.collectSensorKeys()/evaluateRule() treat the gates as reserved
- *     (never sensor dimensions) and satisfied, mirroring state-changed-ago-minutes handling.
+ *     (never sensor dimensions) and satisfied, mirroring state_changed_ago_minutes handling.
  *
  * Redis/MQTT are not required -- unavailable services fail open by design.
  *
@@ -136,10 +136,10 @@ console.log('')
 console.log('-- clock candidates accept number / {hour:N} / day-period forms --')
 console.log('')
 assert(await match({ after_latest_of: [19] }, {}, H(20)) === true, 'bare-number hour resolves (past 19h at 20h)')
-assert(await match({ after_earliest_of: [{ 'time-of-day': 'evening' }] }, {}, H(17)) === false,
-    "{'time-of-day':'evening'} = 18h; not passed at 17h")
-assert(await match({ after_earliest_of: [{ 'time-of-day': 'evening' }] }, {}, H(18)) === true,
-    "{'time-of-day':'evening'} = 18h; passed exactly at 18h")
+assert(await match({ after_earliest_of: [{ 'time_of_day': 'evening' }] }, {}, H(17)) === false,
+    "{'time_of_day':'evening'} = 18h; not passed at 17h")
+assert(await match({ after_earliest_of: [{ 'time_of_day': 'evening' }] }, {}, H(18)) === true,
+    "{'time_of_day':'evening'} = 18h; passed exactly at 18h")
 
 console.log('')
 console.log('-- context carries real sun instants from configured geo --')

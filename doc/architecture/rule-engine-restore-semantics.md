@@ -40,7 +40,7 @@ Before dispatching, the engine compares the commanded state against the device's
 
 ## The `offline` Status
 
-Monitor-backed conditions (`video-player`, and any future monitor) enumerate every "no usable signal" case into one **`offline`** status rather than a wildcard:
+Monitor-backed conditions (`video_player`, and any future monitor) enumerate every "no usable signal" case into one **`offline`** status rather than a wildcard:
 
 - Host offline, host not yet polled, and player not answering all arrive as `offline` -- and, for the top-level `video_player_suppression` stand-down guard, suppress only when `offline` is listed among the suppression statuses.
 - Each rule decides whether an offline player is safe to act on: ambient-restore rules list it (`[paused, stopped, offline]`), playback rules stay inert (no dark-mode action fires on a guess).
@@ -63,5 +63,5 @@ The [Home Theater Mode](../automations/home-theater-mode.md) automation demonstr
 |----------|----------|
 | [Home Theater Mode](../automations/home-theater-mode.md) | Flagship consumer of snapshots, ownership, and `force_restore` |
 | [Video Player Monitor](../monitors/video-player.md) | Source of the `offline` status the conditions govern |
-| [Configuration Guide](../configuration.md) | Rule syntax: `restore_state_aware`, `force_restore`, `video-player` condition |
+| [Configuration Guide](../configuration.md) | Rule syntax: `restore_state_aware`, `force_restore`, `video_player` condition |
 | [Automation vs Human Differentiation](./automation-human-differentiation.md) | The cooldown/override system these rules dispatch through |

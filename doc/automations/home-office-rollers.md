@@ -15,7 +15,7 @@ Because many rules can be true at once ("warm & not bright → open" while someo
 
 | Intent | Example condition set | Resulting merge |
 |--------|-----------------------|-----------------|
-| Keep shutters up when warm but dim | `time-of-day: [morning..evening]`, `illuminance < 11000`, `temperature < 25` | `OPEN` unless another matched rule is more closed |
+| Keep shutters up when warm but dim | `time_of_day: [morning..evening]`, `illuminance < 11000`, `temperature < 25` | `OPEN` unless another matched rule is more closed |
 | Park at a preset while someone is home | `presence: my-laptop`, `illuminance <= 11000` | e.g. left shutter `40`, right shutter `12` — overridden if a `CLOSE` rule also matches |
 | Hard close at night / extreme heat | `illuminance <= 15`, or `temperature >= 29` in afternoon/noon | `CLOSE` wins for that target |
 
@@ -44,7 +44,7 @@ video_player_suppression:      # Optional stand-down guard (see note below)
 rules:
   - name: 'Day: laptop present, not too bright'
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       illuminance: { lte: 11000 }
       presence: my-laptop
     targets:                  # Per-target actions for this rule (key = registered device name, spaces -> _)

@@ -11,7 +11,7 @@
  *      documented spot values and keep all 24 hours covered for every month; changedHours()
  *      reports exactly the shifted hours
  *   C) evaluateRule()/matchesNumericRange()/normalizers -- boundary semantics mirror the base
- *      class: null never satisfies bounds, presence string/array/object forms, video-player
+ *      class: null never satisfies bounds, presence string/array/object forms, video_player
  *      unknown opt-in, season pass-through, extra keys ignored
  *   D) buildScenarios() -- sample points straddle every declared bound, presence subsets are
  *      enumerated fully, grid truncation cap is honored and flagged
@@ -117,11 +117,11 @@ console.log('\n\u2500\u2500 C. condition evaluation \u2500\u2500\n')
     assertEqual(cov.matchesNumericRange(900, { lt: 900 }), false, 'lt is exclusive at the bound')
     assertEqual(cov.matchesNumericRange(10, {}), true, 'empty constraint object matches anything non-null')
 
-    // time-of-day membership with scalar and array forms.
+    // time_of_day membership with scalar and array forms.
     const ctx = { timeOfDay: 'evening', presence: {}, videoPlayer: {} }
-    assertTrue(cov.evaluateRule({ 'time-of-day': 'evening' }, ctx), 'scalar period matches itself')
-    assertTrue(cov.evaluateRule({ 'time-of-day': ['night', 'evening'] }, ctx), 'array form includes current period')
-    assertEqual(cov.evaluateRule({ 'time-of-day': 'morning' }, ctx), false, 'non-matching period rejects')
+    assertTrue(cov.evaluateRule({ 'time_of_day': 'evening' }, ctx), 'scalar period matches itself')
+    assertTrue(cov.evaluateRule({ 'time_of_day': ['night', 'evening'] }, ctx), 'array form includes current period')
+    assertEqual(cov.evaluateRule({ 'time_of_day': 'morning' }, ctx), false, 'non-matching period rejects')
 
     // Presence -- string/array/object normalization; absent host counts as offline.
     const pctx = { timeOfDay: 'noon', presence: { kyeno: true }, videoPlayer: {} }
@@ -137,12 +137,12 @@ console.log('\n\u2500\u2500 C. condition evaluation \u2500\u2500\n')
 
     // Video-player -- no recorded state enumerates to the `offline` status.
     const vctx = { timeOfDay: 'night', presence: {}, videoPlayer: {} }
-    assertTrue(cov.evaluateRule({ 'video-player': { tv: ['offline'] } }, vctx), 'no-state baseline matches an offline list')
-    assertEqual(cov.evaluateRule({ 'video-player': { tv: ['playing'] } }, vctx), false, 'no-state baseline does not match concrete statuses')
-    assertEqual(cov.evaluateRule({ 'video-player': { tv: ['paused', 'stopped'] } }, vctx), false, 'no-state baseline does not match a list without offline')
-    assertTrue(cov.evaluateRule({ 'video-player': { tv: 'paused' } }, { ...vctx, videoPlayer: { tv: 'paused' } }), 'scalar status matches when recorded')
-    assertEqual(cov.evaluateRule({ 'video-player': { tv: 'paused' } }, { ...vctx, videoPlayer: { tv: 'playing' } }), false, 'recorded mismatch rejects')
-    assertTrue(cov.evaluateRule({ 'video-player': { tv: ['offline'] } }, { ...vctx, videoPlayer: { tv: 'offline' } }), 'recorded offline matches an offline list')
+    assertTrue(cov.evaluateRule({ 'video_player': { tv: ['offline'] } }, vctx), 'no-state baseline matches an offline list')
+    assertEqual(cov.evaluateRule({ 'video_player': { tv: ['playing'] } }, vctx), false, 'no-state baseline does not match concrete statuses')
+    assertEqual(cov.evaluateRule({ 'video_player': { tv: ['paused', 'stopped'] } }, vctx), false, 'no-state baseline does not match a list without offline')
+    assertTrue(cov.evaluateRule({ 'video_player': { tv: 'paused' } }, { ...vctx, videoPlayer: { tv: 'paused' } }), 'scalar status matches when recorded')
+    assertEqual(cov.evaluateRule({ 'video_player': { tv: 'paused' } }, { ...vctx, videoPlayer: { tv: 'playing' } }), false, 'recorded mismatch rejects')
+    assertTrue(cov.evaluateRule({ 'video_player': { tv: ['offline'] } }, { ...vctx, videoPlayer: { tv: 'offline' } }), 'recorded offline matches an offline list')
 
     // Season pass-through and extra-key tolerance.
     assertTrue(cov.evaluateRule({ season: 'winter' }, ctx), 'season condition passes when analysis pins none')
@@ -188,7 +188,7 @@ console.log('\n\u2500\u2500 E. analyzeRules()/pickWinner() \u2500\u2500\n')
 {
     const cur = cov.currentHourToPeriod()
     // Morning-only rule -> every non-morning hour must be a full gap; morning hours covered.
-    const rules = [{ name: 'Morning only', conditions: { 'time-of-day': 'morning' } }]
+    const rules = [{ name: 'Morning only', conditions: { 'time_of_day': 'morning' } }]
     const rep = cov.analyzeRules({ rules, periodMap: cur })
     for (const h of [5, 6, 8, 10]) {
         assertTrue(rep.hours[h].fullyCovered, `hour ${h} (morning) fully covered`)
@@ -228,8 +228,8 @@ console.log('\n\u2500\u2500 E. analyzeRules()/pickWinner() \u2500\u2500\n')
 
     // Legacy diff sanity on an ambient-style fixture: dusk rule written for old evening semantics.
     const duskRules = [
-        { name: 'Dusk on', conditions: { 'time-of-day': ['evening', 'night'], illuminance: { lt: 900 } } },
-        { name: 'Bright off', conditions: { 'time-of-day': 'morning', illuminance: { gte: 400 } } },
+        { name: 'Dusk on', conditions: { 'time_of_day': ['evening', 'night'], illuminance: { lt: 900 } } },
+        { name: 'Bright off', conditions: { 'time_of_day': 'morning', illuminance: { gte: 400 } } },
     ]
     const built = cov.buildScenarios(duskRules)
     const nowSet = cov.matchedNamesByHour(cov.analyzeRules({ rules: duskRules, periodMap: cur, scenarios: built.scenarios }))
@@ -257,12 +257,12 @@ console.log('\n\u2500\u2500 F. /automation coverage command \u2500\u2500\n')
 
     const covConfig = {
         rules: [
-            { name: 'Morning off', conditions: { 'time-of-day': 'morning', illuminance: { gte: 400 } }, once: true },
-            { name: 'Dusk on', conditions: { 'time-of-day': ['evening', 'night'], illuminance: { lt: 900 } } },
+            { name: 'Morning off', conditions: { 'time_of_day': 'morning', illuminance: { gte: 400 } }, once: true },
+            { name: 'Dusk on', conditions: { 'time_of_day': ['evening', 'night'], illuminance: { lt: 900 } } },
         ],
     }
     const flaggedConfig = {
-        rules: [{ name: 'Invoke only', conditions: { 'time-of-day': 'noon' }, forced_only: true, priority: 3 }],
+        rules: [{ name: 'Invoke only', conditions: { 'time_of_day': 'noon' }, forced_only: true, priority: 3 }],
     }
     const noRules = new FakeRuleBasedAutomation('EmptyAuto', {})
     const ambient = new FakeRuleBasedAutomation('AmbientLightsAutomation', covConfig)

@@ -311,7 +311,7 @@ console.log('\n── Coexistence with per-rule video-player condition ──\n'
     // own video-player allow-list rejects 'stopped'.
     const devices = makeDevices()
     const auto = makeRollers(devices, { bedroom: ['playing'] })
-    auto.config.rules[0].conditions['video-player'] = { htpc: ['offline'] }
+    auto.config.rules[0].conditions['video_player'] = { htpc: ['offline'] }
     await setVideoStatus('htpc', 'stopped')
     await setVideoStatus('bedroom', 'unreachable')
     await auto.execute({ trigger: 'test' })
@@ -320,7 +320,7 @@ console.log('\n── Coexistence with per-rule video-player condition ──\n'
     // Same setup but the per-rule allow-list accepts the status -> dispatch.
     const devices2 = makeDevices()
     const auto2 = makeRollers(devices2, { bedroom: ['playing'] })
-    auto2.config.rules[0].conditions['video-player'] = { htpc: ['offline'] }
+    auto2.config.rules[0].conditions['video_player'] = { htpc: ['offline'] }
     await setVideoStatus('htpc', 'unreachable')
     await setVideoStatus('bedroom', 'unreachable')
     await auto2.execute({ trigger: 'test' })

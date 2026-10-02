@@ -26,7 +26,7 @@ video_player_suppression:
 rules:
   - name: 'Night - close all'
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       illuminance: { lt: 15 }
     targets:
       Bedroom_Roller_Left: CLOSE

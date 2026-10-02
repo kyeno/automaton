@@ -67,7 +67,7 @@ rules:
   - name: 'Warm day'
     priority: 1                           # Low — comfort advice only
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       temperature: { lte: 25, gte: 18 }
       humidity: { lte: 55 }
     sentence: 'weatherman.soothing_warm_day'
@@ -75,7 +75,7 @@ rules:
   - name: 'Hot day'
     priority: 2                           # Medium — generic heat warning
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       temperature: { gt: 25 }
     sentence: 'weatherman.warning_hot_day'
 
@@ -102,28 +102,28 @@ rules:
   - name: 'Chill evening'
     priority: 1
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       temperature: { lte: 18 }
     sentence: 'weatherman.warning_chill_night'
 
   - name: 'Warm evening'
     priority: 1
     conditions:
-      time-of-day: [evening]
+      time_of_day: [evening]
       temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_evening'
 
   - name: 'Warm night'
     priority: 1
     conditions:
-      time-of-day: [night]
+      time_of_day: [night]
       temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_night'
 ```
 
 ### Time-of-Day Periods
 
-The `time-of-day` condition matches five fixed clock-based periods identical year-round (night 00–04, morning 05–10, noon 11–12, afternoon 13–17, evening 18–23); matching is hour-granular with no gaps or overlaps. Because the zones are clock-based rather than daylight-based, a warm late-afternoon now matches `[morning, noon, afternoon]` until 17:59 even in summer, while star-sky talk waits for real deep night (`[night]`, midnight through pre-dawn) all year — and rules written before commit `c1e8c6f` may have silently lost hours they used to cover ("Warm day" above stops matching once evening begins at 18:00). Full rationale, old-vs-new boundary comparison and impact analysis live in [Time-of-Day Periods](../architecture/time-of-day-periods.md); run `/automation coverage <name> legacy` to diff any automation against both schemes.
+The `time_of_day` condition matches five fixed clock-based periods identical year-round (night 00–04, morning 05–10, noon 11–12, afternoon 13–17, evening 18–23); matching is hour-granular with no gaps or overlaps. Because the zones are clock-based rather than daylight-based, a warm late-afternoon now matches `[morning, noon, afternoon]` until 17:59 even in summer, while star-sky talk waits for real deep night (`[night]`, midnight through pre-dawn) all year — and rules written before commit `c1e8c6f` may have silently lost hours they used to cover ("Warm day" above stops matching once evening begins at 18:00). Full rationale, old-vs-new boundary comparison and impact analysis live in [Time-of-Day Periods](../architecture/time-of-day-periods.md); run `/automation coverage <name> legacy` to diff any automation against both schemes.
 
 ## TTS Server Passthrough Options
 

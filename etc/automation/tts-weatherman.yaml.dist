@@ -60,7 +60,7 @@ rules:
   - name: 'Warm day'
     priority: 1
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       temperature: { lte: 25, gte: 18 }
       humidity: { lte: 55 }
     sentence: 'weatherman.soothing_warm_day'
@@ -68,7 +68,7 @@ rules:
   - name: 'Hot day'
     priority: 2
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       temperature: { gt: 25 }
     sentence: 'weatherman.warning_hot_day'
 
@@ -95,7 +95,7 @@ rules:
   - name: 'Humid night'
     priority: 3
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       temperature: { gte: 18 }
       humidity: { gte: 65 }
     sentence: 'weatherman.warning_humid_night'
@@ -103,20 +103,20 @@ rules:
   - name: 'Chill evening'
     priority: 1
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       temperature: { lte: 18 }
     sentence: 'weatherman.warning_chill_night'
 
   - name: 'Warm evening'
     priority: 2
     conditions:
-      time-of-day: [evening]
+      time_of_day: [evening]
       temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_evening'
 
   - name: 'Warm night'
     priority: 2
     conditions:
-      time-of-day: [night]
+      time_of_day: [night]
       temperature: { gt: 18 }
     sentence: 'weatherman.soothing_warm_night'

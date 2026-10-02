@@ -261,7 +261,7 @@ try {
             '  - name: "Window probe rule"',
             '    once: true',
             '    conditions:',
-            '      time-of-day: [evening, night]',
+            '      time_of_day: [evening, night]',
             '    action: "on"',
         ].join('\n'))
         const winAuto = new ForceProbeAutomation('ForceProbeWindowAutomation', cfgPathWindow)

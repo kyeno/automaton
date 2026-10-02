@@ -25,7 +25,7 @@ The **Video Player monitor** (`src/monitor/videoPlayerMonitor.js`) polls media p
 
 A raw `playing` report from a player can mean either "a movie is genuinely playing" or just "the user opened the player and started scrubbing through titles". To keep lights and roller-suppression from flickering while someone chooses what to watch, the monitor applies a **settle delay**: an effective status of `playing` is only reported once the *same* media title has been observed playing continuously for at least the settle window (**60 seconds** by default). Until then an unsettled `playing` reads as `stopped`, so dark-mode rules and the top-level `video_player_suppression` guard stay inert during browsing/skipping. Once settled, play/pause act immediately with no further delay.
 
-Because both rule-engine consumers already read `getStatus(host)`, this behavior is global to every video-player-driven automation (per-rule `video-player` conditions *and* the suppression guard) without any YAML change.
+Because both rule-engine consumers already read `getStatus(host)`, this behavior is global to every video-player-driven automation (per-rule `video_player` conditions *and* the suppression guard) without any YAML change.
 
 Reset semantics:
 
@@ -95,11 +95,11 @@ triggers_video:          # Re-evaluate when these players change status
 rules:
   - name: 'Living room: playing - dark mode'
     conditions:
-      video-player: { my-pc: [playing] }
+      video_player: { my-pc: [playing] }
     targets: ...
 ```
 
-Full `video-player` condition syntax (including the enumerated `offline` status) and the related top-level `video_player_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
+Full `video_player` condition syntax (including the enumerated `offline` status) and the related top-level `video_player_suppression` stand-down guard are documented in the [Configuration Guide](../configuration.md).
 
 ## File Map
 

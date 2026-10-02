@@ -38,7 +38,7 @@ video_player_suppression:
 rules:
   - name: 'Morning: Hot - close'
     conditions:
-      time-of-day: [morning, noon]
+      time_of_day: [morning, noon]
       temperature: { gte: 25 }
     targets:
       Home_Office_Roller_Left: CLOSE
@@ -46,7 +46,7 @@ rules:
 
   - name: 'Anytime: Warm, not too bright - open'
     conditions:
-      time-of-day: [morning, noon, afternoon, evening]
+      time_of_day: [morning, noon, afternoon, evening]
       illuminance: { lt: 11000 }
       temperature: { lt: 25 }
     targets:
@@ -55,7 +55,7 @@ rules:
 
   - name: 'Afternoon: Hot - open'
     conditions:
-      time-of-day: [afternoon]
+      time_of_day: [afternoon]
       temperature: { gte: 25, lte: 29 }
     targets:
       Home_Office_Roller_Left: OPEN
@@ -63,7 +63,7 @@ rules:
 
   - name: 'Afternoon: Extremely hot - close'
     conditions:
-      time-of-day: [noon, afternoon]
+      time_of_day: [noon, afternoon]
       temperature: { gte: 29 }
     targets:
       Home_Office_Roller_Left: CLOSE
@@ -71,7 +71,7 @@ rules:
 
   - name: 'Day: laptop present, not too bright'
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       illuminance: { lte: 11000 }
       presence: my-laptop
     targets:
@@ -80,7 +80,7 @@ rules:
 
   - name: 'Day: laptop present, bright'
     conditions:
-      time-of-day: [morning, noon, afternoon]
+      time_of_day: [morning, noon, afternoon]
       illuminance: { gt: 11000, lte: 12700 }
       presence: my-laptop
     targets:
@@ -89,7 +89,7 @@ rules:
 
   - name: 'Day: laptop present, direct sunlight'
     conditions:
-      time-of-day: [morning, noon]
+      time_of_day: [morning, noon]
       illuminance: { gt: 12700 }
       presence: my-laptop
     targets:
@@ -98,7 +98,7 @@ rules:
 
   - name: 'Evening: laptop present, mid-dark'
     conditions:
-      time-of-day: [evening]
+      time_of_day: [evening]
       illuminance: { gt: 250, lte: 1800 }
       presence: my-laptop
     targets:
@@ -107,7 +107,7 @@ rules:
 
   - name: 'Evening: laptop present, not too bright'
     conditions:
-      time-of-day: [evening]
+      time_of_day: [evening]
       illuminance: { gt: 1800, lte: 11000 }
       presence: my-laptop
     targets:
@@ -116,7 +116,7 @@ rules:
 
   - name: 'Anytime: desktop present, not too bright'
     conditions:
-      time-of-day: [morning, noon, afternoon, evening]
+      time_of_day: [morning, noon, afternoon, evening]
       illuminance: { lte: 11000 }
       presence: my-desktop
     targets:
@@ -125,7 +125,7 @@ rules:
 
   - name: 'Anytime: desktop present, bright'
     conditions:
-      time-of-day: [morning, noon, afternoon, evening]
+      time_of_day: [morning, noon, afternoon, evening]
       illuminance: { gt: 11000, lte: 12700 }
       presence: my-desktop
     targets:
@@ -134,7 +134,7 @@ rules:
 
   - name: 'Night: Close all'
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       illuminance: { lte: 15 }
     targets:
       Home_Office_Roller_Left: CLOSE

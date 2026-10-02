@@ -234,7 +234,7 @@ Each host is pinged via `arping` to detect presence on the local network. The sh
 
 #### Video Players (`videoPlayers`)
 
-Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `offline`) to rules via the `video-player` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
+Polls media players over their HTTP APIs and exposes a normalized status (`playing`, `paused`, `stopped`, `offline`) to rules via the `video_player` condition. Each entry is an object -- **not** a bare IP string -- so the presence monitor does not treat it as a ping target:
 
 ```yaml
 videoPlayers:
@@ -287,10 +287,10 @@ video_player_suppression:       # Optional: stand-down guard -- suppress all rul
 
 rules:
   - name: 'Human-readable rule name'
-    once: true                          # Optional: act at most once per calendar day (per time-window for rules with a time-of-day condition)
+    once: true                          # Optional: act at most once per calendar day (per time-window for rules with a time_of_day condition)
     forced_only: true                   # Optional: participate only in forced/delegated runs (e.g., delegated light restore); natural ticks skip it entirely
     conditions:
-      time-of-day: [morning, noon]     # Day period(s)
+      time_of_day: [morning, noon]     # Day period(s)
       season: [winter]                 # Season(s), optional -- spring/summer/autumn/winter
       illuminance: { gte: 20 }          # Sensor threshold
       temperature: { lt: 25 }
@@ -300,9 +300,11 @@ rules:
       Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
 ```
 
-### Day Periods (`time-of-day`)
+**Condition key naming.** All rule condition keys use snake_case (`time_of_day`, `video_player`, `state_changed_ago_minutes`, `after_latest_of`, `any_of`, ...). The legacy kebab-case spellings (`time-of-day`, `video-player`, `state-changed-ago-minutes`) no longer evaluate -- a stale key simply never matches -- and there is no silent alias period. At activation, every rule still carrying one logs a loud warning pinning down the exact location in its conditions tree (including nested `any_of`/`all_of` groups) together with the replacement name; rename them when you see it.
 
-The `time-of-day:` condition matches against five **fixed clock-based** periods that are identical year-round (hour-granular, no gaps or overlaps):
+### Day Periods (`time_of_day`)
+
+The `time_of_day:` condition matches against five **fixed clock-based** periods that are identical year-round (hour-granular, no gaps or overlaps):
 
 | Period    | Hours   |
 |-----------|---------|
@@ -325,13 +327,13 @@ The optional `hour:` condition gates rules against the **actual local clock hour
 | `hour: { lt: 5 }` / `{ lte: 2 }` | Before / up-to-and-including that hour |
 | `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | At/after real sunrise, before/at real sunset (also `sundawn`/`sundusk`) |
 
-Unlike `time-of-day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
+Unlike `time_of_day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
 
 The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports; a sun-token bound is treated as satisfied there since real dawn/dusk times are not part of the static clock grid.
 
 ### Merged Sun/Clock Gate Conditions (`after_latest_of` / `after_earliest_of`)
 
-Where `time-of-day`, `hour` and `season` each assert one fixed boundary, these two conditions let a single rule wait for the **later** of several candidate moments ("whichever is later") or open at the **earlier** of them ("whichever is earlier"). Each condition takes a list of candidates; the rule fires once "now" has passed the selected extreme of those candidates' resolved instants:
+Where `time_of_day`, `hour` and `season` each assert one fixed boundary, these two conditions let a single rule wait for the **later** of several candidate moments ("whichever is later") or open at the **earlier** of them ("whichever is earlier"). Each condition takes a list of candidates; the rule fires once "now" has passed the selected extreme of those candidates' resolved instants:
 
 | Key | Fires when now >= ... | Use case |
 |-----|----------------------|----------|
@@ -345,7 +347,7 @@ Each candidate resolves to an absolute instant on the current day:
 | `"sundusk"` / `"sunset"` | today's real sunset (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
 | `"sundawn"` / `"sunrise"` | today's real sunrise |
 | `19` or `{ hour: 19 }` | today at 19:00 local |
-| `'morning'` / `{ 'time-of-day': 'morning' }` | the start-of-day hour of that period (e.g. morning -> 05:00) |
+| `'morning'` / `{ 'time_of_day': 'morning' }` | the start-of-day hour of that period (e.g. morning -> 05:00) |
 
 Examples:
 
@@ -359,7 +361,38 @@ conditions:
   after_earliest_of: [sundawn, 'morning']
 ```
 
-They compose with every other condition as usual (all must hold), so a rule can pair them with strict gates -- e.g. `season: spring` + `illuminance: { lte: 15 }` + `after_latest_of: [sundusk, { hour: 19 }]`. Unresolvable candidates are dropped; if **none** resolve (no geo configured, unknown shorthand, empty list) the gate fails closed and the rule never fires. The static coverage analyzer treats both keys as reserved/satisfied (like `state-changed-ago-minutes`) since they depend on real sun times rather than the clock-hour grid.
+They compose with every other condition as usual (all must hold), so a rule can pair them with strict gates -- e.g. `season: spring` + `illuminance: { lte: 15 }` + `after_latest_of: [sundusk, { hour: 19 }]`. Unresolvable candidates are dropped; if **none** resolve (no geo configured, unknown shorthand, empty list) the gate fails closed and the rule never fires. The static coverage analyzer treats both keys as reserved/satisfied (like `state_changed_ago_minutes`) since they depend on real sun times rather than the clock-hour grid.
+
+### Composite Condition Groups (`any_of` / `all_of`)
+
+By default every condition in one rule combines with AND. The two composite keys add OR logic (and explicit grouping) without duplicating rules:
+
+| Key | Passes when | Empty list |
+|-----|-------------|------------|
+| `any_of:` | **at least one** sub-group fully matches (inclusive -- several branches may match at once) | fails closed |
+| `all_of:` | **every** sub-group fully matches | passes vacuously |
+
+Each list entry is a full condition group in its own right, so composites nest to arbitrary depth and every group keeps combining its scalar entries with AND as usual:
+
+```yaml
+rules:
+  - name: 'After sunset - someone home - full salon ambient'
+    once: true
+    conditions:
+      hour: { gte: sunset }          # top-level scalars still AND together
+      illuminance: { lt: 600 }       # with the composite groups below
+      any_of:                        # ... "someone" = at least one of these hosts
+        - presence: kyeno
+        - presence: meerkat
+        - presence: htpc
+```
+
+Notes:
+
+- A bare `presence:` map is an AND over all listed hosts; use `any_of` for "anyone home"-style OR gates.
+- Malformed shapes fail closed: a non-array gate value, an empty `any_of`, or a subgroup that is not a plain object never matches instead of passing silently.
+- The static coverage analyzer (`/automation coverage`) mirrors these semantics exactly -- including recursing into groups when collecting sensor bounds and presence/video-player scenario dimensions.
+- Under `trigger_on_change_only`, monitored subjects are collected from inside composite groups too, so a transition of a host referenced only within an `any_of` branch wakes scheduled ticks just like a top-level reference would.
 
 ### Target Keys (`targets:`)
 
@@ -382,7 +415,7 @@ timer_interval: "3m 45s"   # tokens combine: every 3 minutes 45 seconds
 
 ### React-On-Change Gate (`trigger_on_change_only`)
 
-The optional `trigger_on_change_only: true` key turns the periodic timer into a pure safety net. When enabled, a scheduled (`timer`) tick is **skipped entirely** unless one of the automation's monitored subjects actually transitioned since its last evaluation. Monitored subjects are derived automatically from the `presence` (network) and `video-player` rule conditions -- the hosts those conditions watch. Event-driven runs (a real EventBus topic) and forced runs always proceed regardless, since they already represent an explicit reason to act.
+The optional `trigger_on_change_only: true` key turns the periodic timer into a pure safety net. When enabled, a scheduled (`timer`) tick is **skipped entirely** unless one of the automation's monitored subjects actually transitioned since its last evaluation. Monitored subjects are derived automatically from the `presence` (network) and `video_player` rule conditions -- including hosts referenced inside nested `any_of`/`all_of` condition groups -- the hosts those conditions watch. Event-driven runs (a real EventBus topic) and forced runs always proceed regardless, since they already represent an explicit reason to act.
 
 This is what stops a "sticky" automation (one that opts into `override_human_interaction`) from re-firing its rules on every timer tick while its conditions still hold -- e.g., a home-theater instance whose player is stably offline used to re-assert its restore rule on every 15-minute tick. With the gate, the rule fires once on the transition that made its conditions true, then stays quiet until a monitored subject changes again. The gate fails open: if no subjects are monitored, or the state-history store is unavailable, the tick proceeds as usual.
 
@@ -421,11 +454,11 @@ Multiple operators on the same field create a range: `{ gt: 1800, lte: 11000 }`.
 
 ### Video Player Conditions
 
-The optional `video-player` condition gates a rule on media-player status (see `videoPlayers` under Network Hosts). Values accept a single status or a list per host:
+The optional `video_player` condition gates a rule on media-player status (see `videoPlayers` under Network Hosts). Values accept a single status or a list per host:
 
 ```yaml
 conditions:
-  video-player:
+  video_player:
     hostname1: [paused, stopped, offline]   # "not actively playing or gone"
     hostname2: playing                      # single value shorthand
 ```
@@ -441,10 +474,10 @@ video_player_suppression:
   htpc: [playing, paused, stopped]   # stand down while actively playing
 ```
 
-- Statuses use the same vocabulary as the `video-player` condition; a host with no recorded status enumerates to `offline`, so it suppresses only when `offline` is listed.
+- Statuses use the same vocabulary as the `video_player` condition; a host with no recorded status enumerates to `offline`, so it suppresses only when `offline` is listed.
 - Individual rules may opt out with `ignore_video_player_suppression: true`. While the guard is active, only exempt rules are evaluated; when no rule opts out, the automation returns early without even building context.
 - Unlike `silence_between`, the guard is **never bypassed by `/automation force`** -- a forced run must not create device fights.
-- The per-rule `video-player` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
+- The per-rule `video_player` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
 
 With `restore_state_aware: true` (automation level), restore commands are filtered through pre-command snapshots so an automation only undoes changes it made itself; a rule can mark its targets as unconditional with `force_restore: true`. Full snapshot, ownership, and no-op suppression semantics are covered in [Rule Engine Restore & Ownership](architecture/rule-engine-restore-semantics.md).
 
@@ -455,7 +488,7 @@ A rule can hand control to one or more loaded automations instead of -- or along
 ```yaml
 rules:
   - name: 'HTPC: player gone - hand back to the room owners'
-    conditions: { video-player: { htpc: [offline] } }
+    conditions: { video_player: { htpc: [offline] } }
     invoke_automation:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
@@ -479,7 +512,7 @@ Every form below resolves to the same set of `{name, force}` targets:
 
 ### Daily Once Markers (`once`)
 
-Adding `once: true` to a rule makes it act **at most once per local calendar day -- per time window when the rule declares a `time-of-day` condition**. A rule covering several periods (e.g. `[evening, night]`) therefore gets one slot in EACH listed window: an early pre-dawn firing consumes only that window's budget and never blocks actual dusk, while re-firing inside the same window stays blocked. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a marker in Redis (`auto:<name>:once:<rule slug>`, suffixed with the active period as `<...>:<period>` for window-scoped rules) storing the local calendar day, and stands down for the rest of that window; humans then keep full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. Markers self-reset each day; storage failures fail open.
+Adding `once: true` to a rule makes it act **at most once per local calendar day -- per time window when the rule declares a `time_of_day` condition**. A rule covering several periods (e.g. `[evening, night]`) therefore gets one slot in EACH listed window: an early pre-dawn firing consumes only that window's budget and never blocks actual dusk, while re-firing inside the same window stays blocked. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a marker in Redis (`auto:<name>:once:<rule slug>`, suffixed with the active period as `<...>:<period>` for window-scoped rules) storing the local calendar day, and stands down for the rest of that window; humans then keep full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. Markers self-reset each day; storage failures fail open.
 
 ### Invoke-Only Rules (`forced_only`)
 

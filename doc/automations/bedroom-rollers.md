@@ -28,7 +28,7 @@ video_player_suppression:      # Optional stand-down guard (see note below)
 rules:
   - name: 'Night - close all'
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       illuminance: { lt: 15 }
     targets:                    # Key = registered device name with spaces replaced by underscores
       Bedroom_Roller_Left: CLOSE

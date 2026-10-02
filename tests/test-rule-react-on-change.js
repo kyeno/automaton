@@ -1,6 +1,6 @@
 /**
  * Integration tests for the opt-in react-on-change gate and the
- * state-changed-ago-minutes recency condition in RuleBasedAutomationBase.
+ * state_changed_ago_minutes recency condition in RuleBasedAutomationBase.
  *
  * Uses a real DatabaseService (temp SQLite file) plus a minimal automation subclass
  * whose buildContext() records whether execution got past the gate -- a clean, async-safe
@@ -11,7 +11,7 @@
  *     PROCEEDS once a transition occurs, then SKIPS again until another change; event-driven runs
  *     always proceed regardless. (trigger_on_change_only)
  *   - The recency condition fails while a subject changed recently, passes with no history, and
- *     ignores malformed bounds instead of failing closed. (state-changed-ago-minutes)
+ *     ignores malformed bounds instead of failing closed. (state_changed_ago_minutes)
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -48,7 +48,7 @@ fs.writeFileSync(cfgPath, [
     'rules:',
     "  - name: probe",
     '    conditions:',
-    '      video-player: { htpc: [playing] }',
+    '      video_player: { htpc: [playing] }',
 ].join('\n'), 'utf8')
 
 /** Minimal automation whose buildContext() flags whether execution got past the gate. */
@@ -93,16 +93,16 @@ async function main() {
     await auto.execute({ trigger: 'timer', force: true })
     assert(auto.built === true, 'forced run bypasses the gate and proceeds')
 
-    // -- Recency condition (state-changed-ago-minutes) ----------------------
+    // -- Recency condition (state_changed_ago_minutes) ----------------------
     const ctx = {}
-    assert(await auto.conditionsMatch({ 'state-changed-ago-minutes': { 'videoPlayer:bedroom': 5 } }, ctx),
+    assert(await auto.conditionsMatch({ 'state_changed_ago_minutes': { 'videoPlayer:bedroom': 5 } }, ctx),
         'recency PASSES when the subject has no recorded history')
 
     await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: 'bedroom', toState: 'paused' })
-    assert(!(await auto.conditionsMatch({ 'state-changed-ago-minutes': { 'videoPlayer:bedroom': 5 } }, ctx)),
+    assert(!(await auto.conditionsMatch({ 'state_changed_ago_minutes': { 'videoPlayer:bedroom': 5 } }, ctx)),
         'recency FAILS while a change is more recent than the bound')
 
-    assert(await auto.conditionsMatch({ 'state-changed-ago-minutes': { 'weird-ref': 'not-a-number' } }, ctx),
+    assert(await auto.conditionsMatch({ 'state_changed_ago_minutes': { 'weird-ref': 'not-a-number' } }, ctx),
         'recency ignores malformed bounds instead of failing closed')
 }
 

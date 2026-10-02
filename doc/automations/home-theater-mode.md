@@ -58,7 +58,7 @@ rules:
   - name: 'Room: player reachable - close rollers'
     conditions:
       presence: { my-pc: true }
-      video-player: { my-pc: [playing, paused, stopped] }
+      video_player: { my-pc: [playing, paused, stopped] }
     targets:
       Living_Room_Roller_Left: CLOSE
 
@@ -68,7 +68,7 @@ rules:
   # powered-down host, so no separate `presence` gate is needed.
   - name: 'Room: player gone - hand back to the room owners'
     conditions:
-      video-player: { my-pc: [offline] }
+      video_player: { my-pc: [offline] }
     invoke_automation:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
@@ -80,8 +80,8 @@ rules:
   # of plain ON (a bare {brightness: N} never switches the relay on).
   - name: 'Room: paused/stopped - restore ambient lighting'
     conditions:
-      video-player: { my-pc: [paused, stopped] }
-      time-of-day: [afternoon, evening, night]
+      video_player: { my-pc: [paused, stopped] }
+      time_of_day: [afternoon, evening, night]
       illuminance: { lt: 900 }
     targets:
       Living_Room_Plug: ON
@@ -91,7 +91,7 @@ rules:
   - name: 'Room: playing - dark mode'
     conditions:
       presence: { my-pc: true }
-      video-player: { my-pc: [playing] }
+      video_player: { my-pc: [playing] }
     targets:
       Living_Room_Plug: OFF
       Salon_Dimmer: OFF

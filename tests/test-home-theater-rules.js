@@ -182,28 +182,28 @@ function makeBundledDevices(dark = false) {
 // omitted here only because the test fabricates statuses directly; production keeps
 // presence on the light/roller rules.
 const RULES_OFFICE = [
-    { name: 'Office: player reachable - close rollers', conditions: { 'video-player': { htpc: ['playing', 'paused', 'stopped'] } }, targets: { Living_Room_Roller_Left: 'CLOSE' } },
+    { name: 'Office: player reachable - close rollers', conditions: { 'video_player': { htpc: ['playing', 'paused', 'stopped'] } }, targets: { Living_Room_Roller_Left: 'CLOSE' } },
     // Player gone (offline): hand the room back to its owners in one rule -- the array form
     // force-fires BOTH the roller owner and the ambient-lights owner. Keyed on the player
     // state alone (no separate presence gate).
-    { name: 'Office: player gone - hand back to the room owners', conditions: { 'video-player': { htpc: ['offline'] } }, invoke_automation: [{ name: 'HomeOfficeRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
+    { name: 'Office: player gone - hand back to the room owners', conditions: { 'video_player': { htpc: ['offline'] } }, invoke_automation: [{ name: 'HomeOfficeRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
     // Online player that has paused/stopped: restore the lamp set locally (the salon dimmer
     // comes back at l1 50% / l2 25%). A GONE player instead delegates to the ambient-lights
     // owner via the rule above, so the two never fight over the same lamps.
-    { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video-player': { htpc: ['paused', 'stopped'] }, 'time-of-day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
-    { name: 'Office: playing - dark mode (lights off)', conditions: { 'video-player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
+    { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, 'time_of_day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
+    { name: 'Office: playing - dark mode (lights off)', conditions: { 'video_player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
 ]
 
 const RULES_BUNDLED = [
     ...RULES_OFFICE,
-    { name: 'Bedroom: player reachable - close rollers', conditions: { 'video-player': { bedroom: ['playing', 'paused', 'stopped'] } }, targets: { Bedroom_Roller_Left: 'CLOSE' } },
+    { name: 'Bedroom: player reachable - close rollers', conditions: { 'video_player': { bedroom: ['playing', 'paused', 'stopped'] } }, targets: { Bedroom_Roller_Left: 'CLOSE' } },
     // The bedroom is a "delegating" room: its gone rule hands the rollers back AND pokes the
     // ambient-lights owner (array form), while its not-playing rule delegates the lamp restore
     // for every non-playing state. This exercises the base class's flexibility to mix a
     // local-restore room (office) with a fully-delegating room (bedroom) in one instance.
-    { name: 'Bedroom: player gone - hand back to the room owners', conditions: { 'video-player': { bedroom: ['offline'] } }, invoke_automation: [{ name: 'BedroomRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
-    { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video-player': { bedroom: ['paused', 'stopped', 'offline'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
-    { name: 'Bedroom: playing - dark mode (lights off)', conditions: { 'video-player': { bedroom: ['playing'] } }, targets: { Bedroom_Plug: 'OFF' } }
+    { name: 'Bedroom: player gone - hand back to the room owners', conditions: { 'video_player': { bedroom: ['offline'] } }, invoke_automation: [{ name: 'BedroomRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
+    { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video_player': { bedroom: ['paused', 'stopped', 'offline'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
+    { name: 'Bedroom: playing - dark mode (lights off)', conditions: { 'video_player': { bedroom: ['playing'] } }, targets: { Bedroom_Plug: 'OFF' } }
 ]
 
 /**
@@ -696,7 +696,7 @@ console.log('\n── Deployment consistency (shipped etc/automation instances) 
             // Every host a rule condition references must be able to wake this instance.
             for (const rule of rules) {
                 const conditions = rule.conditions ?? {}
-                for (const key of ['video-player', 'presence']) {
+                for (const key of ['video_player', 'presence']) {
                     const hosts = (conditions[key] && typeof conditions[key] === 'object') ? Object.keys(conditions[key]) : []
                     for (const host of hosts) {
                         assert(declared.has(host),
@@ -736,38 +736,38 @@ console.log('\n── video-player condition (conditionsMatch) ──\n')
 
     // playing matches [playing]
     await setVideoStatus('htpc', 'playing')
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: 'playing' } }, CONTEXT),
-        'video-player: htpc=playing matches [playing]')
-    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
-        'video-player: htpc=playing rejected by [paused, stopped]')
+    assert(await auto.conditionsMatch({ 'video_player': { htpc: 'playing' } }, CONTEXT),
+        'video_player: htpc=playing matches [playing]')
+    assert(!(await auto.conditionsMatch({ 'video_player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
+        'video_player: htpc=playing rejected by [paused, stopped]')
     // paused matches the not-playing list
     await setVideoStatus('htpc', 'paused')
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'offline'] } }, CONTEXT),
-        'video-player: htpc=paused matches not-playing list')
-    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
-        'video-player: htpc=paused rejected by [playing]')
+    assert(await auto.conditionsMatch({ 'video_player': { htpc: ['paused', 'stopped', 'offline'] } }, CONTEXT),
+        'video_player: htpc=paused matches not-playing list')
+    assert(!(await auto.conditionsMatch({ 'video_player': { htpc: ['playing'] } }, CONTEXT)),
+        'video_player: htpc=paused rejected by [playing]')
     // offline matches the not-playing list; both raw causes (player not answering, host down)
     // normalize to it, so the raw input form is irrelevant to matching.
     await setVideoStatus('htpc', 'unreachable')
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped', 'offline'] } }, CONTEXT),
-        'video-player: htpc=offline (raw unreachable) matches not-playing list')
-    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
-        'video-player: offline rejected by [playing]')
+    assert(await auto.conditionsMatch({ 'video_player': { htpc: ['paused', 'stopped', 'offline'] } }, CONTEXT),
+        'video_player: htpc=offline (raw unreachable) matches not-playing list')
+    assert(!(await auto.conditionsMatch({ 'video_player': { htpc: ['playing'] } }, CONTEXT)),
+        'video_player: offline rejected by [playing]')
     // No recorded status (raw null) enumerates to the same `offline` status: rules that list it
     // match, playback requirements and not-playing lists WITHOUT it stay inert.
     await setVideoStatus('htpc', null)
-    assert(await auto.conditionsMatch({ 'video-player': { htpc: ['offline'] } }, CONTEXT),
-        'video-player: null status enumerates to offline')
-    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['playing'] } }, CONTEXT)),
-        'video-player: offline does not satisfy a "playing" requirement')
-    assert(!(await auto.conditionsMatch({ 'video-player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
-        'video-player: offline does not match a list without offline')
+    assert(await auto.conditionsMatch({ 'video_player': { htpc: ['offline'] } }, CONTEXT),
+        'video_player: null status enumerates to offline')
+    assert(!(await auto.conditionsMatch({ 'video_player': { htpc: ['playing'] } }, CONTEXT)),
+        'video_player: offline does not satisfy a "playing" requirement')
+    assert(!(await auto.conditionsMatch({ 'video_player': { htpc: ['paused', 'stopped'] } }, CONTEXT)),
+        'video_player: offline does not match a list without offline')
 
     // Pin the exact condition shape of the office instance's local restore rule: it must fire
     // for afternoon/evening/night darkness and reject morning or readings at/above 900 lux.
     const restoreConditions = {
-        'video-player': { htpc: ['paused', 'stopped', 'offline'] },
-        'time-of-day': ['afternoon', 'evening', 'night'],
+        'video_player': { htpc: ['paused', 'stopped', 'offline'] },
+        'time_of_day': ['afternoon', 'evening', 'night'],
         illuminance: { lt: 900 }
     }
     await setVideoStatus('htpc', 'paused')
