@@ -34,6 +34,11 @@ sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 # Remove the block to go back to plain announcements.
 add_proverb: false
 
+# OPTIONAL -- Route reports through the AI engine before TTS when it is configured and
+# available (default ON). Set to false to always speak the report directly, skipping the
+# LLM round-trip entirely (greeter keeps its own use_ai flag at false).
+use_ai: true
+
 sensors:
   illuminance: 'Outdoor Luminance'
   temperature: 'Outdoor Temperature'

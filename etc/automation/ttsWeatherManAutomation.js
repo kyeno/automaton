@@ -2,7 +2,8 @@
  * TTS WeatherMan Automation.
  * Rule-based weather announcer that builds a speech message from a base sentence
  * and condition-matched additions, then routes through AI -> TTS pipeline (or
- * direct TTS if AI unavailable). Supports {{ DeviceName.property }} string
+ * direct TTS when AI is unavailable or disabled via the `use_ai` config flag,
+ * default ON). Supports {{ DeviceName.property }} string
  * interpolation for live sensor data in i18n strings. Optional tts_options config entries
  * (intro/outro wave files, intro_spacing) are forwarded verbatim into the TTS server request
  * via the 'tts:speak' EventBus payload -- on both output paths -- so only this automation's
@@ -728,10 +729,8 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     }
 
     /**
-     * Send the built message to TTS, optionally routing through AI first. When the AI handles
-     * it, day-position markers frame the core content via buildAiPrompt(); on the direct-TTS
-     * fallback they come from buildDirectTtsText() so listeners get the same framing either way.
-     * Configured tts_options extras travel along in every 'tts:speak' payload -- both paths.
+     * Send the built message to TTS, optionally routing through AI first. Delegates the
+     * pipeline decision to {@link routeReport}; see it for the use_ai / availability rules.
      * @private
      * @param {string} message - Final interpolated speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
@@ -749,15 +748,41 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         // Optional per-utterance TTS server params from tts_options; {} keeps every
         // emission byte-identical to the plain-text shape when nothing is configured.
         const ttsOptions = this.resolveTtsOptions()
+        await this.routeReport(trimmedMessage, meta, ttsOptions)
+    }
 
-        const aiAvailable = AiAssistant.isAvailable()
+    /**
+     * Pipeline decision for a fully-built report: rewrite via AI before TTS when `use_ai`
+     * allows AND the assistant is available, otherwise speak directly. The flag defaults
+     * ON -- an explicit `use_ai: false` in the config forces direct TTS even with a healthy
+     * AI engine (greeter keeps its own copy of the flag at false).
+     *
+     * When the AI handles it, day-position markers frame the core content via
+     * buildAiPrompt(); on the direct-TTS fallback they come from buildDirectTtsText() so
+     * listeners get the same framing either way. Configured tts_options extras travel along
+     * in every 'tts:speak' payload -- both paths. Exposed as a stable seam (like
+     * routeThroughAi) so tests can drive the degradation logic without MQTT/devices/LLM.
+     * @param {string} trimmedMessage - Plain core speech text
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
+     *   Day position computed by {@link computeDayPosition}
+     * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
+     */
+    async routeReport(trimmedMessage, meta = {}, ttsOptions = {}) {
+        const aiEnabled = this.config?.use_ai !== false
+        const useAi = aiEnabled && AiAssistant.isAvailable()
+
+        if (!aiEnabled) {
+            this.log('use_ai disabled in config -- speaking directly', 'debug')
+        } else if (!useAi) {
+            this.log('AI assistant unavailable -- speaking directly', 'debug')
+        }
 
         // The text shown in Window 3 must match what is actually heard. On the AI leg that
         // is the full prompt (creative prefix + day-position markers, which go into the
         // model); on the direct-TTS fallback it is the spoken text (markers, but no
         // creative prefix, which is an instruction to the model rather than something to
         // read aloud).
-        const spokenText = aiAvailable
+        const spokenText = useAi
             ? this.buildAiPrompt(trimmedMessage, meta)
             : this.buildDirectTtsText(trimmedMessage, meta)
 
@@ -767,11 +792,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             EventBus.emit('ai:systemMessage', { text: spokenText })
         }
 
-        if (aiAvailable) {
+        if (useAi) {
             await this.routeThroughAi(spokenText, trimmedMessage, ttsOptions, meta)
         } else {
-            // Direct TTS when AI unavailable: speak every day-position marker minus the creative
-            // ai_prefix, which is an instruction to the model rather than something to read aloud.
+            // Direct TTS when AI is off/unavailable: speak every day-position marker minus
+            // the creative ai_prefix, which is an instruction to the model rather than
+            // something to read aloud.
             EventBus.emit('tts:speak', { text: spokenText, ...ttsOptions })
             this.log('Weather update sent via direct TTS', 'debug')
         }
