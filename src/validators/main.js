@@ -58,6 +58,28 @@ export default {
         }
     },
 
+    // AI bridge section -- dedicated MQTT channel feeding external prompts into the AI engine
+    ai_bridge: {
+        type: 'object',
+        required: false,
+        properties: {
+            enabled:        { type: 'boolean' },
+            topic_base:     { type: 'string' },
+            forward_events: { type: 'boolean' }
+        }
+    },
+
+    // Alerts section -- spoken notifications for notable system events
+    alerts: {
+        type: 'object',
+        required: false,
+        properties: {
+            device_offline_tts:         { type: 'boolean' },
+            device_offline_cooldown_ms: { type: ['number', 'string'] },
+            device_offline_ignore:      { type: 'array' }
+        }
+    },
+
     // Paths section (optional - provides config file paths and directory paths)
     paths: {
         type: 'object',

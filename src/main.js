@@ -30,6 +30,8 @@ import InteractionContainer from './interaction/container/interactionContainer.j
 
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
+import DeviceOfflineMonitor from './monitor/deviceOfflineMonitor.js'
+import AiBridgeMonitor from './monitor/aiBridgeMonitor.js'
 
 import AiAssistant     from './ai/aiAssistant.js'
 import TtsService      from './service/ttsService.js'
@@ -231,6 +233,16 @@ async function gracefulDeath(reason, errorLevel = 0) {
             VideoPlayerMonitor.stop()
         }
 
+        if (initialized.has('DeviceOfflineMonitor')) {
+            LoggerService.debug('Stopping DeviceOfflineMonitor...', 'Main')
+            DeviceOfflineMonitor.stop()
+        }
+
+        if (initialized.has('AiBridgeMonitor')) {
+            LoggerService.debug('Stopping AiBridgeMonitor...', 'Main')
+            AiBridgeMonitor.stop()
+        }
+
         // ---------------------------------------------------------------
         // Phase 2 -- Unsubscribe devices from MQTT topics.
         // MUST happen while MqttService is still connected so the broker
@@ -392,6 +404,8 @@ async function bootstrap() {
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('NetworkPresence', () => NetworkPresence.init())
     await initService('VideoPlayerMonitor', () => VideoPlayerMonitor.init())
+    // Spoken warning when a device leaves the Zigbee network (config-gated per event).
+    await initService('DeviceOfflineMonitor', () => DeviceOfflineMonitor.init(), true)
 
     // AI Assistant -- optional; skipped entirely when unconfigured so startup logs
     // reflect reality instead of claiming a disabled service initialized.
@@ -407,6 +421,11 @@ async function bootstrap() {
     } else {
         LoggerService.info('TTS service disabled at startup -- not configured', 'Main')
     }
+
+    // AI Bridge -- optional MQTT channel feeding external prompts (web UI / STT backends)
+    // into the shared AI conversation. Config-gated (ai_bridge.*); prompts arriving while
+    // the AI is unavailable are dropped per-request, so no restart is needed later.
+    await initService('AiBridgeMonitor', () => AiBridgeMonitor.init(), true)
 
     const services = []
     if (AiAssistant.isAvailable()) services.push('AI')

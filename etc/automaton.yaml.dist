@@ -35,6 +35,26 @@ ai:
   include_chat_history_in_system_calls: false  # system-origin announcements receive prior chat context; default false keeps them standalone (faster inference)
 
 # ----------------------------------------------------------------
+# AI BRIDGE -- dedicated MQTT channel letting external clients (web UI / STT backends)
+# talk to the shared AI conversation. Contract: _debug/ai-bridge-mqtt-channel.md
+# ----------------------------------------------------------------
+ai_bridge:
+  enabled: true               # master switch; prompts are dropped while the AI provider is unconfigured
+  topic_base: "automaton/ai"  # dedicated tree, kept OUTSIDE zigbee2mqtt/* on purpose
+  forward_events: true        # stream tool/device interactions over MQTT too (web-client friendly)
+
+# ----------------------------------------------------------------
+# ALERTS -- spoken notifications for notable system events
+# ----------------------------------------------------------------
+alerts:
+  # Speak a warning when a configured Zigbee device leaves the network
+  device_offline_tts: true
+  # Per-device re-warning cooldown ("90s","15m", or ms); 0 = warn on every leave event
+  device_offline_cooldown_ms: "30m"
+  # Device names never announced (e.g., intentionally removed sensors)
+  device_offline_ignore: []
+
+# ----------------------------------------------------------------
 # LOGGER -- Winston console/file transports & log file paths
 # ----------------------------------------------------------------
 logger:

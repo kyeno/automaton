@@ -163,6 +163,10 @@ const testScripts = [
   // Note: JSDoc coverage + completeness checks live in npm run lint:check
   'test-sound.js',
   'test-sound-mario.js',
+  'test-get-time-tool.js',
+  'test-ai-bridge-monitor.js',
+  'test-device-offline-monitor.js',
+  'test-weatherman-use-ai-flag.js',
 ]
 
 for (const script of testScripts) {
