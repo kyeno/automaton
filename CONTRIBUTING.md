@@ -41,7 +41,7 @@ import LoggerService from './service/loggerService.js'
 
 // --- Class Definition -------------------------------------------------
 
-class MyClass {
+class SMyClass {
     #privateField           // Private fields use hash prefix
 
     /**
