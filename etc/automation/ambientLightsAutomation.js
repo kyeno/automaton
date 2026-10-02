@@ -45,9 +45,10 @@ export default class AmbientLightsAutomation extends RuleBasedAutomationBase {
     }
 
     /**
-     * Resolve command using first matching rule's per-target action field,
-     * falling back to the rule's flat `action` when no target-specific
-     * command exists. Maps ON/OFF actions to state payloads for mechanisms.
+     * Resolve command using first matching rule's per-target action field -- delegates to the
+     * base-class simpleResolveCommand() so scalar actions map to state/position payloads while
+     * structured object commands (e.g. `{state: 'ON', brightness: {l1, l2}}`) pass through
+     * verbatim to dimmer devices instead of being collapsed to a bare `{state}` payload.
      * 
      * @param {DeviceBase} device - Target device
      * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)
@@ -55,29 +56,6 @@ export default class AmbientLightsAutomation extends RuleBasedAutomationBase {
      * @returns {{payload: object}|null} Object with payload, or null if no command found
      */
     resolveCommand(device, targetId, matchingRules) {
-        // Prefer a per-target command from the first matching rule that defines one
-        let command = null
-        for (const rule of matchingRules) {
-            const cmd = rule.targets?.[targetId]
-            if (cmd !== undefined) {
-                command = cmd
-                break
-            }
-        }
-
-        // Fall back to a flat "action" field shared by all listed devices
-        if (command === null || command === undefined) {
-            for (const rule of matchingRules) {
-                if (rule.action !== undefined) {
-                    command = rule.action
-                    break
-                }
-            }
-        }
-
-        if (command === null || command === undefined) return null
-
-        const payload = String(command).toUpperCase() === 'OFF' ? { state: 'OFF' } : { state: 'ON' }
-        return { payload }
+        return this.simpleResolveCommand(device, targetId, matchingRules)
     }
 }

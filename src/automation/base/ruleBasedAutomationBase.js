@@ -59,6 +59,52 @@ const ONCE_MARKER_TTL_SECONDS = 172_800
  */
 const VIDEO_PLAYER_OFFLINE = 'offline'
 
+/**
+ * Legacy kebab-case condition keys that were unified to snake_case.
+ * Kept as a lookup table so activation-time validation can name the exact
+ * replacement when it finds a stale rule; these keys no longer evaluate.
+ * @type {Readonly<Record<string,string>>}
+ */
+const LEGACY_CONDITION_KEY_RENAMES = Object.freeze({
+    'time-of-day': 'time_of_day',
+    'video-player': 'video_player',
+    'state-changed-ago-minutes': 'state_changed_ago_minutes'
+})
+
+/**
+ * Recursively scan a rule's conditions tree for legacy kebab-case condition keys.
+ *
+ * Walks plain object mappings and recurses into composite group values
+ * (`any_of` / `all_of` sub-group arrays), so a stale key nested anywhere in a
+ * boolean tree is reported with its dot path (e.g. `any_of[1].time-of-day`).
+ *
+ * @param {object|Array|null|undefined} node - Condition mapping, composite value, or anything else
+ * @param {string} [path=''] - Dot-path prefix used in report entries
+ * @returns {Array<{key: string, renameTo: string, where: string}>} One entry per legacy key found
+ */
+export function findLegacyConditionKeys(node, path = '') {
+    const found = []
+    if (!node || typeof node !== 'object') return found
+    if (Array.isArray(node)) {
+        node.forEach((item, index) => {
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+                found.push(...findLegacyConditionKeys(item, `${path}[${index}]`))
+            }
+        })
+        return found
+    }
+    for (const [key, value] of Object.entries(node)) {
+        const here = path ? `${path}.${key}` : key
+        if (Object.prototype.hasOwnProperty.call(LEGACY_CONDITION_KEY_RENAMES, key)) {
+            found.push({ key, renameTo: LEGACY_CONDITION_KEY_RENAMES[key], where: here })
+        }
+        if (value && typeof value === 'object') {
+            found.push(...findLegacyConditionKeys(value, here))
+        }
+    }
+    return found
+}
+
 export default class RuleBasedAutomationBase extends AutomationBase {
     /**
      * Consecutive context-build failure count for log-level escalation.
@@ -78,7 +124,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
     /**
      * Cached list of {domain, subject} pairs this automation monitors, derived from its rules'
-     * presence / video-player conditions. Recomputed when the config object is replaced (tests,
+     * presence / video_player conditions. Recomputed when the config object is replaced (tests,
      * reloads).
      * @type {Array<{domain: string, subject: string}>|null}
      */
@@ -113,6 +159,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         super({ name, config })
+        this.#warnOnLegacyConditionKeys()
         this.#logConfigLoaded()
     }
 
@@ -122,6 +169,30 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     #logConfigLoaded() {
         this.log(`Config loaded: ${this.config.rules?.length ?? 0} rules defined`, 'debug')
+    }
+
+    /**
+     * Activation-time guard for the snake_case condition-key unification.
+     *
+     * Scans every rule's conditions tree (including nested any_of/all_of groups)
+     * for legacy kebab-case keys and logs a loud per-rule warning naming each
+     * stale key, its location, and the replacement. Warn-only by design: a
+     * stale key simply stops matching (fail-closed evaluation), so startup must
+     * not be blocked -- but the hint makes the required rename impossible to
+     * miss in the log.
+     * @private
+     */
+    #warnOnLegacyConditionKeys() {
+        for (const rule of this.config.rules ?? []) {
+            if (!rule || typeof rule !== 'object') continue
+            const hits = findLegacyConditionKeys(rule.conditions)
+            if (hits.length === 0) continue
+            const detail = hits.map(h => `${h.where}: ${h.key} -> ${h.renameTo}`).join('; ')
+            LoggerService.warn(
+                `Rule "${rule.name ?? '(unnamed)'}" uses legacy kebab-case condition key(s) that no longer evaluate -- rename them now (${detail})`,
+                `Auto:${this.name}`
+            )
+        }
     }
 
     /**
@@ -202,8 +273,13 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     /**
      * Evaluate a single rule's conditions against the built context.
      *
-     * Checks `time-of-day`, actual wall-clock `hour`, `season`, numeric sensor ranges (`illuminance`, `temperature`, ...), and `presence` constraints, plus the merged-gate
-     * conditions `after_latest_of` / `after_earliest_of` (fire once now has passed the latest/earliest instant of a list of sun/clock candidates).
+     * Top-level conditions form an implicit AND group; the composite keys `any_of:` (OR gate)
+     * and `all_of:` (explicit AND gate) combine lists of nested condition groups -- which may
+     * themselves nest further composites into arbitrary boolean expression trees (see
+     * #evaluateConditionGroup()). Scalar checks cover `time_of_day`, actual wall-clock `hour`,
+     * `season`, numeric sensor ranges (`illuminance`, `temperature`, ...), and `presence`
+     * constraints, plus the merged-gate conditions `after_latest_of` / `after_earliest_of`
+     * (fire once now has passed the latest/earliest instant of a list of sun/clock candidates).
      * A condition key that is absent or falsy is treated as "always passes".
      *
      * @param {Record<string, unknown>} [conditions] - Conditions object from YAML rule
@@ -212,12 +288,68 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     async conditionsMatch(conditions, context) {
         if (!conditions) return true // no conditions = always matches
+        return this.#evaluateConditionGroup(conditions, context)
+    }
 
-        // time-of-day check
-        if (conditions['time-of-day']) {
-            const periods = Array.isArray(conditions['time-of-day'])
-                ? conditions['time-of-day']
-                : [conditions['time-of-day']]
+    /**
+     * Recursively evaluate one condition group.
+     *
+     * Every scalar entry must pass (implicit AND); on top of that two composite keys combine
+     * lists of nested groups:
+     *   - `any_of:` -- passes when AT LEAST ONE sub-group fully matches; an empty or non-array
+     *     value fails closed (nothing can satisfy "any of" nothing). Multiple matching
+     *     sub-groups are fine -- the gate is inclusive, not exclusive.
+     *   - `all_of:` -- passes only when EVERY sub-group fully matches; an empty list passes
+     *     vacuously (mirrors "no conditions = always matches"); a non-array value fails closed.
+     * Sub-groups are full condition groups in their own right and may nest further composites.
+     * A subgroup that is not a plain object fails closed rather than passing silently.
+     *
+     * @private
+     * @param {Record<string, unknown>|null|undefined} group - Condition group from YAML
+     * @param {{illuminance?: number|null, temperature?: number|null, timeOfDay: string, sundawn: number|null, sundusk: number|null}} context
+     * @returns {Promise<boolean>} True when every gate in the group holds.
+     */
+    async #evaluateConditionGroup(group, context) {
+        if (!group || typeof group !== 'object' || Array.isArray(group)) return false // malformed group -> fail closed
+
+        for (const [key, value] of Object.entries(group)) {
+            if (key === 'any_of') {
+                if (!Array.isArray(value) || value.length === 0) return false
+                let anyMatched = false
+                for (const sub of value) {
+                    if (await this.#evaluateConditionGroup(sub, context)) { anyMatched = true; break }
+                }
+                if (!anyMatched) return false
+            } else if (key === 'all_of') {
+                if (!Array.isArray(value)) return false
+                for (const sub of value) {
+                    if (!(await this.#evaluateConditionGroup(sub, context))) return false
+                }
+            }
+        }
+
+        return this.#checkScalarConditions(group, context)
+    }
+
+    /**
+     * Evaluate one condition group's scalar entries against the built context -- the historical
+     * conditionsMatch() body: time_of_day, hour, season, presence, video_player,
+     * state_changed_ago_minutes, after_latest_of/after_earliest_of merged gates, and dynamic
+     * numeric sensor ranges. Composite keys (`any_of`/`all_of`) are handled by the caller and
+     * skipped here so their list values are never treated as sensor bounds.
+     *
+     * @private
+     * @param {Record<string, unknown>} conds - Scalar condition entries from YAML
+     * @param {{illuminance?: number|null, temperature?: number|null, timeOfDay: string, sundawn: number|null, sundusk: number|null}} context
+     * @returns {Promise<boolean>}
+     */
+    async #checkScalarConditions(conditions, context) {
+
+        // time_of_day check
+        if (conditions['time_of_day']) {
+            const periods = Array.isArray(conditions['time_of_day'])
+                ? conditions['time_of_day']
+                : [conditions['time_of_day']]
 
             if (!periods.includes(context.timeOfDay)) {
                 return false
@@ -265,8 +397,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         // video player status check
-        if (conditions['video-player'] !== undefined) {
-            const expected = this.#normalizeVideoPlayerCondition(conditions['video-player'])
+        if (conditions['video_player'] !== undefined) {
+            const expected = this.#normalizeVideoPlayerCondition(conditions['video_player'])
             for (const [host, statuses] of Object.entries(expected)) {
                 const status = await videoPlayerMonitor.getStatus(host)
                 // No recorded state (host not configured / monitor never swept it) counts as the
@@ -284,8 +416,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // listed "<domain>:<subject>" was at least N minutes ago. Backed by
         // DatabaseService.lastTransitionTs(). A subject with no history satisfies any bound;
         // an unavailable store fails open so a downed database never blocks an automation.
-        if (conditions['state-changed-ago-minutes'] !== undefined) {
-            const expected = conditions['state-changed-ago-minutes']
+        if (conditions['state_changed_ago_minutes'] !== undefined) {
+            const expected = conditions['state_changed_ago_minutes']
             for (const [ref, bounds] of Object.entries(expected ?? {})) {
                 const minMinutes = typeof bounds === 'number' ? bounds : Number(bounds?.gte ?? bounds?.min ?? NaN)
                 if (!Number.isFinite(minMinutes)) continue   // malformed -> ignore rather than fail closed
@@ -316,7 +448,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         // Supports illuminance, temperature, humidity, pressure, or any future sensor type
         // defined in config.sensors without code changes.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time-of-day' || key === 'hour' || key === 'season' || key === 'presence' || key === 'video-player' || key === 'state-changed-ago-minutes' || key === 'after_latest_of' || key === 'after_earliest_of') continue // handled above
+            if (key === 'time_of_day' || key === 'hour' || key === 'season' || key === 'presence' || key === 'video_player' || key === 'state_changed_ago_minutes' || key === 'after_latest_of' || key === 'after_earliest_of' || key === 'any_of' || key === 'all_of') continue // handled above / by the group evaluator
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -447,7 +579,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 // marker afterwards, so it can re-fire an already-consumed rule without
                 // consuming anyone else's once-per-day budget.
                 if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule, context.timeOfDay)) {
-                    const scope = rule.conditions?.['time-of-day'] ? ` during ${context.timeOfDay}` : ''
+                    const scope = rule.conditions?.['time_of_day'] ? ` during ${context.timeOfDay}` : ''
                     this.log(`Rule "${rule.name}" already acted today${scope}, skipping`, 'debug')
                     continue
                 }
@@ -880,7 +1012,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
     /**
      * Build the Redis key for a rule's daily "once" marker. Rules that declare a
-     * `time-of-day` condition get one slot per calendar day PER WINDOW -- suffixed with
+     * `time_of_day` condition get one slot per calendar day PER WINDOW -- suffixed with
      * the period active at evaluation time -- so e.g. an [evening, night] dusk rule can
      * act once in pre-dawn AND once at actual dusk instead of its first firing consuming
      * both windows' budgets. Rules without such a condition keep the single plain-key
@@ -892,13 +1024,13 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     #onceMarkerKey(rule, period) {
         const base = `auto:${this.name}:once:${slugify(rule.name)}`
-        const declaresWindow = Boolean(rule.conditions?.['time-of-day'])
+        const declaresWindow = Boolean(rule.conditions?.['time_of_day'])
         return declaresWindow && typeof period === 'string' && period !== '' ? `${base}:${period}` : base
     }
 
     /**
      * Check whether an `once` rule has already consumed its action slot today -- either
-     * that window's slot on this calendar day when the rule declares a `time-of-day`
+     * that window's slot on this calendar day when the rule declares a `time_of_day`
      * condition, or its single daily slot otherwise. Reads the marker from Redis
      * (`auto:<name>:once:<rule slug>[:<period>]`); the stored calendar day is compared
      * against the current local date, so markers self-reset each day without cleanup
@@ -922,7 +1054,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
     /**
      * Consume an `once` rule's action slot for this window by writing its marker to
-     * Redis (window-scoped key when the rule declares a `time-of-day` condition). Called
+     * Redis (window-scoped key when the rule declares a `time_of_day` condition). Called
      * after dispatch completes (commands sent and/or devices deferred to recent human
      * interaction). Failures are logged but never fatal -- worst case the rule may act
      * again on a later tick of the same day.
@@ -962,7 +1094,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      *
      * Accepts a sun shorthand ("sundusk"/"sunset", "sundawn"/"sunrise") sourced from the per-tick context snapshot,
      * a clock hour as a bare number or `{hour:N}`, and a day-period name ('morning', ... -> that period's start-of-day
-     * hour), also via `{'time-of-day':name}`. Returns null when unresolvable so callers can drop the candidate rather
+     * hour), also via `{'time_of_day':name}`. Returns null when unresolvable so callers can drop the candidate rather
      * than fail the whole gate.
      *
      * @private
@@ -986,7 +1118,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
             if ('hour' in spec) return this.#resolveGateInstant(spec.hour, context)
-            if ('time-of-day' in spec) return this.#resolveGateInstant(spec['time-of-day'], context)
+            if ('time_of_day' in spec) return this.#resolveGateInstant(spec['time_of_day'], context)
         }
 
         return null
@@ -1102,7 +1234,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /**
-     * Normalize a video-player condition to an object of { host: string[] } pairs.
+     * Normalize a video_player condition to an object of { host: string[] } pairs.
      * Supported formats:
      *   { htpc: 'playing' }            -> { htpc: ['playing'] }
      *   { htpc: ['playing', 'paused'] } -> { htpc: ['playing', 'paused'] }
@@ -1156,8 +1288,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
     /**
      * Derive the set of {domain, subject} pairs this automation reacts to by scanning its rules'
-     * `presence` (network) and `video-player` conditions. Cached per config object; recomputed only
-     * when the config reference changes (tests / reloads). De-duplicated by "domain:subject".
+     * `presence` (network) and `video_player` conditions -- including hosts referenced inside
+     * nested `any_of`/`all_of` condition groups. Cached per config object; recomputed only when
+     * the config reference changes (tests / reloads). De-duplicated by "domain:subject".
      * @private
      * @returns {Array<{domain: string, subject: string}>} Monitored subjects (may be empty)
      */
@@ -1172,13 +1305,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             if (!seen.has(key)) { seen.add(key); out.push({ domain, subject }) }
         }
         for (const rule of (this.config.rules ?? [])) {
-            const conds = rule?.conditions ?? {}
-            if (conds.presence !== undefined) {
-                for (const name of Object.keys(this.#normalizePresenceCondition(conds.presence))) add('network', name)
-            }
-            if (conds['video-player'] !== undefined) {
-                for (const host of Object.keys(this.#normalizeVideoPlayerCondition(conds['video-player']))) add('videoPlayer', host)
-            }
+            this.#collectSubjectRefs(rule?.conditions, add)
         }
         this.#monitoredConfigRef = this.config
         this.#monitoredSubjects = out
@@ -1186,9 +1313,33 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /**
+     * Recursively collect monitored-subject references from one condition group -- its own
+     * `presence`/`video_player` entries plus those nested in `any_of`/`all_of` sub-groups.
+     * Descending into composites is what keeps the react-on-change gate awake on transitions of
+     * hosts referenced only inside an OR branch under trigger_on_change_only.
+     * @private
+     * @param {Record<string, unknown>|null|undefined} conds - Condition group from YAML
+     * @param {(domain: string, subject: string) => void} add - Accumulator callback
+     */
+    #collectSubjectRefs(conds, add) {
+        if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return
+        if (conds.presence !== undefined) {
+            for (const name of Object.keys(this.#normalizePresenceCondition(conds.presence))) add('network', name)
+        }
+        if (conds['video_player'] !== undefined) {
+            for (const host of Object.keys(this.#normalizeVideoPlayerCondition(conds['video_player']))) add('videoPlayer', host)
+        }
+        for (const list of [conds.any_of, conds.all_of]) {
+            if (Array.isArray(list)) {
+                for (const sub of list) this.#collectSubjectRefs(sub, add)
+            }
+        }
+    }
+
+    /**
      * Evaluate the top-level `video_player_suppression` stand-down guard.
      *
-     * Inverted semantics vs. the per-rule `video-player` condition: instead of
+     * Inverted semantics vs. the per-rule `video_player` condition: instead of
      * statuses a rule requires, the suppression map lists statuses that make
      * the whole automation stand down. Hosts combine with OR -- while ANY
      * listed host reports one of its listed statuses, the guard is active. No

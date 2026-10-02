@@ -2,14 +2,15 @@
  * Rule Coverage Analyzer.
  *
  * Statically sweeps a rule-based automation's YAML rules across every hour of the day and a
- * derived grid of sensor/presence/video-player scenarios to find timing gaps (hours where no
+ * derived grid of sensor/presence/video_player scenarios to find timing gaps (hours where no
  * rule can match), overlaps (several rules matching at once) and which rule wins by priority --
  * without touching live devices, MQTT or Redis. It mirrors the condition semantics of
  * {@link ../automation/base/ruleBasedAutomationBase.js conditionsMatch()} for every statically
- * evaluable condition type: time-of-day period membership, actual wall-clock hour bounds (`hour:`), season, numeric range bounds
- * (`lt`/`lte`/`gt`/`gte`) on arbitrary sensor keys, network presence maps, and video-player
- * status lists (no recorded state enumerates to the `offline` status). Conditions that require live state
- * (`state-changed-ago-minutes`) or a location/date-dependent sun event (`after_latest_of`,
+ * evaluable condition type: `time_of_day` period membership, actual wall-clock hour bounds (`hour:`), season, numeric range bounds
+ * (`lt`/`lte`/`gt`/`gte`) on arbitrary sensor keys, network presence maps, video_player
+ * status lists (no recorded state enumerates to the `offline` status), and `any_of`/`all_of`
+ * composite groups over nested condition sets (recursed into when sweeping scenario dimensions). Conditions that require live state
+ * (`state_changed_ago_minutes`) or a location/date-dependent sun event (`after_latest_of`,
  * `after_earliest_of`) are treated as satisfied and noted in the report meta.
  *
  * The hour-to-period mapping is injected per analysis so callers can evaluate against the
@@ -39,16 +40,20 @@ import temporal from './date.js'
 
 /** Condition keys handled specially before the generic numeric-range loop (mirrors conditionsMatch()). */
 const RESERVED_CONDITION_KEYS = new Set([
-    'time-of-day',
+    'time_of_day',
     'hour',
     'season',
     'presence',
-    'video-player',
-    'state-changed-ago-minutes',
+    'video_player',
+    'state_changed_ago_minutes',
     // Sun/clock merged gates resolve against real dawn/dusk instants + geo -- not part of the
-    // static hour/sensor grid, so they are treated as satisfied (like state-changed-ago-minutes).
+    // static hour/sensor grid, so they are treated as satisfied (like state_changed_ago_minutes).
     'after_latest_of',
     'after_earliest_of',
+    // Composite condition groups -- lists of nested condition sets combined with OR / AND gates;
+    // their list values must never be mistaken for sensor bounds by the dynamic range loop.
+    'any_of',
+    'all_of',
 ])
 
 /** Sun-event shorthands usable as an `hour:` bound; depend on real dawn/dusk, not the static clock grid. */
@@ -190,7 +195,7 @@ export function normalizePresenceCondition(presence) {
 }
 
 /**
- * Normalize a video-player condition to `{ host: string[] }`, mirroring #normalizeVideoPlayerCondition().
+ * Normalize a video_player condition to `{ host: string[] }`, mirroring #normalizeVideoPlayerCondition().
  * @param {Record<string, string|string[]>} videoPlayer - Raw condition value from YAML.
  * @returns {Record<string, string[]>} Host name to accepted status list.
  */
@@ -206,7 +211,10 @@ export function normalizeVideoPlayerCondition(videoPlayer) {
  * Evaluate one rule's conditions against a static context snapshot. Supports every statically
  * evaluable condition type; `season` is satisfied when the context carries no season (callers
  * that do not sweep seasons), and unknown extra keys without object bounds pass through -- both
- * matching how conditionsMatch() treats them at runtime.
+ * matching how conditionsMatch() treats them at runtime. Composite groups are evaluated
+ * recursively with the same fail-closed rules as at runtime: `any_of` needs at least one
+ * matching sub-group (empty/non-array fails closed), `all_of` needs every sub-group (empty list
+ * passes vacuously, non-array fails closed); a subgroup that is not a plain object fails closed.
  *
  * @param {Record<string, unknown>|null|undefined} conditions - Conditions object from a YAML rule.
  * @param {{timeOfDay?: string|null, hour?: number|null, season? string|null, presence?: Record<string, boolean>, videoPlayer?: Record<string, string|undefined>}} ctx - Static context: period name, swept clock hour for the hour condition, optional season, per-host online flags, per-host player status (absent key enumerates to `offline`).
@@ -216,9 +224,28 @@ export function normalizeVideoPlayerCondition(videoPlayer) {
 export function evaluateRule(conditions, ctx, sensorValues = {}) {
     if (!conditions || typeof conditions !== 'object') return true
 
-    // time-of-day check
-    if (conditions['time-of-day']) {
-        const periods = Array.isArray(conditions['time-of-day']) ? conditions['time-of-day'] : [conditions['time-of-day']]
+    // Composite gates -- mirror #evaluateConditionGroup() in the automation base class.
+    if (conditions.any_of !== undefined) {
+        if (!Array.isArray(conditions.any_of) || conditions.any_of.length === 0) return false
+        let anyMatched = false
+        for (const sub of conditions.any_of) {
+            // Subgroup position fails closed on non-objects (unlike the top-level null guard).
+            if (sub != null && typeof sub === 'object' && !Array.isArray(sub) && evaluateRule(sub, ctx, sensorValues)) {
+                anyMatched = true; break
+            }
+        }
+        if (!anyMatched) return false
+    }
+    if (conditions.all_of !== undefined) {
+        if (!Array.isArray(conditions.all_of)) return false
+        for (const sub of conditions.all_of) {
+            if (!(sub != null && typeof sub === 'object' && !Array.isArray(sub) && evaluateRule(sub, ctx, sensorValues))) return false
+        }
+    }
+
+    // time_of_day check
+    if (conditions['time_of_day']) {
+        const periods = Array.isArray(conditions['time_of_day']) ? conditions['time_of_day'] : [conditions['time_of_day']]
         if (!periods.includes(ctx.timeOfDay)) return false
     }
 
@@ -252,8 +279,8 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
     }
 
     // video player status check -- no recorded state counts as the enumerated `offline` status
-    if (conditions['video-player'] !== undefined) {
-        for (const [host, statuses] of Object.entries(normalizeVideoPlayerCondition(conditions['video-player']))) {
+    if (conditions['video_player'] !== undefined) {
+        for (const [host, statuses] of Object.entries(normalizeVideoPlayerCondition(conditions['video_player']))) {
             const status = ctx.videoPlayer?.[host] ?? VIDEO_PLAYER_OFFLINE
             if (!statuses.includes(status)) return false
         }
@@ -275,17 +302,37 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Collect the logical sensor keys that appear as bounded numeric conditions across all rules.
+ * Depth-first visit over a condition group tree: invokes fn on the group itself and on every
+ * subgroup reachable through any_of/all_of lists. Malformed entries are skipped silently -- the
+ * walkers only feed static-analysis dimensions, never runtime decisions.
+ * @param {Record<string, unknown>|null|undefined} conds - Root condition group from YAML.
+ * @param {(group: Record<string, unknown>) => void} fn - Visitor invoked per group.
+ */
+function forEachConditionGroup(conds, fn) {
+    if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return
+    fn(conds)
+    for (const list of [conds.any_of, conds.all_of]) {
+        if (Array.isArray(list)) {
+            for (const sub of list) forEachConditionGroup(sub, fn)
+        }
+    }
+}
+
+/**
+ * Collect the logical sensor keys that appear as bounded numeric conditions across all rules,
+ * including bounds nested inside `any_of`/`all_of` composite groups.
  * @param {Array<Record<string, unknown>>} rules - Rules from an automation config.
  * @returns {string[]} Sorted unique sensor key names.
  */
 export function collectSensorKeys(rules) {
     const keys = new Set()
     for (const rule of rules ?? []) {
-        for (const [key, value] of Object.entries(rule.conditions ?? {})) {
-            if (RESERVED_CONDITION_KEYS.has(key)) continue
-            if (value && typeof value === 'object' && !Array.isArray(value)) keys.add(key)
-        }
+        forEachConditionGroup(rule.conditions, (group) => {
+            for (const [key, value] of Object.entries(group)) {
+                if (RESERVED_CONDITION_KEYS.has(key)) continue
+                if (value && typeof value === 'object' && !Array.isArray(value)) keys.add(key)
+            }
+        })
     }
     return [...keys].sort()
 }
@@ -318,7 +365,7 @@ function samplePoints(bounds) {
 }
 
 /**
- * Expand per-host video-player option lists into every combination as `{ host: status|undefined }` maps.
+ * Expand per-host video_player option lists into every combination as `{ host: status|undefined }` maps.
  * @param {Array<Array<string|undefined>>} optionsPerHost - Allowed statuses (plus undefined baseline) per host, in host order.
  * @param {string[]} hosts - Host names aligned with optionsPerHost.
  * @returns {Array<Record<string, string|undefined>>} One map per combination; a single empty map when no hosts exist.
@@ -358,7 +405,7 @@ function scenarioLabel(sensors, presenceMap, allPresenceHosts, vpMap, allVpHosts
 
 /**
  * Build the full scenario grid for an analysis: every combination of sampled sensor values,
- * presence on/off states (all subsets when three hosts or fewer), and video-player statuses
+ * presence on/off states (all subsets when three hosts or fewer), and video_player statuses
  * observed in the rules plus a no-state baseline. Deterministic ordering keeps reports stable.
  *
  * @param {Array<Record<string, unknown>>} rules - Rules from an automation config.
@@ -367,26 +414,31 @@ function scenarioLabel(sensors, presenceMap, allPresenceHosts, vpMap, allVpHosts
 export function buildScenarios(rules) {
     const ruleList = Array.isArray(rules) ? rules : []
 
-    // Sensor dimensions -- bounds collected per key across all rules.
+    // Sensor dimensions -- bounds collected per key across all rules (including nested groups).
     const sensorKeys = collectSensorKeys(ruleList)
     const pointsBySensor = {}
     for (const key of sensorKeys) {
         const bounds = []
         for (const rule of ruleList) {
-            const constraint = rule.conditions?.[key]
-            if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
-                for (const v of Object.values(constraint)) if (typeof v === 'number') bounds.push(v)
-            }
+            forEachConditionGroup(rule.conditions, (group) => {
+                const constraint = group[key]
+                if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
+                    for (const v of Object.values(constraint)) if (typeof v === 'number') bounds.push(v)
+                }
+            })
         }
         pointsBySensor[key] = samplePoints(bounds)
     }
 
-    // Presence dimension -- every host any rule references; subsets when small enough to enumerate fully.
+    // Presence dimension -- every host any rule references (top-level or inside composite groups);
+    // subsets when small enough to enumerate fully.
     const presenceHostSet = new Set()
     for (const rule of ruleList) {
-        if (rule.conditions?.presence !== undefined) {
-            for (const host of Object.keys(normalizePresenceCondition(rule.conditions.presence))) presenceHostSet.add(host)
-        }
+        forEachConditionGroup(rule.conditions, (group) => {
+            if (group.presence !== undefined) {
+                for (const host of Object.keys(normalizePresenceCondition(group.presence))) presenceHostSet.add(host)
+            }
+        })
     }
     const hosts = [...presenceHostSet].sort()
     let presenceCombos
@@ -406,15 +458,18 @@ export function buildScenarios(rules) {
         }
     }
 
-    // Video-player dimension -- statuses the rules themselves list per host, plus a no-state baseline.
+    // Video-player dimension -- statuses the rules themselves list per host (top-level or inside
+    // composite groups), plus a no-state baseline.
     const vpStatusesByHost = {}
     for (const rule of ruleList) {
-        const cond = rule.conditions?.['video-player']
-        if (!cond || typeof cond !== 'object') continue
-        for (const [host, raw] of Object.entries(cond)) {
-            const list = Array.isArray(raw) ? raw : [raw]
-            vpStatusesByHost[host] = [...new Set([...(vpStatusesByHost[host] ?? []), ...list])]
-        }
+        forEachConditionGroup(rule.conditions, (group) => {
+            const cond = group['video_player']
+            if (!cond || typeof cond !== 'object' || Array.isArray(cond)) return
+            for (const [host, raw] of Object.entries(cond)) {
+                const list = Array.isArray(raw) ? raw : [raw]
+                vpStatusesByHost[host] = [...new Set([...(vpStatusesByHost[host] ?? []), ...list])]
+            }
+        })
     }
     const vpHosts = Object.keys(vpStatusesByHost).sort()
     let optionsPerHost = vpHosts.map((h) => [...vpStatusesByHost[h].slice(0, 4), undefined])
@@ -547,7 +602,7 @@ export function analyzeRules(options) {
             ruleCount: rules.length,
             scenarioCount: scenarios.length,
             season: options.season ?? null,
-            note: 'state-changed-ago-minutes and after_latest_of/after_earliest_of conditions are treated as satisfied in static analysis',
+            note: 'state_changed_ago_minutes and after_latest_of/after_earliest_of conditions are treated as satisfied in static analysis',
         },
         hours,
         gaps,

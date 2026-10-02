@@ -19,6 +19,10 @@ sensors:
 triggers_zigbee:
   - 'Outdoor Luminance'
 
+# Presence transitions of these hosts wake this automation under trigger_on_change_only --
+# list your own network host names here when a rule keys off presence (e.g. via any_of).
+triggers_network: [my-pc, laptop]
+
 timer_interval: "30s"
 
 # Only re-evaluate on real sensor/player/presence transitions, not every interval tick:
@@ -36,7 +40,7 @@ rules:
   - name: 'Bright morning - turn off leftover lights'
     once: true
     conditions:
-      time-of-day: [morning]
+      time_of_day: [morning]
       illuminance: { gte: 20 }
     targets:
       Kitchen_Outlet: OFF
@@ -50,7 +54,7 @@ rules:
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:
-      time-of-day: [evening, night]
+      time_of_day: [evening, night]
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON
