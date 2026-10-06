@@ -6,18 +6,6 @@
   Remove all the information about "how things changed" or "logic reasoning"
   behind those choices, or any other forms of elaborates. Keep it to the minimum
   required for human to comprehend certain setting or a file.
-- Add safety validation for incoming MQTT messages with texts. Remove unwanted
-  characters like emoji, remove special characters, leave just UTF8 responsible
-  for basic languages (slavic, germanic, hispanic, etc)
-- Always display date and sunrise+sunset hours for the day in UI's sensors window (2)
-  Remember to refresh it (as everything) so it doesn't get stale
-- Add a UI window for "last matched rule(s)" for each RuleBasedAutomation
-  (easier rules debugging)
-- Implement simple personalization by adding a config option allowing to name
-  the AI; then in the main prompts it should replace "Nazywasz się Gerwazy" with
-  interpolation, "Nazywasz się {% name %}" (or something). Also, the UI chat
-  window (3) should then rename "AI" to the assistant's name in both "join"
-  message, chat messages and actions.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
   pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
