@@ -1,6 +1,4 @@
-# ================================================================
-# TTS GARDENER -- Configuration Template
-# ================================================================
+# TTS GARDENER -- Configuration
 # Watches soil-moisture flower sensors and announces plant hydration
 # status by voice, with sentences chosen from moisture thresholds tuned below.
 #
@@ -29,8 +27,9 @@
 #   {% driest_moisture %}  -- that plant's raw moisture value (digits only)
 # Numeric values stay out of template words on purpose so Piper TTS and small models read
 # digits naturally in any locale; unit words live in the sentences themselves.
+# Reference: doc/automations/gardener.md
 #
-# Copy this file to "tts-gardener.yaml" and customize for your home.
+# Template -- copy to tts-gardener.yaml and customize for your home.
 
 triggers_zigbee: [Flower Sensor One, Flower Sensor Two]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
 

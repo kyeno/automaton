@@ -2,15 +2,12 @@
 # Rule-based roller-shutter controller for a home office (or any room with blinds).
 # Evaluates outdoor illuminance + temperature against time-of-day and network-presence
 # rules, then merges matching results per target using "most-closed-wins" logic.
+# Presence hostnames must match entries in etc/device/network.yaml.
+# Reference: doc/automations/home-office-rollers.md
 #
-# Copy this file to "home-office-rollers.yaml" and customize device names, hostnames,
-# thresholds and rules for your home. Presence hostnames must match entries in
-# etc/device/network.yaml.
-#
-# Each automation also needs a companion JavaScript class that extends
-# RuleBasedAutomationBase (see homeOfficeRollersAutomation.js or exampleAutomation.js.dist).
+# Template -- copy to home-office-rollers.yaml and customize device names, hostnames and rules.
 
-# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
 # underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:
@@ -27,20 +24,14 @@ triggers_network:
 
 timer_interval: "1m"
 
-# Optional stand-down guard: while any listed player is in one of the listed
-# statuses, the whole automation stands down (e.g., so it does not fight a
-# home-theater automation over the same rollers). Hosts combine with OR;
-# statuses: playing, paused, stopped, offline. Individual rules
-# may opt out via `ignore_video_player_suppression: true`.
+# Stand-down guard: while a listed player is in a listed status, the whole automation
+# stands down. Hosts combine with OR; statuses: playing, paused, stopped, offline.
+# Individual rules may opt out via `ignore_video_player_suppression: true`.
 video_player_suppression:
   my-pc: [playing, paused, stopped]
 
 rules:
-  # The 12:30 boundary: from just after midday the sun sits directly above the building and
-  # no longer overheats the room, so the morning shading must release at 12:30 -- not at
-  # 12:00, and not at 13:00. `hour:` bounds accept minute-precision clock times (NATO-style
-  # HHMM, 'HH:MM', or a fractional hour), so a mid-day boundary is writeable at all; a plain
-  # hour bound tops out at 23 and a bare 1230 there would be a silent no-op.
+  # Minute-precision clock bound: 1230 == 12:30 (also accepted: '12:30', 12.5).
   - name: 'Morning: Hot - close'
     conditions:
       time_of_day: [morning, noon]
@@ -50,10 +41,8 @@ rules:
       Home_Office_Roller_Left: CLOSE
       Home_Office_Roller_Right: CLOSE
 
-  # Gated behind civil dawn (`sunrise`/`sundawn` resolve to civil twilight, not the
-  # geometric disc edge). A pre-dawn tick already reads daytime on the street sensor --
-  # without the gate the windows throw open in pitch darkness. The `gt: 15` floor keeps the
-  # darkness-close rule and this one from competing over the same tick.
+  # Gated on civil dawn ("sunrise" resolves to civil twilight, not the geometric disc
+  # edge); the gt: 15 floor keeps this out of the darkness-close tick.
   - name: 'Anytime: Warm, not too bright - open'
     conditions:
       time_of_day: [morning, noon, afternoon, evening]
@@ -80,11 +69,8 @@ rules:
       Home_Office_Roller_Left: CLOSE
       Home_Office_Roller_Right: CLOSE
 
-  # The park rule. The `gte: 200` illuminance floor is what makes it a park rule: below it
-  # the daylight rules above are free to open the windows, and at 200 lux and up this rule's
-  # partial positions out-vote every OPEN in the same tick (most-closed-wins). Without the
-  # floor it fired in dim light, permanently shading the room and out-voting OPEN -- the
-  # classic "PC online but windows stuck half-closed" symptom.
+  # Park rule: the gte: 200 illuminance floor is what makes it one -- at 200 lux and up
+  # its partial positions out-vote every OPEN in the same tick (most-closed-wins).
   - name: 'Day: laptop present, not too bright'
     conditions:
       time_of_day: [morning, noon, afternoon]

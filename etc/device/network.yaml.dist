@@ -1,8 +1,9 @@
 # Network Device Configuration
 # Lists computers, routers, access points and appliances on your network.
 # Used by automations for presence detection via ping checks.
+# Reference: doc/monitors/network-presence.md, doc/monitors/video-player.md
 #
-# Copy this file to "network.yaml" and replace placeholders with your actual devices.
+# Template -- copy to network.yaml and replace placeholders with your actual devices.
 
 computers:
   # Replace hostname/ip pairs with your own machines

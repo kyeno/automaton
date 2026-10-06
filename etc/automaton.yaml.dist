@@ -1,73 +1,58 @@
-# ================================================================
-# AUTOMATON -- Main Configuration File (distribution template)
-# ================================================================
-# Copy this file to "automaton.yaml" and customize for your environment;
-# the system falls back to this .dist file if the active config is missing.
+# AUTOMATON -- Main Configuration File
 # Behavioral settings live here; connection strings & secrets stay in .env
-# (MQTT_URL, REDIS_URL, AI_API_URL, ...). Full reference: doc/configuration.md.
-# ================================================================
+# (MQTT_URL, REDIS_URL, AI_API_URL, ...). Full reference: doc/configuration.md
+# Template -- copy to automaton.yaml and customize for your setup.
 
-# ----------------------------------------------------------------
-# LOCALE -- language + time display (drives AI prompt, TTS voice, UI greetings)
-# ----------------------------------------------------------------
+# --- LOCALE: language + time display (drives AI prompt, TTS voice, UI greetings)
 locale:
   # BCP 47 code == directory name under etc/i18n/. Available: pl_PL, en_US
   language: en_US
   # Time display format: "12h" (01:30pm) or "24h" (13:30)
   time_format: "24h"
-  # Observer coordinates driving the sun-based rule shorthands ("sundawn"/"sundusk").
-  # WGS84 decimal degrees; latitude positive north, longitude positive east. Set to your site.
-  geo_latitude: 52.0        # your site's latitude (e.g. 52.0)
-  geo_longitude: 21.0       # your site's longitude (e.g. 21.0)
+  # Observer coordinates driving the sun-based rule shorthands ("sundawn"/"sundusk"):
+  # WGS84 decimal degrees, latitude positive north, longitude positive east
+  geo_latitude: 52.0
+  geo_longitude: 21.0
 
-# ----------------------------------------------------------------
-# AI -- provider + conversation settings (API secret stays in .env)
-# ----------------------------------------------------------------
+# --- AI: provider + conversation settings (API secret stays in .env)
 ai:
   model: gemma-4-E2B-it      # required for chat requests
-  #model: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_P   # recommended for more interesting interaction
-  name: Gerwazy           # the assistant's own name: fills {% name %} in the system prompt and signs the AI window
+  name: Gerwazy           # the assistant's own name: fills {% name %} in the system prompt
   max_tokens: -1            # -1 = omit from request, let the provider default apply
   temperature: 1.0          # sampling 0.0-1.0 (lower=deterministic, higher=creative)
   fetch_timeout_ms: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models
   conversation_ttl_sec: "15m"   # how long idle conversations linger in Redis before purge
   max_conversation_turns: 10    # message turns retained in context window
   strip_ai_formatting: true     # strip markdown/emoji before UI/TTS
-  include_chat_history_in_system_calls: false  # system-origin announcements receive prior chat context; default false keeps them standalone (faster inference)
+  include_chat_history_in_system_calls: false  # system-origin announcements receive prior chat context; false keeps them standalone
 
-# ----------------------------------------------------------------
-# AI BRIDGE -- dedicated MQTT channel letting external clients (web UI / STT backends)
-# talk to the shared AI conversation. Contract: _debug/ai-bridge-mqtt-channel.md
-# ----------------------------------------------------------------
+# --- AI BRIDGE: dedicated MQTT channel letting external clients (web UI / STT
+# backends) talk to the shared AI conversation
 ai_bridge:
-  enabled: true               # master switch; prompts are dropped while the AI provider is unconfigured
-  topic_base: "automaton/ai"  # dedicated tree, kept OUTSIDE zigbee2mqtt/* on purpose
-  forward_events: true        # stream tool/device interactions over MQTT too (web-client friendly)
+  enabled: true               # master switch
+  topic_base: "automaton/ai"  # dedicated tree, kept OUTSIDE zigbee2mqtt/*
+  forward_events: true        # stream tool/device interactions over MQTT too
 
-# ----------------------------------------------------------------
-# ALERTS -- spoken notifications for notable system events
-# ----------------------------------------------------------------
+# --- ALERTS: spoken notifications for notable system events
+# Reference: doc/monitors/offline-alerts.md
 alerts:
-  # Spoken warnings for notable system events (doc/monitors/offline-alerts.md).
-  # Sentences live in etc/i18n/<locale>/alerts.yaml; jingle framing comes from a
-  # profile in etc/i18n/<locale>/tts.yaml `profiles:` or an explicit *_tts_options block.
-
-  # --- Zigbee devices leaving the mesh -------------------------------------
+  # --- Zigbee devices leaving the mesh
   # Speak a warning when a configured Zigbee device leaves the network
   zigbee_offline_tts: true
   # Per-device re-warning cooldown ("90s","15m", or ms); 0 = warn on every leave event
   zigbee_offline_cooldown_ms: "30m"
   # Device names never announced (e.g., intentionally removed sensors)
   zigbee_offline_ignore: []
-  # Jingle framing profile name from the locale tts.yaml `profiles:` (empty = none)
-  zigbee_offline_tts_profile: ''
-  # Explicit framing wins over the profile, key by key:
+  # Jingle framing profile name from the locale tts.yaml `profiles:` (empty = none).
+  # Sentences live in etc/i18n/<locale>/alerts.yaml. Explicit framing wins over the
+  # profile, key by key:
   # zigbee_offline_tts_options:
   #   intro: 'alarm.wav'
   #   outro: 'end.wav'
   #   intro_spacing: -1.5
+  zigbee_offline_tts_profile: ''
 
-  # --- Mission-critical network hosts going offline ------------------------
+  # --- Mission-critical network hosts going offline
   # Hosts are polled by NetworkPresence; the names below must exist in
   # etc/device/network.yaml (IPs live there, never in this file).
   network_offline_tts: true
@@ -81,15 +66,13 @@ alerts:
   # Allow-list of watched hosts; per-host overrides optional (null = defaults).
   # Overrides accept cooldown_ms, tts_profile and a tts_options block:
   # network_offline_devices:
-  #   core-server:                        # name from network.yaml
+  #   core-server:
   #   dns-server:
   #     cooldown_ms: "5m"
   #   wifi-router:
   #     tts_profile: 'alarm'
 
-# ----------------------------------------------------------------
-# LOGGER -- Winston console/file transports & log file paths
-# ----------------------------------------------------------------
+# --- LOGGER: Winston console/file transports & log file paths
 logger:
   file:
     max_size: 5242880       # bytes per log file (5MB)
@@ -103,8 +86,7 @@ logger:
     warn: var/log/warn.log
     trace: var/log/trace.log  # TRACE-level diagnostics only; never shown in UI/console
 
-# Override config/directory locations (optional). Defaults are the etc/* paths below.
-# Uncomment and edit to relocate any of them.
+# --- PATHS: config/directory locations (optional; defaults are the paths below)
 # paths:
 #   configs:
 #     network: "etc/device/network.yaml"
@@ -113,9 +95,7 @@ logger:
 #     automation: "etc/automation/"
 #     interaction: "etc/interaction/"
 
-# ----------------------------------------------------------------
-# AUTOMATION -- global device/interaction behavior
-# ----------------------------------------------------------------
+# --- AUTOMATION: global device/interaction behavior
 automation:
   # Skip a device this long after a human changes it manually ("90s","15m", or ms; 0 = off)
   human_interaction_cooldown_ms: "25m"
@@ -127,9 +107,7 @@ automation:
   # travel_echo_grace_ms: "2s"       # pre-motion near-target grace window
   # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
 
-# ----------------------------------------------------------------
-# UI -- terminal interface. See doc/ui/index.md for widget/channel reference.
-# ----------------------------------------------------------------
+# --- UI: terminal interface. See doc/ui/index.md for widget/channel reference.
 ui:
   # Jingle framing profile for text typed into the TTS window (window 3): a name
   # from etc/i18n/<locale>/tts.yaml `profiles:`; empty = plain speech

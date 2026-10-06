@@ -1,35 +1,20 @@
-# Home Theater Automation -- one-room instance (distribution template).
+# Home Theater Automation -- one-room instance
+# Presence-gated video-player dark mode for a SINGLE room: while the player answers
+# HTTP (any state) the room's rollers are closed and handed back to the room's roller
+# owner when it goes offline; while a video plays, interfering lights go off; on
+# pause/stop/gone, light restore is delegated to the ambient-lights automation via
+# invoke_automation.
+# Requires video players defined under `videoPlayers` in etc/device/network.yaml.
+# Reference: doc/automations/home-theater-mode.md
 #
-# Presence-gated video-player dark mode for a SINGLE room: while the player
-# answers HTTP (any state) the room's rollers are closed and handed back to the
-# room's roller owner when it goes offline; while a video plays, interfering
-# lights go off (dark mode). Light restore is split by player state: an ONLINE
-# player that has paused/stopped restores its lamp set locally from
-# time-of-day + illuminance rules (dimmers come back switched on with
-# per-channel levels, l1 at 50% / l2 at 25%, rather than full ON); a GONE
-# player instead delegates the restore to the ambient-lights owner, so the
-# lamps are restored by their own rules rather than re-asserted here.
-#
-# One instance per room keeps trigger subscriptions scoped to that room's
-# hosts, so other rooms' players never fire this execution chain. Deploying
-# several rooms in ONE instance also works if you prefer it. The outdoor
-# illuminance sensor is a context source of truth only (`sensors:`), never a
-# trigger -- sensor reports must not re-run this automation (a sensor change
-# while a player is off would otherwise re-fire the gone rule constantly).
-#
-# Requires video players defined under `videoPlayers` in etc/device/network.yaml
-# (see the MPC-HC / VLC setup notes there).
-#
-# The automation opts into `override_human_interaction` so it is "sticky" while
-# active: manual changes to its target devices are re-corrected on the next tick
-# rather than being deferred to a human-interaction cooldown.
+# Template -- copy to home-office-video.yaml (one instance per room) and customize.
 
+# "Sticky" while active: manual changes to target devices are re-corrected on the
+# next tick instead of being deferred to the human-interaction cooldown.
 override_human_interaction: true
 
-# Timer is a safety net only: skip scheduled ticks unless a monitored state
-# (video-player status, network presence) actually transitioned since the last
-# evaluation. Prevents idle 15-minute ticks from re-firing the restore rule
-# every interval once the player is offline.
+# Timer is a safety net only: ticks are skipped unless a monitored state
+# (video-player status, network presence) transitioned since the last evaluation.
 trigger_on_change_only: true
 
 # Context source of truth for the restore rule's illuminance gate -- NOT a trigger.
@@ -38,8 +23,8 @@ sensors:
 
 timer_interval: "15m"
 
-# Rule "targets:" keys are your own Zigbee device names (must exist in zigbee.yaml)
-# with spaces replaced by underscores -- no separate declaration list needed.
+# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
+# underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 triggers_video:
   - my-pc
@@ -48,10 +33,7 @@ triggers_network:
   - my-pc
 
 rules:
-  # Rollers are owned while the player answers HTTP; handed back to the room's own
-  # roller automation when it goes offline -- replace placeholder names with your
-  # installed automations. `force: true` makes them act even if a once/silent guard
-  # would otherwise block (human cooldowns still apply).
+  # Rollers are owned while the player answers HTTP (any state).
   - name: 'Office: player reachable - close rollers'
     conditions:
       presence: { my-pc: true }
@@ -59,11 +41,9 @@ rules:
     targets:
       Living_Room_Roller_Left: CLOSE
 
-  # Player gone: hand the room back to its owners in one rule. The array form of
-  # `invoke_automation` force-fires BOTH the roller owner (post-playback shutter
-  # position) and the ambient-lights owner (lamp restore). Keyed on the player
-  # state alone -- `offline` covers both an unresponsive player and a powered-down
-  # host, so no separate `presence` gate is needed.
+  # Player gone: hand the room back to its owners. The array form of
+  # `invoke_automation` force-fires both the roller owner and the ambient-lights
+  # owner; `offline` covers an unresponsive player and a powered-down host.
   - name: 'Office: player gone - hand back to the room owners'
     conditions:
       video_player: { my-pc: [offline] }
@@ -71,14 +51,9 @@ rules:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
 
-  # Light restore for an ONLINE player that has paused or stopped: the lamp set comes
-  # back directly from this rule, gated by time of day + outdoor illuminance. When the
-  # player is GONE (offline) the hand-back rule above delegates the restore to the
-  # ambient-lights owner instead, so the two never fight over the same lamps. Dimmers
-  # take a structured `{state: 'ON', brightness: { l1: 50, l2: 25 }}` command: a bare
-  # `{brightness: N}` only sets the level and never switches the relay on, so the state
-  # comes first and the per-channel map is split into a separate level publish (the
-  # Tuya/AVATTO converter drops combined payloads).
+  # Light restore for an ONLINE player that has paused or stopped, gated by time of
+  # day + outdoor illuminance. Dimmers take `{state: 'ON', brightness: { l1: 50, l2: 25 }}`:
+  # a bare `{brightness: N}` sets the level without switching the relay on.
   - name: 'Office: paused/stopped - restore ambient lighting'
     conditions:
       video_player: { my-pc: [paused, stopped] }

@@ -2,12 +2,13 @@
 # Lists all Zigbee devices grouped by type. These names must match exactly
 # what Zigbee2MQTT reports for each device's friendly_name.
 #
-# Copy this file to "zigbee.yaml" and populate with your actual device names.
+# Template -- copy to zigbee.yaml and populate with your actual device names.
 
 mechanism:
   # Outlets, switches controlling lights, roller shutters etc.
   - "Living Room Outlet"
   - "Bedroom Roller Shutter"
+
   # Multi-channel wall switches/dimmers use object entries with an optional subtype
   # plus per-device parameters passed through to the device class:
   #   - name: "Kitchen Sink Light"
@@ -16,6 +17,9 @@ mechanism:
   #                             # (declaration order: first = ONE, second = TWO)
   #     brightness_range:       # optional dimming bounds override ([min,max], 0-254)
   #       left: [1, 254]
+  # - name: "Living Room Dimmer"
+  #   type: dualDimmer
+  #   channels: [l1, l2]
 
 remote:
   # Wall remotes and handheld controllers

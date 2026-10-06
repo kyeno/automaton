@@ -3,7 +3,7 @@
 # Speech templates for the ttsWeatherman automation.
 # Supports {{ DeviceName.property }} interpolation for live sensor data.
 #
-# Copy this file to "weatherman.yaml" and customize sentences for your home.
+# Template -- copy to weatherman.yaml and customize sentences for your home.
 
 # Opening time-of-day line -- rendered BEFORE the base sentence by buildTimeSentence()
 # on both output paths (AI rewrite and direct TTS). Clock parts are pre-rendered as

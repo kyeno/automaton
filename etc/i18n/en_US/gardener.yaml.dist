@@ -11,7 +11,7 @@
 # Keep numeric values out of the template words where possible so Piper TTS and small
 # models read digits naturally in any locale; unit words stay in the sentences themselves.
 #
-# Copy this file to "gardener.yaml" and customize sentences for your home.
+# Template -- copy to gardener.yaml and customize sentences for your home.
 
 critical:
   tts: 'Attention! Soil moisture has dropped dangerously low on {% affected_flowers %}. The driest one, {% driest_flower %}, sits at just {% driest_moisture %}. Water them immediately!'

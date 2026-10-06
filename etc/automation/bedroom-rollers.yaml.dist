@@ -1,9 +1,9 @@
 # Bedroom Roller Shutter Automation Configuration
 # Controls multiple roller shutters in a bedroom based on outdoor conditions.
-#
-# Copy this file to "bedroom-rollers.yaml" (or your own name) and customize.
+# Reference: doc/automations/bedroom-rollers.md
+# Template -- copy to bedroom-rollers.yaml (or your own name) and customize.
 
-# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
 # underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:
@@ -16,10 +16,8 @@ triggers_zigbee:
 
 timer_interval: "1m"
 
-# Optional stand-down guard: while any listed player is in one of the listed
-# statuses, the whole automation stands down (e.g., so it does not fight a
-# home-theater automation over the same rollers). Hosts combine with OR;
-# statuses: playing, paused, stopped, offline.
+# Stand-down guard: while a listed player is in a listed status, the whole automation
+# stands down. Hosts combine with OR; statuses: playing, paused, stopped, offline.
 video_player_suppression:
   my-pc: [playing, paused, stopped]
 

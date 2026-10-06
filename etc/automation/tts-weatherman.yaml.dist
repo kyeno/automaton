@@ -1,21 +1,16 @@
-# ttsWeatherMan Configuration Template
+# ttsWeatherMan Configuration
 # Rule-based TTS weather announcer with sensor data interpolation.
-#
 # Builds a speech message from a base sentence and condition-matched additions,
 # then routes through AI -> TTS pipeline (or direct TTS if AI unavailable).
-#
 # Sensor values can be interpolated into i18n strings using {{ DeviceName.property }}
 # syntax (e.g., "{{ Outdoor Temperature.temperature }}" resolves to live sensor data).
+# When multiple rules match, only the one with the highest priority fires; default
+# priority is 0, higher number = higher precedence.
+# Reference: doc/automations/weatherman.md
 #
-# When multiple rules match, only the one with the highest priority fires.
-# Default priority is 0 if not specified. Higher number = higher precedence.
-#
-# Copy this file to "tts-weatherman.yaml" and customize for your home.
+# Template -- copy to tts-weatherman.yaml and customize for your home.
 
-#timer_interval: "90m"    # 1.5 hours
-timer_interval: "1h"      # 1 hour
-#timer_interval: "15m"
-#timer_interval: "3m"
+timer_interval: "1h"
 
 silence_between: "0230-1030"     # Suppress execution between these local times (HHmm-HHmm); set to null to disable
 
@@ -31,7 +26,6 @@ sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 #   ai_proverb -- direction carried in the AI prompt, so the model announces the
 #                 proverb in its own voice;
 #   tts_proverb -- spoken verbatim by direct TTS when AI is unavailable.
-# Remove the block to go back to plain announcements.
 add_proverb: false
 
 # OPTIONAL -- Route reports through the AI engine before TTS when it is configured and
@@ -54,11 +48,10 @@ sensors:
 tts_options:
   intro:          # Wave filename played before the synthesized speech
   outro:          # Wave filename played after the synthesized speech
-  intro_spacing:  # Seconds between intro end and speech start; negative = overlap (e.g., -2.5)
+  intro_spacing:  # Seconds between intro end and speech start; negative = overlap
 
 # Stand-down guard -- while any listed player is in one of these statuses the whole automation stays
 # quiet so a movie is not interrupted by weather chatter. Hosts combine with OR; force does NOT bypass it.
-# Remove this block to let WeatherMan announce regardless of playback state.
 video_player_suppression:
   htpc: [playing]      # Home theater / HTPC player
   bedroom: [playing]   # Bedroom player

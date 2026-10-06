@@ -9,7 +9,7 @@
 # keep both keys anyway so bundles stay structurally identical across locales.
 # Add more buckets freely and reference them from greeting_windows in tts-greeter.yaml.
 #
-# Copy this file to "greeter.yaml" and customize sentences + host names for your home.
+# Template -- copy to greeter.yaml and customize sentences + host names for your home.
 
 names:
   hostname1: { vocative: 'John', genitive: 'John' }

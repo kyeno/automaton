@@ -4,6 +4,8 @@
 # The {device} placeholder is replaced with the device's friendly name.
 # Keys may be plain sentences, or per-device maps with a `default` entry -- the
 # per-device entries below are examples; keep only the hosts you watch.
+#
+# Template -- copy to alerts.yaml and keep only the sentences you need.
 
 # A configured Zigbee device left the network
 zigbee_device_offline: "Attention, device {device} has left the Zigbee network."

@@ -1,26 +1,19 @@
-# Home Theater Automation -- one-room instance (distribution template).
+# Home Theater Automation -- one-room instance
+# Presence-gated video-player dark mode for a SINGLE room: while the player answers
+# HTTP (any state) the room's rollers are closed and handed back to the room's roller
+# owner when it goes offline; while a video plays, interfering lights go off; on
+# pause/stop/gone, light restore is delegated to the ambient-lights automation via
+# invoke_automation.
+# Requires video players defined under `videoPlayers` in etc/device/network.yaml.
+# Reference: doc/automations/home-theater-mode.md
 #
-# Presence-gated video-player dark mode for a SINGLE room: while the player
-# answers HTTP (any state) the room's rollers are closed and handed back to the
-# room's roller owner when it goes offline; while a video plays, interfering
-# lights go off (dark mode); on pause/stop/gone light restore is delegated to
-# the ambient-lights automation via invoke_automation.
-#
-# One instance per room keeps trigger subscriptions scoped to that room's
-# hosts, so other rooms' players never fire this execution chain. Deploying
-# several rooms in ONE instance also works if you prefer it.
-#
-# Requires video players defined under `videoPlayers` in etc/device/network.yaml
-# (see the MPC-HC / VLC setup notes there).
-#
-# The automation opts into `override_human_interaction` so it is "sticky" while
-# active: manual changes to its target devices are re-corrected on the next tick
-# rather than being deferred to a human-interaction cooldown.
-
+# Template -- copy to bedroom-video.yaml (one instance per room) and customize.
+# "Sticky" while active: manual changes to target devices are re-corrected on the
+# next tick instead of being deferred to the human-interaction cooldown.
 override_human_interaction: true
 
-# Rule "targets:" keys are your own Zigbee device names (must exist in zigbee.yaml)
-# with spaces replaced by underscores -- no separate declaration list needed.
+# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
+# underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 triggers_video:
   - laptop
@@ -29,10 +22,7 @@ triggers_network:
   - laptop
 
 rules:
-  # Rollers are owned while the player answers HTTP; handed back to the room's own
-  # roller automation when it goes offline -- replace placeholder names with your
-  # installed automations. `force: true` makes them act even if a once/silent guard
-  # would otherwise block (human cooldowns still apply).
+  # Rollers are owned while the player answers HTTP (any state).
   - name: 'Bedroom: player reachable - close rollers'
     conditions:
       presence: { laptop: true }

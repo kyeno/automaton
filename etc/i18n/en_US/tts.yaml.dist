@@ -3,7 +3,7 @@
 # Template merged into every TTS API request for this locale.
 # "model" is REQUIRED. All other fields are OPTIONAL.
 #
-# Copy this file to "tts.yaml" and customize voice model for your setup.
+# Template -- copy to tts.yaml and customize voice model for your setup.
 
 # REQUIRED - Voice model identifier for tts-server
 #model: "en_GB-alan-medium"     # British

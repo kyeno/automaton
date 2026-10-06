@@ -11,7 +11,7 @@
 #     The interaction finds each device via DeviceContainer and calls receiveCommand(command).
 #   - calls: Delegate to another named interaction's execute() method.
 #
-# Copy this file to "interaction.yaml" and customize for your setup.
+# Template -- copy to interaction.yaml and customize for your setup.
 
 interactions:
   # Example: Remote controlling two roller shutters in a room.

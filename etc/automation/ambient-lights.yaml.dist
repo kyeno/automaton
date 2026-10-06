@@ -1,16 +1,11 @@
 # Ambient Lights Automation Configuration
 # Morning: turns off leftover lights once natural light becomes sufficient.
-# Dusk: turns on ambient lamps (socket-powered) once it gets dark enough -- the
-# "Settled dusk" rule covers the evening/night windows and both fires autonomously
-# and answers a home-theater player-gone hand-off (a forced poke re-evaluates it
-# without consuming its once-per-day budget).
-# Each autonomous rule acts at most once per calendar day PER TIME WINDOW ("once: true"),
-# so an early firing never eats the budget of a later darkness window on the same day.
-# Humans keep full control within a window after it fires.
-#
-# Copy this file to "ambient-lights.yaml" and customize device names/thresholds.
+# Dusk: turns on ambient lamps (socket-powered) once it gets dark enough.
+# Each autonomous rule acts at most once per calendar day PER TIME WINDOW ("once: true").
+# Reference: doc/automations/ambient-lights.md
+# Template -- copy to ambient-lights.yaml and customize device names/thresholds.
 
-# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
 # underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:
@@ -19,29 +14,22 @@ sensors:
 triggers_zigbee:
   - 'Outdoor Luminance'
 
-# Presence transitions of these hosts wake this automation under trigger_on_change_only --
-# list your own network host names here when a rule keys off presence (e.g. via any_of).
+# Presence transitions of these hosts wake this automation under trigger_on_change_only.
 triggers_network: [my-pc, laptop]
 
 timer_interval: "30s"
 
-# Only re-evaluate on real sensor/player/presence transitions, not every interval tick:
-# prevents stale conditions from re-asserting light states on idle intervals.
+# Re-evaluate only on real sensor/player/presence transitions, not on every interval tick.
 trigger_on_change_only: true
 
-# Stand-down guard: while either player is actively playing, Home Theater Mode owns
-# the lights and we stand down so we do not fight it over the same devices. Replace
-# these host names with your own video-player host names from network.yaml.
+# Stand-down guard: while a listed player is in a listed status, Home Theater Mode owns
+# the lights. Hosts combine with OR; statuses: playing, paused, stopped, offline.
 video_player_suppression:
   my-pc: [playing]
   laptop: [playing]
 
 rules:
-  # Sunrise guard: a pre-dawn tick must not switch the lamps off just because the street
-  # sensor already reads daytime. Civil dawn (`sunrise`/`sundawn` resolve to civil twilight)
-  # lands up to ~35 minutes ahead of geometric sunrise at mid-latitudes, and the 20 lux
-  # threshold is crossed inside that gap -- without the guard the lamps go dark while the
-  # room is still in pre-dawn darkness.
+  # Morning lights-off, gated on civil dawn ("sunrise" resolves to civil twilight).
   - name: 'Bright morning - turn off leftover lights'
     once: true
     conditions:
@@ -53,10 +41,8 @@ rules:
       Hallway_Outlet: OFF
       Living_Room_Switch: OFF
 
-  # Covers every dark window (evening/night) in one rule: fires autonomously once per window
-  # when it gets dark enough, AND answers a home-theater player-gone hand-off -- a forced
-  # poke re-evaluates it without consuming the once-per-day budget, so a movie that ends
-  # past midnight still gets these lamps back while pre-dawn ticks never fire uninvited.
+  # Dark-window rule: fires once per window when it gets dark enough, and answers a
+  # home-theater player-gone hand-off (forced poke, no budget consumed).
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:

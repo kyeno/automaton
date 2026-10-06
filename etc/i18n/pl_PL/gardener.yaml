@@ -10,8 +10,6 @@
 #   {% driest_moisture %}  -- that plant's raw moisture value (digits only)
 # Keep numeric values out of the template words where possible so Piper TTS and small
 # models read digits naturally in any locale; unit words stay in the sentences themselves.
-#
-# Copy this file to "gardener.yaml" and customize sentences for your home.
 
 critical:
   tts: 'Uwaga! Wilgotność podłoża spadła do niebezpiecznych wartości: {% affected_flowers %}. Najbardziej przesuszone jest {% driest_flower %}, z odczytem tylko {% driest_moisture %}. Podlej je natychmiast!'

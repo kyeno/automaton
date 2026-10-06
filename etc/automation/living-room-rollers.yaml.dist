@@ -1,14 +1,12 @@
 # Automation Configuration Template
 # Example rule-based automation controlling roller shutters based on
 # illuminance, temperature, time-of-day and presence detection.
+# Reference: doc/automations/home-office-rollers.md
 #
-# Copy this file to a name like "my-room-rollers.yaml" and customize
-# device names, thresholds and rules for your home.
-#
-# Each automation also needs a companion JavaScript class that extends
-# RuleBasedAutomationBase (see exampleAutomation.js.dist for reference).
+# Template -- copy to a name like "my-room-rollers.yaml" and customize device
+# names, thresholds and rules.
 
-# Rule "targets:" keys are your zigbee2mqtt device names with spaces replaced by
+# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
 # underscores (casing kept) -- they must exist in your setup; no separate list needed.
 
 sensors:

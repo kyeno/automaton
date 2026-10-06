@@ -8,7 +8,7 @@
 # so pick whichever case your sentence grammar needs ("Witaj, Macieju!" vs "komputer Macieja").
 # Add more buckets freely and reference them from greeting_windows in tts-greeter.yaml.
 #
-# Copy this file to "greeter.yaml" and customize sentences + host names for your home.
+# Template -- copy to greeter.yaml and customize sentences + host names for your home.
 
 names:
   hostname1: { vocative: 'Janie', genitive: 'Jana' }
