@@ -5,6 +5,14 @@
  * Extends BaseWindow for consistent buffering and rendering.
  * Styled after classic BitchX/IRC clients.
  *
+ * Every transcript line -- typed at the keyboard or published on the MQTT AI bridge -- is
+ * rendered from the shared `ai:userMessage` / `ai:assistantMessage` EventBus channels, so the
+ * window holds one faithful transcript of the whole conversation:
+ *   <you>     prompt typed in this window
+ *   <remote>  prompt arriving from an external client (MQTT bridge / STT backend)
+ *   <system>  periodic system prompt (weatherman, greeter, gardener)
+ *   <AI>      assistant reply (rendered red as [ERROR: ...] when the turn failed)
+ *
  * Dependencies: receives `term` and `layout` via constructor.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -21,9 +29,13 @@ import StateService from '../../service/stateService.js'
 import AiAssistant from '../../ai/aiAssistant.js'
 import I18nLoader from '../../service/i18nLoader.js'
 import { tsPrefix } from '../../lib/terminal.js'
+import { sanitizeText } from '../../lib/string.js'
 import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 import ChatMessageOrigin from '../../enum/aiChatMessageOrigin.js'
+
+/** Provenance tag of prompts typed in this window; the MQTT bridge mirrors those onto its topic. */
+const UI_SOURCE = 'ui'
 
 /**
  * AI Chat Window displayed in the terminal UI.
@@ -39,6 +51,7 @@ class AiWindow extends BaseWindow {
     #systemMessageUnsub = null
     #periodicResponseUnsub = null
     #busyUnsub = null
+    #transcriptUnsubs = []
     #channelShortcut
     #channelName
 
@@ -59,6 +72,7 @@ class AiWindow extends BaseWindow {
         this.#subscribeToSystemMessages()
         this.#subscribeToPeriodicResponses()
         this.#subscribeToBusyState()
+        this.#subscribeToTranscript()
     }
 
     // -- Public API -------------------------------------------------------
@@ -83,29 +97,29 @@ class AiWindow extends BaseWindow {
      * Send a message to the AI and print the exchange in IRC style.
      * Emits activity so the status bar can track it.
      *
+     * Both lines are rendered by #subscribeToTranscript() from the shared transcript channels
+     * (see #emitTranscript()), so a prompt typed here and one published on the MQTT bridge take
+     * the exact same path to the screen -- and both end up in every web client's live copy.
+     *
      * @param {string} text - User's message to send to the AI
      */
     async submitMessage(text) {
-        const trimmed = (text || '').trim()
+        // Typed input goes through the same safety net as prompts arriving over the
+        // MQTT bridge: control sequences, emoji and out-of-alphabet code points are
+        // dropped and the turn is length-capped before it reaches the model.
+        const trimmed = sanitizeText(text).trim()
         if (!trimmed) return
 
-        // Print user message using structured buffering so it re-wraps on resize
-        const userPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.cyan}<you>${AnsiColors.reset} `
-        this.printMessage(trimmed, userPrefix)
+        this.#emitTranscript('ai:userMessage', { text: trimmed, source: UI_SOURCE })
 
         try {
             // The "* AI is thinking..." indicator is driven by the shared ai.busy state
             // (set while processMessage holds its FIFO lock) -- see #subscribeToBusyState().
             const response = await AiAssistant.processMessage(trimmed)
 
-            // Emit activity for the status bar (AI response arrived)
-            EventBus.emit('window:activity', this.#channelShortcut)
-
-            // Print AI response using structured buffering
-            const aiPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `
-            this.printMessage(response, aiPrefix)
+            this.#emitTranscript('ai:assistantMessage', { text: response, source: UI_SOURCE })
         } catch (err) {
-            this.print(`${tsPrefix()} ${AnsiColors.bold}${AnsiColors.red}<AI>${AnsiColors.reset} ${AnsiColors.red}[ERROR: ${err.message}]${AnsiColors.reset}`)
+            this.#emitTranscript('ai:assistantMessage', { text: err.message, source: UI_SOURCE, error: true })
         }
     }
 
@@ -129,6 +143,10 @@ class AiWindow extends BaseWindow {
             this.#busyUnsub()
             this.#busyUnsub = null
         }
+        for (const unsub of this.#transcriptUnsubs) {
+            try { unsub() } catch { /* best-effort teardown */ }
+        }
+        this.#transcriptUnsubs = []
         this.hide()
         this.clear()
     }
@@ -151,12 +169,12 @@ class AiWindow extends BaseWindow {
                 const target = (action && String(action).toUpperCase() !== 'STATE')
                     ? `${String(action).toLowerCase()} ${device}`
                     : `interact with ${device}`
-                messageText = `* AI could not ${target}${suffix}`
+                messageText = `* ${this.#aiName()} could not ${target}${suffix}`
             } else if (action == null || String(action).toUpperCase() === 'STATE') {
                 // Align with history renderer wording: "checked state of <device>"
-                messageText = `* AI checked state of ${device}`
+                messageText = `* ${this.#aiName()} checked state of ${device}`
             } else {
-                messageText = `* AI ${verb} ${action} on ${device}${suffix}`
+                messageText = `* ${this.#aiName()} ${verb} ${action} on ${device}${suffix}`
             }
             this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}${messageText}${AnsiColors.reset}`)
             EventBus.emit('window:activity', this.#channelShortcut)
@@ -181,7 +199,7 @@ class AiWindow extends BaseWindow {
      */
     #subscribeToPeriodicResponses() {
         this.#periodicResponseUnsub = EventBus.subscribe('ai:periodicResponse', ({ text }) => {
-            const aiPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `
+            const aiPrefix = `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<${this.#aiName()}>${AnsiColors.reset} `
             this.printMessage(text, aiPrefix)
             EventBus.emit('window:activity', this.#channelShortcut)
         })
@@ -201,16 +219,107 @@ class AiWindow extends BaseWindow {
             if (!state || typeof state !== 'object') return
 
             if (state.active) {
-                this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* AI is thinking...${AnsiColors.reset}`)
+                this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* ${this.#aiName()} is thinking...${AnsiColors.reset}`)
                 return
             }
 
             // Turn finished -- report elapsed time only when we actually showed the indicator.
             if (typeof state.since === 'number' && Number.isFinite(state.since)) {
                 const seconds = Math.max(1, Math.round((Date.now() - state.since) / 1000))
-                this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.dim}* AI thought for ${seconds} second${seconds === 1 ? '' : 's'}${AnsiColors.reset}`)
+                this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.dim}* ${this.#aiName()} thought for ${seconds} second${seconds === 1 ? '' : 's'}${AnsiColors.reset}`)
             }
         })
+    }
+
+    /**
+     * Subscribe to the shared AI transcript channels -- the single render path for every
+     * conversation line, whoever authored it. 'ai:userMessage' carries a prompt (rendered
+     * <you> when it was typed in this window, <remote> when it arrived from the MQTT AI bridge
+     * / STT backend); 'ai:assistantMessage' carries the reply, shown as a red [ERROR: ...] line
+     * when the turn failed. submitMessage() feeds these very same channels, so typed and remote
+     * prompts can never drift apart visually.
+     * @private
+     */
+    #subscribeToTranscript() {
+        this.#transcriptUnsubs.push(EventBus.subscribe('ai:userMessage', (payload = {}) => {
+            const text = String(payload.text ?? '')
+            if (!text.trim()) return
+
+            const prefix = (payload.source === UI_SOURCE)
+                ? this.#buildUserPrefix(tsPrefix())
+                : this.#buildRemotePrefix(tsPrefix())
+            this.printMessage(text, prefix)
+            EventBus.emit('window:activity', this.#channelShortcut)
+        }))
+
+        this.#transcriptUnsubs.push(EventBus.subscribe('ai:assistantMessage', (payload = {}) => {
+            const text = String(payload.text ?? '')
+            if (!text.trim()) return
+
+            if (payload.error === true) {
+                this.print(`${tsPrefix()} ${AnsiColors.bold}${AnsiColors.red}<${this.#aiName()}>${AnsiColors.reset} ${AnsiColors.red}[ERROR: ${text}]${AnsiColors.reset}`)
+            } else {
+                this.printMessage(text, this.#buildAiPrefix(tsPrefix()))
+            }
+            EventBus.emit('window:activity', this.#channelShortcut)
+        }))
+    }
+
+    /**
+     * Emit one transcript line on the shared channels. Guarded by hasSubscribers() so a --no-ui
+     * run (no window, no listener) stays a silent no-op.
+     * @param {'ai:userMessage'|'ai:assistantMessage'} channel - Transcript channel
+     * @param {{text:string, source:string, error?:boolean}} payload - Transcript payload
+     * @private
+     */
+    #emitTranscript(channel, payload) {
+        if (!EventBus.hasSubscribers(channel)) return
+        EventBus.emit(channel, payload)
+    }
+
+    /**
+     * Build the IRC-style <you> message prefix (bold cyan) for prompts typed in this window.
+     * Shared by live transcript rendering and restored history rendering so the two paths
+     * cannot drift apart visually.
+     * @param {string} ts - Timestamp prefix string (from tsPrefix)
+     * @returns {string} Formatted prefix ending with a trailing space
+     * @private
+     */
+    #buildUserPrefix(ts) {
+        return `${ts} ${AnsiColors.bold}${AnsiColors.cyan}<you>${AnsiColors.reset} `
+    }
+
+    /**
+     * Build the IRC-style <remote> message prefix (bold green) for prompts arriving from an
+     * external client over the MQTT AI bridge (see src/monitor/aiBridgeMonitor.js).
+     * @param {string} ts - Timestamp prefix string (from tsPrefix)
+     * @returns {string} Formatted prefix ending with a trailing space
+     * @private
+     */
+    #buildRemotePrefix(ts) {
+        return `${ts} ${AnsiColors.bold}${AnsiColors.green}<remote>${AnsiColors.reset} `
+    }
+
+    /**
+     * The assistant's configured name (`ai.name`, via AiAssistant.getAssistantName()).
+     * Read on every render rather than cached, so a `/config reload` renaming the
+     * assistant shows up in the transcript without restarting the UI.
+     * @returns {string} Name to sign assistant lines with
+     * @private
+     */
+    #aiName() {
+        return AiAssistant.getAssistantName()
+    }
+
+    /**
+     * Build the IRC-style <AI> message prefix (bold magenta) for assistant replies.
+     * Shared by live transcript rendering, the welcome greeting and history rendering.
+     * @param {string} ts - Timestamp prefix string (from tsPrefix)
+     * @returns {string} Formatted prefix ending with a trailing space
+     * @private
+     */
+    #buildAiPrefix(ts) {
+        return `${ts} ${AnsiColors.bold}${AnsiColors.magenta}<${this.#aiName()}>${AnsiColors.reset} `
     }
 
     /**
@@ -247,11 +356,11 @@ class AiWindow extends BaseWindow {
 
         const displayHost = host || 'unknown'
 
-        // IRC-style join line: "-:- AI [<model>@<host>] has joined <channel>"
-        this.print(`${AnsiColors.dim}-:-${AnsiColors.reset} ${AnsiColors.bold}${AnsiColors.magenta}AI${AnsiColors.reset} ${AnsiColors.dim}[${AnsiColors.bold}${AnsiColors.cyan}${model}${AnsiColors.reset}${AnsiColors.dim}@${displayHost}]${AnsiColors.reset} has joined ${this.#channelName}`)
+        // IRC-style join line: "-:- <name> [<model>@<host>] has joined <channel>"
+        this.print(`${AnsiColors.dim}-:-${AnsiColors.reset} ${AnsiColors.bold}${AnsiColors.magenta}${this.#aiName()}${AnsiColors.reset} ${AnsiColors.dim}[${AnsiColors.bold}${AnsiColors.cyan}${model}${AnsiColors.reset}${AnsiColors.dim}@${displayHost}]${AnsiColors.reset} has joined ${this.#channelName}`)
 
         // Action: * AI is now online.
-        this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* AI is now online.${AnsiColors.reset}`)
+        this.print(`${tsPrefix()} ${AnsiColors.italic}${AnsiColors.white}* ${this.#aiName()} is now online.${AnsiColors.reset}`)
 
         // Load conversation history from AiAssistant (restored from Redis on startup)
         const history = AiAssistant.getConversationHistory()
@@ -261,7 +370,7 @@ class AiWindow extends BaseWindow {
         } else {
             // No history -- show default greeting from i18n bundle
             const greeting = I18nLoader.t('ui.default_greeting', 'Hello! How can I help you today?')
-            this.printMessage(greeting, `${tsPrefix()} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `)
+            this.printMessage(greeting, this.#buildAiPrefix(tsPrefix()))
         }
     }
 
@@ -284,13 +393,13 @@ class AiWindow extends BaseWindow {
                 if (isSystem) {
                     this.printMessage(msg.content, this.#buildSystemPrefix(ts))
                 } else {
-                    this.printMessage(msg.content, `${ts} ${AnsiColors.bold}${AnsiColors.cyan}<you>${AnsiColors.reset} `)
+                    this.printMessage(msg.content, this.#buildUserPrefix(ts))
                 }
 
             } else if (msg.role === 'assistant') {
                 // Assistant message -- skip if it has tool_calls but no text content
                 if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
-                    this.printMessage(msg.content, `${ts} ${AnsiColors.bold}${AnsiColors.magenta}<AI>${AnsiColors.reset} `)
+                    this.printMessage(msg.content, this.#buildAiPrefix(ts))
                 }
 
             } else if (msg.role === 'tool') {
@@ -301,7 +410,7 @@ class AiWindow extends BaseWindow {
 
                 if (results.length === 0) {
                     // Not valid JSON at all -- just show a generic tool message
-                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI performed an action${AnsiColors.reset}`)
+                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* ${this.#aiName()} performed an action${AnsiColors.reset}`)
                     continue
                 }
 
@@ -329,7 +438,7 @@ class AiWindow extends BaseWindow {
                         actionDesc = `interacted with ${device || 'unknown'}`
                     }
 
-                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* AI ${actionDesc}${AnsiColors.reset}`)
+                    this.print(`${ts} ${AnsiColors.italic}${AnsiColors.white}* ${this.#aiName()} ${actionDesc}${AnsiColors.reset}`)
                 }
             }
         }

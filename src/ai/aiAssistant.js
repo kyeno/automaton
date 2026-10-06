@@ -26,7 +26,7 @@ import OpenAiProvider from './providers/openaiProvider.js'
 import ToolBuilder    from './toolBuilder.js'
 import I18nLoader     from '../service/i18nLoader.js'
 import ChatMessageOrigin from '../enum/aiChatMessageOrigin.js'
-import { stripMarkdown } from '../lib/string.js'
+import { stripMarkdown, interpolateTokens } from '../lib/string.js'
 import temporal from '../lib/date.js'
 
 // ---------------------------------------------------------------------------
@@ -60,6 +60,13 @@ const DEFAULT_MAX_TURNS = 20
 
 /** Safety limit for tool-call iterations per user message. */
 const MAX_TOOL_ITERATIONS = 10
+
+/**
+ * Name the assistant reports when `ai.name` is unset or blank. Kept deliberately
+ * generic: the configured name is what personalizes the assistant, so the
+ * fallback must not pretend to be one.
+ */
+const DEFAULT_ASSISTANT_NAME = 'AI'
 
 // ---------------------------------------------------------------------------
 // SAiAssistant (singleton)
@@ -506,7 +513,28 @@ class SAiAssistant {
     // -- Public API: System Prompt ----------------------------------------
 
     /**
+     * The assistant's own configured name (`ai.name`), the single source of truth
+     * for every place the assistant is named: the `{% name %}` token in the system
+     * prompt, the AI window's transcript prefix and the action lines.
+     *
+     * Whitespace is trimmed and an unset/blank value degrades to
+     * DEFAULT_ASSISTANT_NAME, so a config without a name still reads sensibly.
+     *
+     * @returns {string} The assistant name to display and to speak as.
+     */
+    getAssistantName() {
+        const raw = ConfigService.get('ai.name')
+        const name = (typeof raw === 'string') ? raw.trim() : ''
+        return name !== '' ? name : DEFAULT_ASSISTANT_NAME
+    }
+
+    /**
      * Return the effective system prompt (base prompt + device list).
+     *
+     * The `{% name %}` token in the i18n prompt is resolved here rather than at
+     * load time, so a `/config reload` that changes `ai.name` reaches the model on
+     * the very next turn.
+     *
      * @returns {string} The full effective system prompt.
      */
     getEffectiveSystemPrompt() {
@@ -534,7 +562,9 @@ class SAiAssistant {
             allDevices.push(`- "${name}"${tag}`)
         }
 
-        return `${this.#systemPrompt}\n\n${devicesHeader}\n${deviceInstruction}\n${allDevices.join('\n')}`
+        const basePrompt = interpolateTokens(this.#systemPrompt, { name: this.getAssistantName() })
+
+        return `${basePrompt}\n\n${devicesHeader}\n${deviceInstruction}\n${allDevices.join('\n')}`
     }
 
     // -- Private Helpers --------------------------------------------------
