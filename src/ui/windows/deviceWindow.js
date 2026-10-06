@@ -17,6 +17,9 @@
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import EventBus from '../../service/eventBus.js'
 import { padVisible, colCell } from '../../lib/terminal.js'
+import { interpolateTokens } from '../../lib/string.js'
+import temporal from '../../lib/date.js'
+import solar from '../../lib/sun.js'
 import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
@@ -144,6 +147,9 @@ class DeviceWindow extends BaseWindow {
         remotes.sort((a, b) => a.name.localeCompare(b.name))
 
         const lines = []
+
+        // -- Date / solar header -------------------------------------------
+        this.#renderHeader(lines)
 
         // -- Sensors section -------------------------------------------
         if (sensors.length > 0) {
@@ -432,6 +438,43 @@ class DeviceWindow extends BaseWindow {
     }
 
     // -- Private Helpers --------------------------------------------------
+
+    /**
+     * Render the header line: the localized current date plus today's sunrise/sunset.
+     *
+     * The date sentence comes from the locale's date bundle (`date_sentence` in
+     * `etc/i18n/{locale}/date.yaml`) with its `{% %}` tokens resolved through
+     * temporal.getDateParts(); a locale without that entry falls back to a plain
+     * English sentence. Sunrise and sunset are the raw geometric events from
+     * solar.getSunriseSunset() rendered as "HH:MM", shown as "--:--" when the
+     * observer location is missing or the sun does not rise/set that day.
+     *
+     * The header is part of the refreshed frame, so the existing 5-second refresh
+     * picks up the midnight date rollover and the next day's solar times by itself:
+     * a frame that differs redraws, an identical one is skipped.
+     *
+     * @param {string[]} lines - Buffer to append the header lines to
+     * @private
+     */
+    #renderHeader(lines) {
+        const now = new Date()
+        const bundle = temporal.loadDateBundle() ?? {}
+        const template = (typeof bundle.date_sentence === 'string' && bundle.date_sentence.trim() !== '')
+            ? bundle.date_sentence
+            : '{% day_name %}, {% day %} {% month_name %} {% year %}'
+        const dateText = interpolateTokens(template, temporal.getDateParts(now))
+
+        const { sunrise, sunset } = solar.getSunriseSunset(now)
+        const clock = (moment) => (moment instanceof Date ? temporal.formatClockTime(moment) : '--:--')
+
+        lines.push(
+            AnsiColors.dim + dateText +
+            ' | Sunrise: ' + clock(sunrise) +
+            ' | Sunset: ' + clock(sunset) +
+            AnsiColors.reset
+        )
+        lines.push('')
+    }
 
     /**
      * Return an ANSI color code based on the command origin.

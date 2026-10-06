@@ -8,6 +8,8 @@
  * geometric sunrise/sunset on the polar days where civil twilight is undefined; daylight
  * gating wants civil twilight, not geometric sunrise, which runs up to ~25 minutes later
  * at mid-northern latitudes and far longer through the deep-twilight winter months.
+ * The raw geometric sunrise/sunset are exposed separately by getSunriseSunset() for
+ * displays and alarms that want the actual events, not the twilight boundaries.
  * Observer coordinates are read from the main configuration's
  * `locale.geo_latitude` / `locale.geo_longitude`; results are memoized per local calendar day +
  * coordinate pair so repeated ticks across many automations stay cheap. The module
@@ -38,9 +40,9 @@ import temporal from './date.js'
  */
 class SSolar {
     /**
-     * Memoization slot for the most recent computation: `{key, sundawn, sundusk}`.
+     * Memoization slot for the most recent computation: `{key, sundawn, sundusk, sunrise, sunset}`.
      * Keyed by local calendar day + coordinate pair; replaced whenever either changes.
-     * @type {{key: string, sundawn: Date|null, sundusk: Date|null}|null}
+     * @type {{key: string, sundawn: Date|null, sundusk: Date|null, sunrise: Date|null, sunset: Date|null}|null}
      */
     #cache = null
 
@@ -71,18 +73,57 @@ class SSolar {
      * @returns {{sundawn: Date|null, sundusk: Date|null}} Dawn and dusk instants (or nulls).
      */
     getSunTimes(date = new Date()) {
+        const entry = this.#resolveDay(date)
+        return { sundawn: entry.sundawn, sundusk: entry.sundusk }
+    }
+
+    /**
+     * Resolve the raw sunrise/sunset instants for a moment's calendar day at the configured location.
+     *
+     * The geometric upper-edge sunrise and sunset -- what a sunrise alarm or a "sun is up"
+     * display wants. Dawn/dusk (see {@link getSunTimes}) are the civil-twilight boundaries
+     * used for daylight gating and run up to ~25 minutes earlier than sunrise at
+     * mid-northern latitudes, so the two must not be confused. Each value is null when the
+     * sun does not rise/set that day (polar conditions). Shares the per-local-day +
+     * coordinate-pair memoization with {@link getSunTimes}, so asking for both costs one
+     * computation. Never throws -- unconfigured/invalid geo yields both-null.
+     *
+     * @param {Date} [date=new Date()] - Moment whose calendar day to evaluate.
+     * @returns {{sunrise: Date|null, sunset: Date|null}} Sunrise and sunset instants (or nulls).
+     */
+    getSunriseSunset(date = new Date()) {
+        const entry = this.#resolveDay(date)
+        return { sunrise: entry.sunrise, sunset: entry.sunset }
+    }
+
+    /**
+     * Compute (or return the memoized) solar instants for one calendar day.
+     *
+     * Single computation shared by {@link getSunTimes} and {@link getSunriseSunset}: civil
+     * twilight boundaries with a fallback to the geometric events, plus the raw geometric
+     * events themselves.
+     *
+     * @private
+     * @param {Date} date - Moment whose calendar day to evaluate.
+     * @returns {{sundawn: Date|null, sundusk: Date|null, sunrise: Date|null, sunset: Date|null}} Solar instants (nulls where undefined).
+     */
+    #resolveDay(date) {
         const coords = this.#getCoordinates()
-        if (coords === null) return { sundawn: null, sundusk: null }
+        if (coords === null) return { sundawn: null, sundusk: null, sunrise: null, sunset: null }
 
         const cacheKey = `${temporal.getLocalDayString(date)}:${coords.latitude}:${coords.longitude}`
         if (this.#cache !== null && this.#cache.key === cacheKey) return this.#cache
 
-        let result = { sundawn: null, sundusk: null }
+        let result = { sundawn: null, sundusk: null, sunrise: null, sunset: null }
         try {
             const times = getSunTimes(coords.latitude, coords.longitude, date)
+            const sunrise = times?.sunrise ?? null
+            const sunset = times?.sunset ?? null
             result = {
-                sundawn: times?.twilight?.civilDawn ?? times?.sunrise ?? null,
-                sundusk: times?.twilight?.civilDusk ?? times?.sunset ?? null,
+                sundawn: times?.twilight?.civilDawn ?? sunrise,
+                sundusk: times?.twilight?.civilDusk ?? sunset,
+                sunrise,
+                sunset,
             }
         } catch (error) {
             LoggerService.warn(`Failed to compute sun times for ${coords.latitude},${coords.longitude}: ${error.message}`, 'Solar')

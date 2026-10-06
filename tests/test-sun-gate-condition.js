@@ -218,42 +218,52 @@ console.log('')
 console.log('-- sundawn/sundusk resolve to civil twilight, not geometric sunrise/sunset --')
 console.log('')
 {
-    // Warsaw, 6 October 2026 -- the morning the ambient lamps went dark in pre-dawn
-    // darkness. Civil dawn leads geometric sunrise by ~33 minutes there, and that gap is
-    // exactly where daylight-gated rules used to misfire.
-    const WARSAW_LAT = 52.2307
-    const WARSAW_LON = 21.0122
+    // 6 October 2026 -- the morning the ambient lamps went dark in pre-dawn darkness.
+    // Civil dawn leads geometric sunrise by tens of minutes at mid-northern latitudes, and
+    // that gap is exactly where daylight-gated rules used to misfire. The coordinates are
+    // read from the same config the sun module uses, so the reference computation and the
+    // implementation agree wherever the suite runs.
+    const lat = Number(ConfigService.get('locale.geo_latitude'))
+    const lon = Number(ConfigService.get('locale.geo_longitude'))
     const OCT6 = new Date(2026, 9 /* October */, 6, 12, 0, 0, 0)
     const oct6Midnight = new Date(2026, 9, 6).setHours(0, 0, 0, 0)
     const clockOf = (d) => temporal.formatClockHour((d.getTime() - oct6Midnight) / 3_600_000)
 
     const restore = stubEpoch(OCT6.getTime())
-    let gate, astro
+    let gate, raw, astro
     try {
         gate = solar.getSunTimes(OCT6)
-        astro = astroTimes(WARSAW_LAT, WARSAW_LON, OCT6)
+        raw = solar.getSunriseSunset(OCT6)
+        astro = astroTimes(lat, lon, OCT6)
     } finally { restore() }
 
     assert(gate.sundawn.getTime() === astro.twilight.civilDawn.getTime(),
         `sundawn == twilight.civilDawn (${clockOf(gate.sundawn)})`)
     assert(gate.sundusk.getTime() === astro.twilight.civilDusk.getTime(),
         `sundusk == twilight.civilDusk (${clockOf(gate.sundusk)})`)
-    assert(gate.sundawn.getTime() < astro.sunrise.getTime(),
-        `sundawn (${clockOf(gate.sundawn)}) precedes geometric sunrise (${clockOf(astro.sunrise)})`)
-    assert(gate.sundusk.getTime() > astro.sunset.getTime(),
-        `sundusk (${clockOf(gate.sundusk)}) trails geometric sunset (${clockOf(astro.sunset)})`)
+    assert(raw.sunrise.getTime() === astro.sunrise.getTime(),
+        `getSunriseSunset() reports geometric sunrise (${clockOf(raw.sunrise)})`)
+    assert(raw.sunset.getTime() === astro.sunset.getTime(),
+        `getSunriseSunset() reports geometric sunset (${clockOf(raw.sunset)})`)
+    assert(gate.sundawn.getTime() < raw.sunrise.getTime(),
+        `sundawn (${clockOf(gate.sundawn)}) precedes geometric sunrise (${clockOf(raw.sunrise)})`)
+    assert(gate.sundusk.getTime() > raw.sunset.getTime(),
+        `sundusk (${clockOf(gate.sundusk)}) trails geometric sunset (${clockOf(raw.sunset)})`)
 
     // What a rule sees at the clock: the dawn bound is satisfied just after civil dawn,
-    // and stays inert in the pre-dawn darkness that used to trigger the lights-off.
+    // and stays inert in the pre-dawn darkness that used to trigger the lights-off. Probe
+    // times are offsets from the computed instants so the assertions hold at any longitude.
+    const MIN9 = 9 * 60_000
     const dawnMs = gate.sundawn.getTime()
-    assert(await match({ hour: { gte: 'sunrise' } }, { sundawn: dawnMs }, new Date(2026, 9, 6, 6, 20).getTime()) === true,
-        'gte sunrise fires at 06:20 -- civil dawn (06:11) already passed')
-    assert(await match({ hour: { gte: 'sunrise' } }, { sundawn: dawnMs }, new Date(2026, 9, 6, 6, 6).getTime()) === false,
-        'gte sunrise stays inert at 06:06 -- pre-dawn darkness is not daylight')
-    assert(await match({ hour: { gte: 'sunset' } }, { sundusk: gate.sundusk.getTime() }, new Date(2026, 9, 6, 18, 20).getTime()) === false,
-        'gte sunset stays inert at 18:20 -- civil dusk (18:36) has not ended the day')
-    assert(await match({ hour: { gte: 'sunset' } }, { sundusk: gate.sundusk.getTime() }, new Date(2026, 9, 6, 18, 40).getTime()) === true,
-        'gte sunset fires at 18:40 -- civil dusk passed')
+    const duskMs = gate.sundusk.getTime()
+    assert(await match({ hour: { gte: 'sunrise' } }, { sundawn: dawnMs }, dawnMs + MIN9) === true,
+        `gte sunrise fires after civil dawn (${clockOf(new Date(dawnMs + MIN9))})`)
+    assert(await match({ hour: { gte: 'sunrise' } }, { sundawn: dawnMs }, dawnMs - MIN9) === false,
+        `gte sunrise stays inert before civil dawn (${clockOf(new Date(dawnMs - MIN9))})`)
+    assert(await match({ hour: { gte: 'sunset' } }, { sundusk: duskMs }, duskMs - MIN9) === false,
+        `gte sunset stays inert before civil dusk (${clockOf(new Date(duskMs - MIN9))})`)
+    assert(await match({ hour: { gte: 'sunset' } }, { sundusk: duskMs }, duskMs + MIN9) === true,
+        `gte sunset fires after civil dusk (${clockOf(new Date(duskMs + MIN9))})`)
 }
 
 console.log('')
