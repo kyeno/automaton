@@ -24,15 +24,29 @@ This is the global default destination for all TTS requests. If this variable is
 
 Any component emitting the internal `tts:speak` EventBus event may attach extra parameters to its payload, and they merge into **that request only** -- every other speaker keeps the plain shape. For each optional field the resolution order is runtime event value > locale template default (see Request Parameters below).
 
-The shipped consumer is the [weatherman automation](../automations/weatherman.md), which forwards its optional `tts_options` config block verbatim on every utterance it produces:
+Framing (the `intro` / `outro` / `intro_spacing` trio) is resolved for every speaker by one shared owner, [`src/lib/ttsProfiles.js`](../../src/lib/ttsProfiles.js), so all of them read the same two optional config keys and follow the same rules:
 
 ```yaml
-# etc/automation/tts-weatherman.yaml
-tts_options:
+tts_profile: 'alarm'        # name of a profiles: entry in the active locale's tts.yaml
+tts_options:                # explicit framing; wins over the profile key by key
   intro: 'news-transition.wav'      # wave played before speech
   outro: 'news-outro.wav'           # wave played after speech
   intro_spacing: -2.5               # negative = overlap intro with speech start
 ```
+
+- **Precedence:** the named profile forms the base, an explicit `tts_options` block overrides it field by field, and an empty/absent shape yields no framing at all -- the request keeps the plain `{ model, text, output_endpoint }` body.
+- **Malformed entries never break speech.** A wrong type or an empty filename is dropped with a warning; an unknown profile name warns once per name (not once per utterance) and contributes nothing.
+- **Both output paths are covered.** On the AI path the framing travels through `AiAssistant.processMessage(..., { tts })` so the model's own spoken reply carries it; on direct TTS and on AI-failure fallback it is spread straight into the emission.
+
+Speakers wired to the resolver:
+
+| Speaker | Where the keys live |
+|---------|---------------------|
+| [Weather man](../automations/weatherman.md) | `etc/automation/tts-weatherman.yaml` |
+| [Greeter](../automations/greeter.md) | `etc/automation/tts-greeter.yaml` |
+| Gardener | `etc/automation/tts-gardener.yaml` |
+| [Offline alerts](../monitors/offline-alerts.md) | `alerts.<family>_tts_profile` / `alerts.<family>_tts_options` in `etc/automaton.yaml` (plus per-host overrides for the network family) |
+| UI speak window | `ui.tts_profile` in `etc/automaton.yaml` |
 
 ### Per-Locale Template
 
@@ -45,7 +59,15 @@ triple_leading_consonant: true       # phoneme handling for Polish triple conson
 piper_effects: "--length_scale 1.15" # Piper TTS engine effects
 sox_effects: "pad 1.2 0.5"           # SoX audio post-processing effects
 # output_endpoint: "192.168.1.x:12345"  # per-locale endpoint override (optional)
+
+# OPTIONAL - named framing sets referenced by tts_profile: (see Per-Request Override)
+profiles:
+  # alarm:                           # mission-critical offline alerts
+  #   intro: 'alarm.wav'
+  #   intro_spacing: -1.5
 ```
+
+A `profiles:` entry carries framing only -- never `output_endpoint`. The audio sink stays `runtime event > locale template > TTS_TCP_ENDPOINT`, so a jingle can never redirect where the voice is played. Profiles are looked up case-insensitively; wave files must exist on the machine running tts-server, only their filenames cross the wire.
 
 See [Configuration Guide](../configuration.md) for full i18n bundle structure.
 
@@ -61,9 +83,9 @@ Every request is an HTTP POST of a JSON body to the URL from `TTS_API_URL`:
 | `triple_leading_consonant` | boolean | locale template | Phoneme handling switch |
 | `piper_effects` | string | locale template | Extra Piper CLI flags |
 | `sox_effects` | string | locale template | SoX filter chain applied after synthesis |
-| `intro` | string | runtime (e.g., weatherman `tts_options`) | Wave filename played before speech; file must exist on the TTS server side |
-| `outro` | string | runtime | Wave filename played after speech |
-| `intro_spacing` | number | runtime | Seconds between intro end and speech start; negative overlaps them |
+| `intro` | string | runtime (`tts_profile` / `tts_options` of the speaking component) | Wave filename played before speech; file must exist on the TTS server side |
+| `outro` | string | runtime (`tts_profile` / `tts_options`) | Wave filename played after speech |
+| `intro_spacing` | number | runtime (`tts_profile` / `tts_options`) | Seconds between intro end and speech start; negative overlaps them |
 
 ## How It Works
 

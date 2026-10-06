@@ -15,5 +15,25 @@ piper_effects: "--length_scale 1.15 --noise_scale 0.667"
 sox_effects: "pad 0.5 0.3"
 
 # OPTIONAL - Override output_endpoint per-request via event payload instead
-# If not set here or in event, falls back to automaton.yaml tts.output_endpoint
+# If not set here or in the event, falls back to TTS_TCP_ENDPOINT in .env
 # output_endpoint: "0.0.0.0:12345"
+
+# ---------------------------------------------------------------------
+# OPTIONAL - Named framing profiles: intro/outro waves for a class of speech,
+# referenced by name from a speaker's `tts_profile:` (the weatherman/greeter/
+# gardener automation YAML, alerts.<family>_tts_profile, ui.tts_profile).
+# Profiles carry framing ONLY -- never add output_endpoint here; the audio sink
+# stays runtime event > this file > TTS_TCP_ENDPOINT (.env).
+# Un-comment and point at wave files that exist on the TTS server (the waveset
+# manifest lives in doc/installation/tts-integration.md).
+# ---------------------------------------------------------------------
+profiles:
+  # alarm:                        # mission-critical offline alerts
+  #   intro: 'alarm.wav'
+  #   intro_spacing: -1.5
+  # greeting:                     # greeter + gardener reports
+  #   intro: 'hello.wav'
+  #   outro: 'bye.wav'
+  # report:                       # weatherman periodic reports
+  #   intro: 'weather.wav'
+  #   outro: 'weather_end.wav'

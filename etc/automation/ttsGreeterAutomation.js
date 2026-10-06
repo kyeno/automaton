@@ -49,6 +49,7 @@ import DatabaseService from '../../src/service/databaseService.js'
 import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
 import TtsService from '../../src/service/ttsService.js'
+import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import temporal from '../../src/lib/date.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 
@@ -219,12 +220,13 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
      * AiAssistant without MQTT, devices, or a live LLM; #deliver() is the sole
      * production caller.
      * @param {string} aiInstruction - Full instruction sent to the model
+     * @param {{intro?: string, outro?: string, intro_spacing?: number}} [ttsOptions={}] - Framing forwarded to the model's own speech
      * @returns {Promise<boolean>} true when the AI voiced the greeting, false on fallback
      */
-    async routeThroughAi(aiInstruction) {
+    async routeThroughAi(aiInstruction, ttsOptions = {}) {
         let spoken = ''
         try {
-            const response = await AiAssistant.processMessage(aiInstruction, { origin: ChatMessageOrigin.SYSTEM })
+            const response = await AiAssistant.processMessage(aiInstruction, { origin: ChatMessageOrigin.SYSTEM, tts: ttsOptions })
             spoken = typeof response === 'string' ? response.trim() : ''
         } catch (error) {
             this.log(`AI processing failed: ${error.message}`, 'warn')
@@ -295,6 +297,10 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             return
         }
 
+        // Framing (intro/outro/spacing) resolved once per greeting from this automation's
+        // own tts_profile / tts_options; it travels on both output paths.
+        const ttsOptions = TtsProfiles.resolve(this.config, (message) => this.log(message, 'warn'))
+
         if (this.config.use_ai === true && AiAssistant.isAvailable()) {
             let instruction = this.#sentence(decision.bucket, 'ai', host)
             if (!instruction) {
@@ -308,7 +314,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
                 if (EventBus.hasSubscribers('ai:systemMessage')) {
                     EventBus.emit('ai:systemMessage', { text: instruction })
                 }
-                if (await this.routeThroughAi(instruction)) return
+                if (await this.routeThroughAi(instruction, ttsOptions)) return
                 // routeThroughAi already logged why; fall through and speak directly so
                 // a flaky/slow LLM never drops the greeting entirely.
             }
@@ -320,7 +326,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         // it never replaces or blocks the main greeting.
         const ttsNote = await this.#absenceNote(host, 'tts', decision)
         const spoken = ttsNote ? `${plainText} ${ttsNote}` : plainText
-        EventBus.emit('tts:speak', { text: spoken })
+        TtsProfiles.speak(spoken, ttsOptions)
         this.log(`Greeting for "${host}" (${decision.bucket}) sent via direct TTS`, 'debug')
     }
 

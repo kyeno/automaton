@@ -39,6 +39,21 @@ greeting_windows:                     # contiguous bands by design: every return
 
 Add new buckets freely — e.g., a *"long weekend"* window with its own line. The `sentence` value names a section of the i18n bundle; any number of windows can point at shared or unique sections.
 
+## Spoken Framing
+
+Both output paths accept the shared jingle keys, resolved once per greeting by [TTS framing profiles](../installation/tts-integration.md) (`src/lib/ttsProfiles.js`):
+
+```yaml
+# OPTIONAL -- profile from the active locale's tts.yaml profiles: registry
+tts_profile: 'greeting'
+tts_options:                        # explicit framing, wins over the profile field by field
+  intro: 'hello.wav'                # wave played before the greeting
+  outro: null                       # wave played after the greeting
+  intro_spacing: -1.5               # negative = overlap intro with speech start
+```
+
+On the AI path the resolved framing travels through `AiAssistant.processMessage(..., { tts })`, so the model's own spoken greeting carries it; on the plain-TTS path and on the AI-failure fallback it is spread straight into the `tts:speak` payload. Remove both keys (the shipped default) and every greeting stays a plain `{ text }` utterance.
+
 ## Language Bundles
 
 Sentences live in `etc/i18n/{locale}/greeter.yaml`. Each bucket holds per-host lines split by output path, and each template picks the grammatical case it needs via dual-case name placeholders filled from `names.<host>`:

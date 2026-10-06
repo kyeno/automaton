@@ -17,7 +17,10 @@
 'use strict'
 
 import EventBus from '../../service/eventBus.js'
+import ConfigService from '../../service/configService.js'
+import TtsProfiles from '../../lib/ttsProfiles.js'
 import { tsPrefix } from '../../lib/terminal.js'
+import { sanitizeText } from '../../lib/string.js'
 import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
@@ -30,7 +33,8 @@ import BaseWindow from './baseWindow.js'
  * Subscribes to 'tts:speak' events so every spoken message appears here
  * with a <TTS> prefix. User input is forwarded straight to the same
  * EventBus channel, triggering both real audio playback and an immediate
- * local echo in this window.
+ * local echo in this window. Text typed here is framed by the profile named
+ * in `ui.tts_profile` (a locale tts.yaml `profiles:` entry) when configured.
  */
 class TtsWindow extends BaseWindow {
     // Treats input as chat messages sent directly to TTS
@@ -74,17 +78,22 @@ class TtsWindow extends BaseWindow {
 
     /**
      * Send text directly to the TTS pipeline and echo it in this window.
-     * Emits activity so the status bar can track it.
+     * Emits activity so the status bar can track it. Framing (intro/outro/spacing)
+     * comes from the profile named in `ui.tts_profile`; an unset or unknown profile
+     * speaks plain text.
      *
      * @param {string} text - User's text to speak
      */
     async submitMessage(text) {
-        const trimmed = (text || '').trim()
+        // Same safety net as the AI window: control sequences, emoji and
+        // out-of-alphabet code points are dropped and the utterance is length-capped
+        // before it reaches the speech pipeline and the window echo.
+        const trimmed = sanitizeText(text).trim()
         if (!trimmed) return
 
         // Emit to tts:speak -- triggers both real audio playback AND our own subscriber,
         // which renders the message uniformly with a ">" prefix.
-        EventBus.emit('tts:speak', { text: trimmed })
+        TtsProfiles.speak(trimmed, TtsProfiles.resolve({ tts_profile: ConfigService.get('ui.tts_profile') }))
 
         // Emit activity for the status bar
         EventBus.emit('window:activity', this.#channelShortcut)

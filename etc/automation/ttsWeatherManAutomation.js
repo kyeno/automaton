@@ -7,7 +7,8 @@
  * interpolation for live sensor data in i18n strings. Optional tts_options config entries
  * (intro/outro wave files, intro_spacing) are forwarded verbatim into the TTS server request
  * via the 'tts:speak' EventBus payload -- on both output paths -- so only this automation's
- * utterances carry them; see resolveTtsOptions().
+ * utterances carry them; see resolveTtsOptions(). Framing may also be named by
+ * `tts_profile:`, resolved through the shared rules in src/lib/ttsProfiles.js.
  *
  * When routing through AI, day-position markers derived purely from clock + config
  * (no stored state) frame the core content: an opening line marks the first / last /
@@ -51,7 +52,9 @@ import AiAssistant from '../../src/ai/aiAssistant.js'
 import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 import { round } from '../../src/lib/math.js'
+import { interpolateTokens } from '../../src/lib/string.js'
 import { readRandomLine } from '../../src/lib/randomLine.js'
+import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import temporal from '../../src/lib/date.js'
 
 // ---------------------------------------------------------------------------
@@ -75,9 +78,6 @@ const INTERPOLATION_MISSING = 'N/A'
 
 /** Regex to match {{ DeviceName.property }} placeholders in i18n strings. */
 const INTERPOLATION_REGEX = /\{\{\s*([\w\s]+?)\.([\w]+)\s*\}\}/g
-
-/** Regex to match {% keyword %} special-function placeholders in i18n strings. */
-const TIME_INTERPOLATION_REGEX = /\{%\s*(\w+)\s*%\}/g
 
 /** Scan horizon when predicting the next non-silent tick -- two days exceeds any sane config. */
 const NEXT_ANNOUNCEMENT_HORIZON_MS = 48 * 3600 * 1000
@@ -458,41 +458,23 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /**
      * Build the validated extra-TTS-server-parameters object for this automation's
-     * utterances from the optional tts_options section of the YAML config. Recognized
-     * keys map 1:1 onto TTS server request fields:
-     *   intro         - string, wave filename played before the synthesized speech
-     *   outro         - string, wave filename played after the synthesized speech
-     *   intro_spacing - number (negative allowed), seconds between intro end and speech start
+     * utterances, delegating to the shared resolver in src/lib/ttsProfiles.js. Two
+     * optional sections of the YAML config are understood:
+     *   tts_profile   - name of a framing profile in the active locale's tts.yaml
+     *                   `profiles:` registry (intro/outro/intro_spacing)
+     *   tts_options   - explicit framing block, wins over the profile key by key:
+     *     intro         - string, wave filename played before the synthesized speech
+     *     outro         - string, wave filename played after the synthesized speech
+     *     intro_spacing - number (negative allowed), seconds between intro end and speech start
      * Malformed entries are dropped with a warning instead of failing the run; an absent
-     * or fully empty section yields {} so emissions keep their plain { text } shape.
-     * Exposed without the # prefix so unit tests can pin validation behaviour per instance
-     * by injecting synthetic configs without touching the on-disk YAML file.
+     * or fully empty shape yields {} so emissions keep their plain { text } form.
+     * Exposed without the # prefix so unit tests can pin resolution behaviour per
+     * instance by injecting synthetic configs without touching the on-disk YAML file.
      * @param {Record<string, unknown>} [rawConfig=this.config] - Config source to read from
      * @returns {{intro?: string, outro?: string, intro_spacing?: number}} Validated options (possibly empty)
      */
     resolveTtsOptions(rawConfig = this.config) {
-        const raw = rawConfig?.tts_options
-        if (!raw || typeof raw !== 'object') return {}
-
-        const result = {}
-        for (const key of ['intro', 'outro']) {
-            const value = raw[key]
-            if (value == null) continue
-            if (typeof value === 'string' && value.trim()) {
-                result[key] = value.trim()
-            } else {
-                this.log(`tts_options.${key} must be a non-empty wave filename -- ignoring`, 'warn')
-            }
-        }
-        const spacing = raw.intro_spacing
-        if (spacing != null) {
-            if (typeof spacing === 'number' && Number.isFinite(spacing)) {
-                result.intro_spacing = spacing
-            } else {
-                this.log('tts_options.intro_spacing must be a finite number of seconds (negative allowed) -- ignoring', 'warn')
-            }
-        }
-        return result
+        return TtsProfiles.resolve(rawConfig, (message) => this.log(message, 'warn'))
     }
 
     /**
@@ -695,11 +677,11 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
      * @returns {string} Text with all placeholders resolved
      */
     #interpolate(text, _context, specialValues = {}) {
-        // First resolve special-function placeholders like {% time %}.
-        let result = text.replace(TIME_INTERPOLATION_REGEX, (_match, keyword) => {
-            if (keyword === 'time') return I18nLoader.formatTime()
-            return specialValues[keyword] ?? `{% ${keyword} %}`   // unknown -> pass through unchanged
-        })
+        // First resolve special-function placeholders like {% time %} through the shared
+        // token resolver (src/lib/string.js) -- the very same `{% keyword %}` syntax the
+        // AI system prompt uses for its {% name %} token. `time` is always supplied from
+        // the locale clock; keywords with no entry pass through unchanged.
+        let result = interpolateTokens(text, { ...specialValues, time: I18nLoader.formatTime() })
 
         // Then resolve device-property placeholders
         return result.replace(INTERPOLATION_REGEX, (_match, deviceName, property) => {

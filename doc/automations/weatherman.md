@@ -58,6 +58,8 @@ sensors:
 # OPTIONAL -- Extra parameters forwarded verbatim into the TTS server request for every
 # utterance produced by this automation (radio-style jingle framing). Each entry applies
 # only when set; leave empty to keep the plain { model, text, output_endpoint } shape.
+# A named profile from the locale tts.yaml profiles: registry may supply the same fields
+# (tts_profile: 'report'); explicit entries below win over the profile field by field.
 tts_options:
   intro:          # Wave filename played before the synthesized speech
   outro:          # Wave filename played after the synthesized speech
@@ -134,6 +136,8 @@ The optional `tts_options` block forwards extra parameters **verbatim** into the
 | `intro` | string | Wave filename (on the TTS server side) played before the synthesized speech |
 | `outro` | string | Wave filename (on the TTS server side) played after the synthesized speech |
 | `intro_spacing` | number | Seconds between intro end and speech start; negative values overlap them (e.g., `-2.5`) |
+
+The same trio may be named once per locale instead: `tts_profile: 'report'` points at an entry of the active locale's `tts.yaml` `profiles:` registry, and explicit `tts_options` entries override that profile **field by field**. Resolution belongs to the shared [TTS framing profiles](../installation/tts-integration.md) owner (`src/lib/ttsProfiles.js`), so the weatherman, the greeter, the gardener, the spoken offline alerts and the UI speak window all read the same two keys with the same rules.
 
 Behaviour details:
 

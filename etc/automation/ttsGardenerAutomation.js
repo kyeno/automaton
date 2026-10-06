@@ -45,6 +45,7 @@ import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
 import TtsService from '../../src/service/ttsService.js'
+import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 
 // ---------------------------------------------------------------------------
@@ -341,6 +342,10 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
             return false
         }
 
+        // Framing (intro/outro/spacing) resolved once per report from this automation's
+        // own tts_profile / tts_options; it travels on both output paths.
+        const ttsOptions = TtsProfiles.resolve(this.config, (message) => this.log(message, 'warn'))
+
         if (this.config.use_ai === true && AiAssistant.isAvailable()) {
             const instruction = this.#fillTemplate(section.ai, tokens, `${sectionKey}.ai`)
             if (!instruction) {
@@ -351,7 +356,7 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
                 if (EventBus.hasSubscribers('ai:systemMessage')) {
                     EventBus.emit('ai:systemMessage', { text: instruction })
                 }
-                if (await this.routeThroughAi(instruction)) return true
+                if (await this.routeThroughAi(instruction, ttsOptions)) return true
                 // routeThroughAi already logged why; fall through and speak directly so a
                 // flaky/slow LLM never drops the report entirely.
             }
@@ -359,7 +364,7 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
             this.log('use_ai enabled but AI unavailable -- speaking the plain TTS sentence instead', 'warn')
         }
 
-        EventBus.emit('tts:speak', { text: plainText })
+        TtsProfiles.speak(plainText, ttsOptions)
         this.log(`Gardener report (${sectionKey}) sent via direct TTS`, 'debug')
         return true
     }
@@ -372,12 +377,13 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      * there is deliberately NO spoken fallback notice here; unlike WeatherMan's periodic
      * report, a missed hydration line must not be announced twice.
      * @param {string} aiInstruction - Full instruction sent to the model
+     * @param {{intro?: string, outro?: string, intro_spacing?: number}} [ttsOptions={}] - Framing forwarded to the model's own speech
      * @returns {Promise<boolean>} true when the AI voiced the report, false on fallback
      */
-    async routeThroughAi(aiInstruction) {
+    async routeThroughAi(aiInstruction, ttsOptions = {}) {
         let spoken = ''
         try {
-            const response = await AiAssistant.processMessage(aiInstruction, { origin: ChatMessageOrigin.SYSTEM })
+            const response = await AiAssistant.processMessage(aiInstruction, { origin: ChatMessageOrigin.SYSTEM, tts: ttsOptions })
             spoken = typeof response === 'string' ? response.trim() : ''
         } catch (error) {
             this.log(`AI processing failed: ${error.message}`, 'warn')

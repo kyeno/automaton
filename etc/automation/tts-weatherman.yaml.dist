@@ -49,6 +49,8 @@ sensors:
 # utterance produced by this automation (radio-style jingle framing). Each entry applies
 # only when set; leave empty to keep the plain { model, text, output_endpoint } shape.
 # Wave files must exist on the TTS server side. intro_spacing may be negative (= overlap).
+# A named profile from the locale tts.yaml profiles: registry may supply the same fields
+# (tts_profile: 'news'); explicit entries below win over the profile field by field.
 tts_options:
   intro:          # Wave filename played before the synthesized speech
   outro:          # Wave filename played after the synthesized speech

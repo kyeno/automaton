@@ -10,6 +10,10 @@
  * (model required, all other fields optional). Merges template defaults with
  * runtime event payload before sending the request.
  *
+ * The same template may carry a `profiles:` registry of named framing sets
+ * (intro/outro/intro_spacing for a class of speech); getProfile() exposes the raw
+ * entry and src/lib/ttsProfiles.js owns resolving them for every speaker.
+ *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  *
@@ -132,6 +136,25 @@ class STtsService {
      */
     isReady() {
         return this.#initialized
+    }
+
+    /**
+     * Raw named framing profile from the active locale's tts.yaml `profiles:` registry
+     * (intro/outro/intro_spacing for a class of speech), looked up case-insensitively.
+     * Returns null when the profile, the registry, or the locale template is missing --
+     * validating the entry itself is the caller's job (see lib/ttsProfiles.js). A profile
+     * carries framing only and never output_endpoint: the audio sink stays
+     * runtime > locale template > TTS_TCP_ENDPOINT, exactly as #buildPayload() resolves it.
+     * @param {string} name - Profile name as written in `tts_profile:`
+     * @returns {Record<string, unknown>|null} Raw profile entry, or null when undefined
+     */
+    getProfile(name) {
+        const registry = this.#template?.profiles
+        if (!registry || typeof registry !== 'object' || Array.isArray(registry)) return null
+        const wanted = String(name ?? '').trim().toLowerCase()
+        if (!wanted) return null
+        const key = Object.keys(registry).find((entry) => entry.toLowerCase() === wanted)
+        return key ? registry[key] : null
     }
 
     /**
