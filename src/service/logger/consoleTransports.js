@@ -1,13 +1,8 @@
 /**
  * Console Transport Profile for LoggerService.
- *
- * Used when UI is disabled (--no-ui). Includes a colorized Console transport
- * plus file transports for debug, warn, and trace levels. This is the "headless"
- * mode where logs go directly to stdout. TRACE stays file-only in both modes.
- *
+ * Used when UI is disabled (--no-ui). Includes a colorized Console transport.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -24,18 +19,12 @@ import { PROJECT_ROOT } from '../../lib/projectRoot.js'
 
 const TIMESTAMP_FORMAT = 'YYYY-MM-DD HH:mm:ss.SSS A'
 
-/**
- * Exact-match TRACE filter. Winston transport `level` options are LOWER BOUNDS, so
- * without this an entry at any level would pass through -- dropping everything but
- * trace keeps the dedicated stream strictly diagnostic-detail only.
- */
+/** Exact-match TRACE filter. Winston transport `level` options are LOWER BOUNDS, so */
 const TRACE_ONLY_FORMAT = new (winston.format(info => info.level === 'trace' ? info : null))()
 
-/**
- * Map snake_case config keys to Winston transport option names (file transport).
+/** Map snake_case config keys to Winston transport option names (file transport).
  * @param {object} [cfg] - Raw configuration object from YAML
- * @returns {object} Normalized options compatible with Winston File transport
- */
+ * @returns {object} Normalized options compatible with Winston File transport */
 function normalizeFileConfig(cfg) {
     if (!cfg || typeof cfg !== 'object') return {}
     const { max_size, max_files, ...rest } = cfg
@@ -46,11 +35,9 @@ function normalizeFileConfig(cfg) {
     }
 }
 
-/**
- * Map snake_case config keys to Winston transport option names (console transport).
+/** Map snake_case config keys to Winston transport option names (console transport).
  * @param {object} [cfg] - Raw configuration object from YAML
- * @returns {object} Normalized options compatible with custom Console transport
- */
+ * @returns {object} Normalized options compatible with custom Console transport */
 function normalizeConsoleConfig(cfg) {
     if (!cfg || typeof cfg !== 'object') return {}
     const { console_warn_levels, stderr_levels, ...rest } = cfg
@@ -61,10 +48,8 @@ function normalizeConsoleConfig(cfg) {
     }
 }
 
-/**
- * Build Winston transports for console (headless) mode.
- * @returns {winston.Transport[]} Array of transport instances
- */
+/** Build Winston transports for console (headless) mode.
+ * @returns {winston.Transport[]} Array of transport instances */
 export function buildConsoleTransports() {
     const loggerConfig = ConfigService.getSection('logger')
     const fileCfg = normalizeFileConfig(loggerConfig?.file)
@@ -83,7 +68,7 @@ export function buildConsoleTransports() {
     )
 
     const transports = [
-        // Console -- DEBUG level and above
+        //  Console -- DEBUG level and above.
         new winston.transports.Console({
             name: 'debug-console',
             level: 'debug',
@@ -94,7 +79,7 @@ export function buildConsoleTransports() {
             ...consoleCfg
         }),
 
-        // File -- DEBUG level (all logs)
+        //  File -- DEBUG level (all logs)
         new winston.transports.File({
             name: 'debug-file',
             level: 'debug',
@@ -102,7 +87,7 @@ export function buildConsoleTransports() {
             ...fileCfg
         }),
 
-        // File -- WARN level and above
+        //  File -- WARN level and above.
         new winston.transports.File({
             name: 'warn-file',
             level: 'warn',
@@ -114,12 +99,10 @@ export function buildConsoleTransports() {
         })
     ]
 
-    // The TRACE stream is opt-outable at startup (--no-trace / cli.noTrace): when
-    // disabled there is simply no transport for it, so nothing is ever written.
+    //  The TRACE stream is opt-outable at startup (--no-trace / cli.noTrace)
     if (!StateService.get('cli.noTrace')) {
         transports.push(
-            // File -- TRACE level ONLY (high-volume diagnostics; never reaches console/UI).
-            // Transport `level` is a lower bound, so pin exact-match via format filtering.
+            //  File -- TRACE level ONLY (high-volume diagnostics; never reaches console/UI).
             new winston.transports.File({
                 name: 'trace-file',
                 level: 'trace',

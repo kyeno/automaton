@@ -1,18 +1,9 @@
 /**
  * Interaction container.
  *  Manages all interactions -- both YAML-configured and custom JS interactions.
- *  Auto-discovers concrete interaction classes from the interaction directory,
- *  instantiates them, loads YAML configs via ConfigService, and provides a
- *  registry for lookup and execution.
- *
- * Directory layout:
- *   src/interaction/base/       -- abstract InteractionBase (never loaded here)
- *   etc/interaction/            -- concrete interactions (auto-discovered by user)
- *   src/interaction/container/  -- this file
- *
+ * Auto-discovers concrete interaction classes from the interaction directory.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -29,59 +20,39 @@ import DeviceContainer from '../../device/container/deviceContainer.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import { slugify } from '../../lib/string.js'
 
-// ---------------------------------------------------------------------------
-// SInteractionContainer (singleton)
-// ---------------------------------------------------------------------------
+//  SInteractionContainer (singleton)
 
-/**
- * Interaction repository and manager.
- *
- * Loads YAML-defined interactions from `etc/interaction.yaml` (via ConfigService)
- * and auto-discovers concrete interaction implementations in the interaction
- * directory. Instantiates each one, calls `init()`, and maintains a name-indexed
- * map so that other parts of the system can look up or trigger interactions.
- */
+/** Interaction repository and manager. */
 class SInteractionContainer {
 
     instance
 
-    /**
-     * Map of interaction instances keyed by interaction name.
-     * @type {Map<string, Object>}
-     */
+    /** Map of interaction instances keyed by interaction name.
+     * @type {Map<string, Object>} */
     #interactions = new Map()
 
-    // -- Singleton --------------------------------------------------------
 
-    /**
-     * Synchronous singleton constructor.
-     * @return {this}
-     */
+    /** Synchronous singleton constructor.
+     * @return {this} */
     constructor() {
         if (!SInteractionContainer.instance) SInteractionContainer.instance = this
         return SInteractionContainer.instance
     }
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Initialize the container: load YAML configs, discover custom JS classes,
-     * instantiate everything, then call async init on each one.
-     * @async
-     */
+    /** Initialize the container: load YAML configs, discover custom JS classes,
+     * @async */
     async init() {
         await this.#loadBasicConfigs()
         await this.#loadCustomClasses()
         await this.#instantiateInteractions()
     }
 
-    // -- Discovery --------------------------------------------------------
+    //  -- Discovery --------------------------------------------------------
 
-    /**
-     * Load YAML configuration from ConfigService "interaction" section and create
-     * basic (config-only) interactions.
-     * @private
-     */
+    /** Load YAML configuration from ConfigService "interaction" section and create
+     * @private */
     async #loadBasicConfigs() {
         const interactionConfig = ConfigService.section('interaction')
 
@@ -108,7 +79,7 @@ class SInteractionContainer {
                     continue
                 }
 
-                // Store config for later instantiation
+                //  Store config for later instantiation.
                 this.#interactions.set(name, {
                     instance: null,
                     config: interactionConfig,
@@ -128,12 +99,8 @@ class SInteractionContainer {
         }
     }
 
-    /**
-     * Scan the interaction directory for concrete interaction classes using Autoloader.
-     * Directory path resolved via ConfigService.getDirectoryPath('interaction').
-     * Only loads `.js` files (skips `.yaml` config files).
-     * @private
-     */
+    /** Scan the interaction directory for concrete interaction classes using Autoloader.
+     * @private */
     async #loadCustomClasses() {
         const dirRelative = ConfigService.getDirectoryPath('interaction')
 
@@ -160,7 +127,7 @@ class SInteractionContainer {
             const modules = await autoloader.preloadPath(customDir)
 
             for (const [fileName, moduleExport] of Object.entries(modules)) {
-                // Skip YAML files - only load JS interaction classes
+                //  Skip YAML files - only load JS interaction classes.
                 if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) continue
 
                 const InteractionClass = moduleExport
@@ -191,11 +158,9 @@ class SInteractionContainer {
         }
     }
 
-    /**
-     * Instantiate all discovered interactions and call their init().
+    /** Instantiate all discovered interactions and call their init().
      * @async
-     * @private
-     */
+     * @private */
     async #instantiateInteractions() {
         const instantiated = []
 
@@ -231,25 +196,19 @@ class SInteractionContainer {
         }
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Get an interaction instance by name.
+    /** Get an interaction instance by name.
      * @param {string} name - Interaction name
-     * @returns {Object|null} Interaction instance or null
-     */
+     * @returns {Object|null} Interaction instance or null */
     getInteraction(name) {
         const entry = this.#interactions.get(name)
         return entry?.instance ?? null
     }
 
-    /**
-     * Register a single YAML-style interaction by its config object -- runs the same per-item
-     * instantiation used for discovered YAML configs, so tests and plugins can contribute
-     * neutrally-named interactions without touching disk or re-running full discovery.
+    /** Register a single YAML-style interaction by its config object -- runs the same per-item.
      * @param {Object} config - Interaction config ({name, actions:[{type, targets:[...]}]}).
-     * @returns {string|null} The registered name, or null when no name was supplied.
-     */
+     * @returns {string|null} The registered name, or null when no name was supplied. */
     registerInteractionConfig(config) {
         const name = config?.name
         if (!name) return null
@@ -257,12 +216,10 @@ class SInteractionContainer {
         return name
     }
 
-    /**
-     * Trigger an interaction's execute method by name.
+    /** Trigger an interaction's execute method by name.
      * @param {string} name - Interaction name
      * @param {Object} [data={}] - Data to pass to execute()
-     * @returns {Promise<void>}
-     */
+     * @returns {Promise<void>} */
     async callInteraction(name, data = {}) {
         const interaction = this.getInteraction(name)
         if (interaction && typeof interaction.execute === 'function') {
@@ -275,17 +232,10 @@ class SInteractionContainer {
         }
     }
 
-    /**
-     * Route a physical device button action through the interaction registry using
-     * the device's slugified friendly name as the interaction key -- the same
-     * convention Remote uses ("Kuchnia Wlacznik Jadalnia" -> "kuchnia_wlacznik_jadalnia").
-     * Shared entry point for any device type that should keep working with the single
-     * YAML-driven interaction registry without duplicating routing logic.
-     *
+    /** Route a physical device button action through the interaction registry.
      * @param {string} deviceName - Device friendly name (e.g., "Kuchnia Wlacznik Jadalnia")
      * @param {Object} triggerData - Data passed straight through to execute(); must include at least {action}
-     * @returns {boolean} true when an interaction matched and was executed (even if it threw), false otherwise
-     */
+     * @returns {boolean} true when an interaction matched and was executed (even if it threw), false otherwise */
     routeDeviceAction(deviceName, triggerData = {}) {
         const interactionKey = slugify(String(deviceName))
         const entry = this.#interactions.get(interactionKey)
@@ -306,10 +256,8 @@ class SInteractionContainer {
         return true
     }
 
-    /**
-     * Get all registered interaction instances as a Map.
-     * @returns {Map<string, Object>}
-     */
+    /** Get all registered interaction instances as a Map.
+     * @returns {Map<string, Object>} */
     getAll() {
         const result = new Map()
         for (const [key, entry] of this.#interactions.entries()) {
@@ -320,26 +268,15 @@ class SInteractionContainer {
         return result
     }
 
-    /**
-     * Get all registered interaction names as a flat array -- an additive read-only view used by
-     * tab-completion and listing helpers. Mirrors getAll() so only successfully instantiated
-     * entries are included; sorted for stable output.
-     * @returns {string[]} Sorted array of interaction names
-     */
+    /** Get all registered interaction names as a flat array -- an additive read-only view used by
+     * @returns {string[]} Sorted array of interaction names */
     getNames() {
         return [...this.getAll().keys()].sort()
     }
 
-    /**
-     * Source metadata for one registered interaction -- an additive read-only view used by
-     * /interaction debug. Reports the authoritative kind ("yaml" or "custom") straight
-     * from the registry entry instead of inferring it from the prototype chain, plus the
-     * raw config object when available so action detail can be rendered without relying on
-     * instance internals. Returns null for unknown names or entries that never
-     * instantiated successfully.
+    /** Source metadata for one registered interaction.
      * @param {string} name - Registered interaction name (exact match)
-     * @returns {{name: string, kind: string, config: Object|null}|null} Metadata or null
-     */
+     * @returns {{name: string, kind: string, config: Object|null}|null} Metadata or null */
     getSourceInfo(name) {
         const entry = this.#interactions.get(name)
         if (!entry || !entry.instance) return null
@@ -352,12 +289,9 @@ class SInteractionContainer {
         }
     }
 
-    // -- Lifecycle helpers ------------------------------------------------
+    //  -- Lifecycle helpers ------------------------------------------------
 
-    /**
-     * Clean up all interactions during graceful shutdown.
-     * Calls cleanup() on each instance (stops timers, unsubscribes events).
-     */
+    /** Clean up all interactions during graceful shutdown. */
     cleanupInteractions() {
         LoggerService.info('Cleaning up interactions...', 'InteractionContainer')
         for (const [name, entry] of this.#interactions.entries()) {
@@ -375,15 +309,13 @@ class SInteractionContainer {
         }
     }
 
-    // -- YAML interaction factory -----------------------------------------
+    //  -- YAML interaction factory -----------------------------------------
 
-    /**
-     * Create a YAML-based interaction instance from config.
+    /** Create a YAML-based interaction instance from config.
      * @param {string} name - Interaction name
      * @param {Object} config - Interaction config from YAML
      * @returns {Object} Interaction instance
-     * @private
-     */
+     * @private */
     #createYamlInteraction(name, config) {
         const interactionsMap = this.#interactions
 
@@ -398,7 +330,7 @@ class SInteractionContainer {
                     return
                 }
 
-                // Find matching action by type
+                //  Find matching action by type.
                 const action = config.actions.find(a => a.type === actionType)
                 if (!action) {
                     LoggerService.debug(
@@ -408,12 +340,12 @@ class SInteractionContainer {
                     return
                 }
 
-                // Handle "targets" -- simple device commands
+                //  Handle "targets" -- simple device commands.
                 if (action.targets && Array.isArray(action.targets)) {
                     await _executeTargets(action.targets)
                 }
 
-                // Handle "calls" -- call another interaction
+                //  Handle "calls" -- call another interaction.
                 if (action.calls) {
                     const targetEntry = interactionsMap.get(action.calls)
                     if (targetEntry?.instance && typeof targetEntry.instance.execute === 'function') {
@@ -427,16 +359,12 @@ class SInteractionContainer {
                 }
             },
             cleanup() {
-                // YAML interactions don't need special cleanup
+                //  YAML interactions don't need special cleanup.
             }
         }
 
-        /**
-         * Execute a list of device targets.
-         * Commands are enqueued through MqttService's internal FIFO queue which
-         * handles global rate-limiting across all sources automatically.
-         * @param {Array} targets - Array of {device, command} objects
-         */
+        /** Execute a list of device targets.
+         * @param {Array} targets - Array of {device, command} objects */
         async function _executeTargets(targets) {
             for (const target of targets) {
                 const cmd = target.command?.toUpperCase()
@@ -452,7 +380,7 @@ class SInteractionContainer {
                 }
 
                 try {
-                    // Interaction targets are human-configured actions -> HUMAN provenance.
+                    //  Interaction targets are human-configured actions -> HUMAN provenance.
                     device.receiveCommand(cmd, DeviceCommandSource.HUMAN)
                 } catch (err) {
                     LoggerService.error(
@@ -465,7 +393,7 @@ class SInteractionContainer {
     }
 }
 
-// Singletonize and export to Node.js.
+//  Singletonize and export to Node.js.
 const InteractionContainer = new SInteractionContainer()
 Object.freeze(InteractionContainer)
 export default InteractionContainer

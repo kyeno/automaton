@@ -1,17 +1,9 @@
 /**
  * Automation container.
- *  Manages all automation instances -- auto-discovers concrete automation classes
- *  from `custom/`, instantiates them, initializes them, and provides a registry
- *  for lookup and execution.
- *
- * Directory layout:
- *   src/automation/base/       -- abstract AutomationBase (never loaded here)
- *   etc/automation/            -- concrete automations (auto-discovered by user)
- *   src/automation/container/  -- this file
- *
+ * Manages all automation instances -- auto-discovers concrete automation classes.
+ * from `custom/`, instantiates them, initializes them, and provides a registry.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -24,63 +16,41 @@ import LoggerService from '../../service/loggerService.js'
 import ConfigService from '../../service/configService.js'
 import { PROJECT_ROOT } from '../../lib/projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// SAutomationContainer (singleton)
-// ---------------------------------------------------------------------------
+//  SAutomationContainer (singleton)
 
-/**
- * Automation repository and manager.
- *
- * Auto-discovers concrete automation implementations in `src/automation/custom/`,
- * instantiates each one, calls `init()`, and maintains a name-indexed map
- * so that other parts of the system can look up or trigger automations.
- */
+/** Automation repository and manager. */
 class SAutomationContainer {
 
     instance
 
-    /**
-     * Map of automation instances keyed by automation.name.
-     * @type {Map}
-     */
+    /** Map of automation instances keyed by automation.name.
+     * @type {Map} */
     #automations = new Map()
 
     /** Nested invocation depth -- guards against A -> B -> A recursion cycles. */
     #invocationDepth = 0
 
-    // -- Singleton --------------------------------------------------------
 
-    /**
-     * Synchronous singleton constructor.
-     *
-     * @return {this}
-     */
+    /** Synchronous singleton constructor.
+     * @return {this} */
     constructor() {
         if (!SAutomationContainer.instance) SAutomationContainer.instance = this
         return SAutomationContainer.instance
     }
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Initialize the container: auto-discover automation classes from `custom/`,
-     * instantiate them, then call async init on each one.
-     *
-     * @async
-     */
+    /** Initialize the container: auto-discover automation classes from `custom/`,
+     * @async */
     async init() {
         await this.#loadAutomationClasses()
         await this.#instantiateAutomations()
     }
 
-    // -- Discovery & instantiation ----------------------------------------
+    //  -- Discovery & instantiation ----------------------------------------
 
-    /**
-     * Scan `etc/automation/` for concrete automation classes using Autoloader.
-     * Only loads `.js` files (skips `.yaml` config files).
-     *
-     * @private
-     */
+    /** Scan `etc/automation/` for concrete automation classes using Autoloader.
+     * @private */
     async #loadAutomationClasses() {
         const dirRelative = ConfigService.getDirectoryPath('automation')
 
@@ -99,12 +69,10 @@ class SAutomationContainer {
             const modules = await autoloader.preloadPath(customDir)
 
             for (const [fileName, moduleExport] of Object.entries(modules)) {
-                // Skip non-JS modules (e.g., YAML configs have no .js extension,
-                // but guard against future autoloaders that might pick them up)
+                // Skip non-JS modules.
                 if (!fileName.endsWith('.js') && !fileName.includes('Automation')) continue
 
-                // Autoloader.preloadPath already resolves mod.default ?? mod,
-                // so moduleExport IS the class constructor directly.
+                //  Autoloader.preloadPath already resolves mod.default ?? mod.
                 const AutomationClass = moduleExport
                 if (typeof AutomationClass !== 'function') {
                     LoggerService.warn(
@@ -132,19 +100,13 @@ class SAutomationContainer {
         }
     }
 
-    /**
-     * Instantiate each discovered automation class and call its init().
-     *
+    /** Instantiate each discovered automation class and call its init().
      * @async
-     * @private
-     */
+     * @private */
     async #instantiateAutomations() {
         const toInstantiate = []
 
-        // Snapshot entries BEFORE iteration to avoid instantiating twice when
-        // we add a new Map key (instance.name !== file-name) during the loop.
-        // JS Map iterators include entries added mid-iteration, which caused
-        // every automation to be created and initialized twice.
+        //  Snapshot entries BEFORE iteration to avoid instantiating twice.
         const entries = Array.from(this.#automations.entries())
 
         for (const [key, entry] of entries) {
@@ -152,7 +114,7 @@ class SAutomationContainer {
                 const instance = new entry.class()
                 await instance.init()
 
-                // Store by the automation's own name property
+                //  Store by the automation's own name property.
                 const automName = instance.name || key
                 this.#automations.set(automName, {
                     class: entry.class,
@@ -176,29 +138,20 @@ class SAutomationContainer {
         }
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Get an automation instance by name.
-     *
+    /** Get an automation instance by name.
      * @param {string} name - Automation name
-     * @returns {AutomationBase|null} Automation instance or null
-     */
+     * @returns {AutomationBase|null} Automation instance or null */
     getAutomation(name) {
         const entry = this.#automations.get(name)
         return entry?.instance ?? null
     }
 
-    /**
-     * Trigger an automation's execute method by name.
-     *
+    /** Trigger an automation's execute method by name.
      * @param {string} name - Automation name
      * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}} [data={}] - Data passed
-     *   through to execute(). `force: true` is honored by automations as "bypass silent period
-     *   and per-rule once-per-day guards"; `forceFirst: true` forces the first-of-day day-position
-     *   (dated opening time line); human-interaction cooldowns still apply either way.
-     * @returns {Promise<void>}
-     */
+     * @returns {Promise<void>} */
     async callAutomation(name, data = {}) {
         const automation = this.getAutomation(name)
         if (!automation || typeof automation.execute !== 'function') {
@@ -208,8 +161,7 @@ class SAutomationContainer {
             )
             return
         }
-        // Re-entrancy guard: invoke_automation actions run their target through this same
-        // entry point, so cap nesting to break any accidental A -> B -> A loop.
+        //  Re-entrancy guard: invoke_automation actions run their target through this same.
         const maxDepth = 5
         if (this.#invocationDepth >= maxDepth) {
             LoggerService.warn(
@@ -226,11 +178,8 @@ class SAutomationContainer {
         }
     }
 
-    /**
-     * Get all registered automation instances as a Map.
-     *
-     * @returns {Map}
-     */
+    /** Get all registered automation instances as a Map.
+     * @returns {Map} */
     getAll() {
         const result = new Map()
         for (const [key, entry] of this.#automations.entries()) {
@@ -241,34 +190,22 @@ class SAutomationContainer {
         return result
     }
 
-    /**
-     * Get all registered automation names as a flat array -- an additive read-only view used by
-     * tab-completion and listing helpers. Mirrors getAll() so only successfully instantiated
-     * entries are included; sorted for stable output.
-     * @returns {string[]} Sorted array of automation names
-     */
+    /** Get all registered automation names as a flat array -- an additive read-only view used by
+     * @returns {string[]} Sorted array of automation names */
     getNames() {
         return [...this.getAll().keys()].sort()
     }
 
-    /**
-     * Register an externally constructed automation under a name. Test seam mirroring what
-     * #instantiateAutomations() does for discovered classes: lets unit tests drive the real
-     * callAutomation()/cleanupAutomations() paths without MQTT, YAML fixtures or autoloading.
-     * Production startup never calls this.
+    /** Register an externally constructed automation under a name. Test seam mirroring what.
      * @param {string} name - Registry key (the automation's display name)
-     * @param {Object} instance - AutomationBase subclass instance
-     */
+     * @param {Object} instance - AutomationBase subclass instance */
     registerInstance(name, instance) {
         this.#automations.set(name, { instance })
     }
 
-    // -- Lifecycle helpers ------------------------------------------------
+    //  -- Lifecycle helpers ------------------------------------------------
 
-    /**
-     * Clean up all automations during graceful shutdown.
-     * Calls cleanup() on each instance (stops timers, unsubscribes events).
-     */
+    /** Clean up all automations during graceful shutdown. */
     cleanupAutomations() {
         LoggerService.info('Cleaning up automations...', 'AutomationContainer')
         for (const [name, entry] of this.#automations.entries()) {
@@ -287,7 +224,7 @@ class SAutomationContainer {
     }
 }
 
-// Singletonize and export to Node.js.
+//  Singletonize and export to Node.js.
 const AutomationContainer = new SAutomationContainer()
 Object.freeze(AutomationContainer)
 export default AutomationContainer

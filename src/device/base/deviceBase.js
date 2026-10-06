@@ -1,21 +1,8 @@
 /**
  * Abstract base class for all Zigbee devices.
- *
  * Provides Origin-based state provenance (`unknown` -> `automation` | `human`).
- * Policy: ONLY autonomous rule-engine actions are attributed as "automation";
- * every other actor -- physical remotes, YAML interactions, Home Assistant /
- * zigbee2mqtt UI, unmodeled wall switches, AND AI chat commands (a person gave
- * the AI the order) -- counts as "human" interaction. Attribution is driven by
- * {@link CommandCorrelator} causality tokens plus a motion-stall watchdog; the
- * origin is persisted alongside cached state so it survives restarts. Also
- * provides MQTT subscription lifecycle management and unified logging helpers.
- *
- * Subclasses: {@link ../type/sensor.js}, {@link ../type/mechanism.js},
- *   {@link ../type/remote.js}, {@link ../type/bridge.js}, {@link ../type/dummy.js}
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -30,197 +17,94 @@ import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import { slugify } from '../../lib/string.js'
 import temporal from '../../lib/date.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Default echo window (ms) for instant commands (ON/OFF/TOGGLE).
- * Zigbee2MQTT state confirmations typically arrive within 500ms-3s; this covers
- * network latency and broker reconnects while keeping the attribution window
- * short enough that a later manual toggle is not mistaken for our own
- * confirmation. Override with `automation.echo_window_instant_ms` in main config.
- * @type {number}
- */
+/** Default echo window (ms) for instant commands (ON/OFF/TOGGLE).
+ * @type {number} */
 const INSTANT_ECHO_WINDOW_DEFAULT_MS = 15_000
 
-/**
- * Default echo window (ms) for travel commands (OPEN/CLOSE/POS:N/STOP).
- * Roller shutters take ~40-60 seconds to complete full travel, so the token
- * must outlive the whole motion -- forward-progress reports keep refreshing it
- * until the target is reached or an external override is detected. Override
- * with `automation.echo_window_travel_ms` in main config.
- * @type {number}
- */
+/** Default echo window (ms) for travel commands (OPEN/CLOSE/POS:N/STOP).
+ * @type {number} */
 const TRAVEL_ECHO_WINDOW_DEFAULT_MS = 90_000
 
-/**
- * Watchdog timeout (ms): if a commanded OPEN/CLOSE/POS:N motion shows no
- * forward progress for this long, the movement is presumed to have been stopped
- * externally (e.g., wall-switch STOP on an unmodeled device) and origin flips
- * to human immediately. Forward-progress reports re-arm the watchdog. Override
- * with `automation.motion_stall_timeout_ms` in main config.
- * @type {number}
- */
+/** Watchdog timeout (ms): if a commanded OPEN/CLOSE/POS:N motion shows no
+ * @type {number} */
 const MOTION_STALL_TIMEOUT_DEFAULT_MS = 20_000
 
-/**
- * Settle-absorption window (ms): after an echo confirms a travel outcome, follow-up
- * reports belonging to the SAME physical event (motor-status label churn such as
- * OPEN -> STOP as the motor idles, small overshoot wobble around the achieved point)
- * are absorbed instead of being misread as external input. Any motion beyond the
- * settle-wobble tolerance exits absorption immediately and is classified normally,
- * so a genuine human action right after completion is still caught in one report.
- * Override with `automation.settle_absorb_window_ms` in main config.
- * @type {number}
- */
+/** Settle-absorption window (ms): after an echo confirms a travel outcome, follow-up
+ * @type {number} */
 const SETTLE_ABSORB_WINDOW_DEFAULT_MS = 10_000
 
-/**
- * Pre-motion grace (ms): a positional terminal match arriving within this window of
- * command dispatch cannot be proof of completion -- covers frequently re-advertise their
- * last-known (possibly stale) state, and zigbee2mqtt may advertise an estimate already at
- * target, all before any physical motion has started. Such early matches do not consume
- * the token; after the grace elapses normal immediate confirmation resumes. Override with
- * `automation.travel_echo_grace_ms` in main config.
- * @type {number}
- */
+/** Pre-motion grace (ms): a positional terminal match arriving within this window of
+ * @type {number} */
 const TRAVEL_ECHO_GRACE_DEFAULT_MS = 2_000
 
-/**
- * Backoff (ms) before re-dispatching the identical automated command after it
- * produced no observable response at all (offline/faulty device). Prevents hammering
- * a dead actuator every tick while never giving up permanently -- any real state
- * change on the device clears the backoff early. Override with
- * `automation.failed_command_backoff_ms` in main config.
- * @type {number}
- */
+/** Backoff (ms) before re-dispatching the identical automated command after it
+ * @type {number} */
 const FAILED_COMMAND_BACKOFF_DEFAULT_MS = 10 * 60_000
 
-/**
- * Hard cap (ms) on total lifetime of any causality token, even while
- * continuation reports keep refreshing it. Prevents indefinite automation
- * attribution when a faulty motor keeps reporting micro-movements forever.
- * @type {number}
- */
+/** Hard cap (ms) on total lifetime of any causality token, even while
+ * @type {number} */
 const MAX_TOKEN_LIFETIME_MS = 600_000
 
-/**
- * Maximum position (%) still considered "fully open" for echo matching.
- * @type {number}
- */
+/** Maximum position (%) still considered "fully open" for echo matching.
+ * @type {number} */
 const OPEN_ECHO_POSITION_MIN = 90
 
-/**
- * Minimum position (%) still considered "fully closed" for echo matching.
- * @type {number}
- */
+/** Minimum position (%) still considered "fully closed" for echo matching.
+ * @type {number} */
 const CLOSED_ECHO_POSITION_MAX = 10
 
-/**
- * Maximum drift from the stop anchor position (%) still attributable to motor
- * inertia after an automated STOP command; beyond this something else moved
- * the device without our say-so.
- * @type {number}
- */
+/** Maximum drift from the stop anchor position (%) still attributable to motor
+ * @type {number} */
 const STOP_DRIFT_TOLERANCE = 5
 
-/**
- * Maximum positional deviation (%) from a just-confirmed travel outcome still
- * attributable to motor settling/inertia rather than an external actor. Larger
- * deviations exit settle-absorption immediately and are classified normally.
- * @type {number}
- */
+/** Maximum positional deviation (%) from a just-confirmed travel outcome still
+ * @type {number} */
 const SETTLE_WOBBLE_TOLERANCE = 5
 
-/**
- * Suffix appended to the device cache key for the persisted in-flight
- * automation marker that survives restarts.
- * @type {string}
- */
+/** Suffix appended to the device cache key for the persisted in-flight
+ * @type {string} */
 const PENDING_MARKER_KEY_SUFFIX = ':pending'
 
-/**
- * Fallback duration (seconds) for the human-interaction cooldown applied to a
- * device, used only when main config omits or misconfigures
- * `automation.human_interaction_cooldown_ms`. Mirrors DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
- * from AutomationBase (15 minutes). Written as the Redis cooldown key TTL so
- * automations can check remaining time via getHumanCooldownRemaining().
- * @type {number}
- */
+/** Fallback duration (seconds) for the human-interaction cooldown applied to a
+ * @type {number} */
 const HUMAN_INTERACTION_COOLDOWN_SECONDS = 15 * 60
 
-/**
- * Position tolerance threshold for matching roller shutter positions.
- * @type {number}
- */
+/** Position tolerance threshold for matching roller shutter positions.
+ * @type {number} */
 const POSITION_MATCH_TOLERANCE = 2
 
-/**
- * Threshold for "nearly fully open" roller shutter position comparison.
- * @type {number}
- */
+/** Threshold for "nearly fully open" roller shutter position comparison.
+ * @type {number} */
 const POSITION_NEARLY_OPEN_THRESHOLD = 98
 
-/**
- * Threshold for "nearly fully closed" roller shutter position comparison.
- * @type {number}
- */
+/** Threshold for "nearly fully closed" roller shutter position comparison.
+ * @type {number} */
 const POSITION_NEARLY_CLOSED_THRESHOLD = 2
 
-/**
- * Minimum meaningful illuminance change (lux).
- * @type {number}
- */
+/** Minimum meaningful illuminance change (lux).
+ * @type {number} */
 const ILLUMINANCE_CHANGE_THRESHOLD = 500
 
-/**
- * Minimum meaningful temperature change (degrees Celsius).
- * @type {number}
- */
+/** Minimum meaningful temperature change (degrees Celsius).
+ * @type {number} */
 const TEMPERATURE_CHANGE_THRESHOLD = 0.5
 
-/**
- * Minimum meaningful humidity change (%).
- * @type {number}
- */
+/** Minimum meaningful humidity change (%).
+ * @type {number} */
 const HUMIDITY_CHANGE_THRESHOLD = 1
 
-/**
- * Maximum length for truncated log summaries.
- * @type {number}
- */
+/** Maximum length for truncated log summaries.
+ * @type {number} */
 const SUMMARY_TRUNCATE_LENGTH = 80
 
-// ---------------------------------------------------------------------------
-// CommandCorrelator -- causality tokens for outgoing rule-engine commands
-// ---------------------------------------------------------------------------
+//  CommandCorrelator -- causality tokens for outgoing rule-engine commands.
 
-/**
- * Tracks at most one in-flight expectation per device -- the most recent
- * command issued by the RULE ENGINE -- and classifies incoming MQTT reports
- * against it.
- *
- * Policy: only autonomous rule-engine actions are attributed to automation.
- * Human-directed commands (remotes, interactions, AI chat) never register a
- * token here; they cancel any pending token instead. A live token is therefore
- * unambiguous evidence that the current motion was started by an automation,
- * and anything contradicting it is by definition external (human) intervention.
- *
- * Verdicts returned by {@link matchEcho}:
- *   'echo'         - report confirms the commanded outcome; token consumed
- *   'continuation' - report shows the commanded motion still progressing;
- *                    token kept alive (expiry refreshed up to MAX_TOKEN_LIFETIME_MS)
- *   'conflict'     - report contradicts the commanded motion (reversal or large
- *                    drift after STOP); token discarded
- *   null           - no live token, or the token has no opinion on this report
- */
+/** Tracks at most one in-flight expectation per device -- the most recent. */
 class CommandCorrelator {
 
-    /**
-     * Active expectation, if any.
-     * @type {{token: string, expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null), anchorState: (string|null), lastSeenPosition: (number|null), settleCount: number, ttlMs: number, issuedAt: number, expiresAt: number, echoGraceMs: (number|null)}|null}
-     */
+    /** Active expectation, if any.
+     * @type {{token: string, expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null), anchorState: (string|null), lastSeenPosition: (number|null), settleCount: number, ttlMs: number, issuedAt: number, expiresAt: number, echoGraceMs: (number|null)}|null} */
     #active = null
 
     /** Monotonic counter for unique token ids. @type {number} */
@@ -229,20 +113,13 @@ class CommandCorrelator {
     /** Log-context label supplied by the owning device (e.g., `"ZigbeeDevice:<name>"`). @type {string} */
     #logContext = 'CommandCorrelator'
 
-    /**
-     * Short-lived settling snapshot started when a positional echo confirms a travel
-     * outcome; absorbs tail reports of the same physical event so motor-status churn
-     * at a fixed point is not misread as external input.
-     * @type {{position: number, expiresAt: number}|null}
-     */
+    /** Short-lived settling snapshot started when a positional echo confirms a travel
+     * @type {{position: number, expiresAt: number}|null} */
     #settling = null
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Register an outgoing rule-engine command as the new active expectation,
-     * replacing any previous one (the latest command defines what we expect).
-     *
+    /** Register an outgoing rule-engine command as the new active expectation.
      * @param {string} expectedState - Normalized description: ON/OFF/OPEN/CLOSE/STOP/TOGGLE or "POS:N"
      * @param {Object} [options] - Registration context captured at dispatch time
      * @param {'instant'|'travel'|'wildcard'} [options.kind='instant'] - Command family
@@ -250,8 +127,7 @@ class CommandCorrelator {
      * @param {string|null} [options.anchorState=null] - State label at registration time (used by wildcard)
      * @param {number|null} [options.echoGraceMs=null] - Pre-motion grace (ms); near-target reports inside it cannot confirm completion
      * @param {number} ttlMs - Lifetime of the expectation in milliseconds
-     * @returns {string} A unique correlation token id
-     */
+     * @returns {string} A unique correlation token id */
     register(expectedState, options = {}, ttlMs) {
         const now = Date.now()
         const lifetime = Math.max(1_000, Number(ttlMs) || 0)
@@ -278,16 +154,9 @@ class CommandCorrelator {
         return this.#active.token
     }
 
-    /**
-     * Classify an incoming MQTT payload against the active expectation.
-     *
-     * Side effects: 'echo' and 'conflict' discard the token; 'continuation'
-     * refreshes its expiry (capped at MAX_TOKEN_LIFETIME_MS from issuance) and
-     * advances its progress reference point.
-     *
+    /** Classify an incoming MQTT payload against the active expectation.
      * @param {*} payload - Parsed MQTT message payload (object or raw string)
-     * @returns {'echo'|'continuation'|'conflict'|null} Verdict for the caller's decision tree
-     */
+     * @returns {'echo'|'continuation'|'conflict'|null} Verdict for the caller's decision tree */
     matchEcho(payload) {
         if (!this.hasActive()) return null
 
@@ -302,7 +171,7 @@ class CommandCorrelator {
                 this.#active = null
                 break
             case 'continuation': {
-                // Refresh lifetime while motion genuinely continues, but never beyond the hard cap.
+                //  Refresh lifetime while motion genuinely continues, but never beyond the hard cap.
                 const now = Date.now()
                 this.#active.expiresAt = Math.min(now + this.#active.ttlMs, this.#active.issuedAt + MAX_TOKEN_LIFETIME_MS)
                 break
@@ -313,10 +182,8 @@ class CommandCorrelator {
         return verdict
     }
 
-    /**
-     * Is there a non-expired active expectation? Expired tokens are dropped lazily.
-     * @returns {boolean}
-     */
+    /** Is there a non-expired active expectation? Expired tokens are dropped lazily.
+     * @returns {boolean} */
     hasActive() {
         if (!this.#active) return false
         if (Date.now() > this.#active.expiresAt) {
@@ -327,32 +194,21 @@ class CommandCorrelator {
         return true
     }
 
-    /**
-     * Kind of the live token without consuming or mutating it.
-     * @returns {'instant'|'travel'|'wildcard'|null}
-     */
+    /** Kind of the live token without consuming or mutating it.
+     * @returns {'instant'|'travel'|'wildcard'|null} */
     getActiveKind() {
         return this.hasActive() ? this.#active.kind : null
     }
 
-    /**
-     * Snapshot of the live token for logging and watchdog decisions.
-     * `progressObserved` tells whether any forward-motion report was ever seen since
-     * dispatch -- the stall watchdog uses it to distinguish "someone stopped our
-     * motion" (flip to human) from "the device never responded at all" (do NOT blame
-     * a person).
-     * @returns {{expectedState: string, kind: ('instant'|'travel'|'wildcard'), progressObserved: boolean}|null}
-     */
+    /** Snapshot of the live token for logging and watchdog decisions.
+     * @returns {{expectedState: string, kind: ('instant'|'travel'|'wildcard'), progressObserved: boolean}|null} */
     getActiveToken() {
         return this.hasActive()
             ? { expectedState: this.#active.expectedState, kind: this.#active.kind, progressObserved: this.#active.lastSeenPosition != null }
             : null
     }
 
-    /**
-     * Discard any pending expectation -- called when a human-directed command is
-     * dispatched so stale automation echoes can no longer be misattributed.
-     */
+    /** Discard any pending expectation -- called when a human-directed command. */
     cancelAll() {
         if (this.#active) {
             this.#trace(`token ${this.#active.token} cancelled by human-directed command`)
@@ -360,45 +216,32 @@ class CommandCorrelator {
         this.#active = null
     }
 
-    // -- Diagnostics ------------------------------------------------------
 
-    /**
-     * Set the log-context label used by file-only TRACE diagnostics so token
-     * lifecycle events can be attributed to their owning device.
-     * @param {string} context - Context string from the owning DeviceBase instance
-     */
+    /** Set the log-context label used by file-only TRACE diagnostics so token
+     * @param {string} context - Context string from the owning DeviceBase instance */
     setLogContext(context) {
         this.#logContext = String(context || 'CommandCorrelator')
     }
 
-    /**
-     * Emit a file-only TRACE diagnostic line (never reaches console/UI transports).
+    /** Emit a file-only TRACE diagnostic line (never reaches console/UI transports).
      * @param {string} message - Diagnostic detail to record
-     * @private
-     */
+     * @private */
     #trace(message) {
         LoggerService.trace(message, this.#logContext)
     }
 
-    // -----------------------------------------------------------------------
-    // Settle absorption (post-completion tail handling)
-    // -----------------------------------------------------------------------
+    //  Settle absorption (post-completion tail handling)
 
-    /**
-     * Start a short-lived settling snapshot after an echo confirmed a travel outcome.
-     * Only positional echoes should start it -- label-only outcomes keep legacy rules.
+    /** Start a short-lived settling snapshot after an echo confirmed a travel outcome.
      * @param {number} position - achieved/settled position (%) from the confirming report
-     * @param {number} windowMs - how long tail reports are absorbed (lazy expiry, no timer)
-     */
+     * @param {number} windowMs - how long tail reports are absorbed (lazy expiry, no timer) */
     beginSettling(position, windowMs) {
         const ms = Number(windowMs) > 0 ? Math.min(Number(windowMs), MAX_TOKEN_LIFETIME_MS) : SETTLE_ABSORB_WINDOW_DEFAULT_MS
         this.#settling = { position, expiresAt: Date.now() + ms }
     }
 
-    /**
-     * Whether the settle-absorption window is still active (lazily expired).
-     * @returns {boolean} true while post-completion tail reports may be absorbed
-     */
+    /** Whether the settle-absorption window is still active (lazily expired).
+     * @returns {boolean} true while post-completion tail reports may be absorbed */
     isSettling() {
         if (!this.#settling) return false
         if (Date.now() > this.#settling.expiresAt) {
@@ -408,15 +251,9 @@ class CommandCorrelator {
         return true
     }
 
-    /**
-     * Attempt to absorb a follow-up report as part of the just-confirmed outcome's tail.
-     * Returns true when the report belongs to our own event and must NOT change
-     * attribution: label-only churn at a known settled point, or positional wobble
-     * within SETTLE_WOBBLE_TOLERANCE around it. Any larger motion returns false so the
-     * caller classifies normally (and clears settling via markHumanInteraction).
+    /** Attempt to absorb a follow-up report as part of the just-confirmed outcome's tail.
      * @param {*} payload - parsed state report
-     * @returns {boolean} true when the report was classified as settling-tail noise
-     */
+     * @returns {boolean} true when the report was classified as settling-tail noise */
     absorbPostCompletionReport(payload) {
         if (!this.isSettling()) return false
         const pos = payload && typeof payload === 'object' && Number.isFinite(payload.position) ? payload.position : null
@@ -429,18 +266,13 @@ class CommandCorrelator {
         this.#settling = null
     }
 
-    // -- Private helpers --------------------------------------------------
+    //  -- Private helpers --------------------------------------------------
 
-    /**
-     * Expected direction of travel implied by the commanded state relative to
-     * the anchor position. +1 = position must increase, -1 = decrease,
-     * null = no directional expectation (STOP, instant, unknown).
-     *
+    /** Expected direction of travel implied by the commanded state relative.
      * @param {string} state - Normalized expected state
      * @param {number|null} anchorPosition - Position at registration time
      * @returns {number|null}
-     * @private
-     */
+     * @private */
     #directionFor(state, anchorPosition) {
         if (state === 'OPEN') return 1
         if (state === 'CLOSE') return -1
@@ -454,14 +286,11 @@ class CommandCorrelator {
         return null
     }
 
-    /**
-     * Evaluate one payload against the active token.
-     *
+    /** Evaluate one payload against the active token.
      * @param {{expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null)}} token
      * @param {*} payload - Parsed MQTT payload
      * @returns {'echo'|'continuation'|'conflict'|null}
-     * @private
-     */
+     * @private */
     #evaluate(token, payload) {
         if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) return null
 
@@ -482,7 +311,7 @@ class CommandCorrelator {
                 verdict = reportedState === token.expectedState ? 'echo' : null
         }
 
-        // File-only TRACE decision record -- makes every verdict explainable post-hoc.
+        //  File-only TRACE decision record -- makes every verdict explainable post-hoc.
         this.#trace(
             `eval ${token.token} kind=${token.kind} expectedState=${token.expectedState}` +
                 ` input={state:${reportedState ?? 'null'}, position:${position ?? 'null'}} -> ${verdict ?? 'null'}`
@@ -490,16 +319,12 @@ class CommandCorrelator {
         return verdict
     }
 
-    /**
-     * TOGGLE wildcard: consumed by the first report that actually differs from
-     * the pre-command snapshot. Identical periodic reports do NOT consume it.
-     *
+    /** TOGGLE wildcard: consumed by the first report that actually differs.
      * @param {{anchorPosition: (number|null), anchorState: (string|null)}} token
      * @param {string|null} reportedState
      * @param {number|null} position
      * @returns {'echo'|null}
-     * @private
-     */
+     * @private */
     #matchWildcard(token, reportedState, position) {
         if (reportedState == null && position == null) return null
         if (position != null && Number.isFinite(token.anchorPosition)) {
@@ -511,45 +336,24 @@ class CommandCorrelator {
         return null
     }
 
-    /**
-     * OPEN/CLOSE/POS:N travel matching with directional progress detection.
-     * Positional evidence takes precedence over label aliases so a contradictory
-     * position can never be papered over by a stale state label.
-     *
-     * A positional terminal match arriving before ANY forward progress has been
-     * observed -- and still inside the short pre-motion grace after dispatch --
-     * is not proof of completion: covers frequently re-advertise their last-known
-     * (possibly stale) state within milliseconds of accepting a command, and
-     * zigbee2mqtt may even advertise an estimate already at target while our
-     * cached anchor says otherwise. Consuming the token there would orphan the
-     * motion our command actually triggers ("unmatched -> human"). Such early
-     * reports yield no verdict instead; real motion still classifies against the
-     * live token, genuine completions confirm normally once the grace elapses or
-     * progress exists, and truly stationary devices resolve via the
-     * zero-progress watchdog path.
-     *
+    /** OPEN/CLOSE/POS:N travel matching with directional progress detection.
      * @param {{expectedState: string, direction: (number|null), anchorPosition: (number|null), lastSeenPosition: (number|null)}} token
      * @param {string|null} reportedState
      * @param {number|null} position
      * @returns {'echo'|'continuation'|'conflict'|null}
-     * @private
-     */
+     * @private */
     #matchTravel(token, reportedState, position) {
         const expected = token.expectedState
         const targetPos = expected.startsWith('POS:') ? parseInt(expected.substring(4), 10) : null
 
         if (position != null) {
-            // Terminal / exact-target matches first.
+            //  Terminal / exact-target matches first.
             const terminalMatch =
                 (targetPos != null && !isNaN(targetPos) && Math.abs(position - targetPos) <= POSITION_MATCH_TOLERANCE) ||
                 (expected === 'CLOSE' && position <= CLOSED_ECHO_POSITION_MAX) ||
                 (expected === 'OPEN' && position >= OPEN_ECHO_POSITION_MIN)
             if (terminalMatch) {
-                // Stale/optimistic re-advertisement guard: a terminal match with NO observed
-                // forward progress, arriving inside the pre-motion grace after dispatch, cannot
-                // distinguish "already at target" from "about to start moving" -- keep the token
-                // alive so our command's real motion is never orphaned as human. After the grace
-                // elapses (or once progress exists) normal immediate confirmation resumes.
+                //  Stale/optimistic re-advertisement guard: a terminal match with NO observed.
                 const graceMs = Number.isFinite(token.echoGraceMs) ? token.echoGraceMs : TRAVEL_ECHO_GRACE_DEFAULT_MS
                 if (token.lastSeenPosition == null && Date.now() - token.issuedAt < graceMs) {
                     const ageMs = Date.now() - token.issuedAt
@@ -569,38 +373,28 @@ class CommandCorrelator {
                 }
                 if (signedDelta < -POSITION_MATCH_TOLERANCE) return 'conflict'
                 if (this.#isCloserToTarget(token, position, reference)) {
-                    // Slow creep: each step stays within jitter tolerance but the device is
-                    // steadily approaching its target -- still our motion.
+                    //  Slow creep: each step stays within jitter tolerance but the device.
                     this.#noteProgress(token, position)
                     return 'continuation'
                 }
             }
-            // Jitter around a fixed point -- no opinion; the watchdog decides later
-            // whether the motion truly stalled without progress.
+            //  Jitter around a fixed point -- no opinion; the watchdog decides later.
             return null
         }
 
-        // Label-only report: accept direct or aliased terminal labels.
-        //   CLOSE command -> device may echo {state:'OFF'}
-        //   OPEN  command -> device may echo {state:'ON'}
+        //  Label-only report: accept direct or aliased terminal labels.
         if (reportedState == null) return null
         if (reportedState === expected) return 'echo'
         if ((expected === 'CLOSE' && reportedState === 'OFF') || (expected === 'OPEN' && reportedState === 'ON')) return 'echo'
         return null
     }
 
-    /**
-     * STOP matching: an explicit state='STOP' confirms it; otherwise small drift
-     * from the stop anchor is motor inertia ('continuation'), two consecutive
-     * settled reports mean the stop achieved as intended ('echo'), and any
-     * significant movement means something else drove the device ('conflict').
-     *
+    /** STOP matching: an explicit state='STOP' confirms it; otherwise small drift.
      * @param {{anchorPosition: (number|null), lastSeenPosition: (number|null), settleCount: number}} token
      * @param {string|null} reportedState
      * @param {number|null} position
      * @returns {'echo'|'continuation'|'conflict'|null}
-     * @private
-     */
+     * @private */
     #matchStop(token, reportedState, position) {
         if (reportedState === 'STOP') return 'echo'
         if (position != null && Number.isFinite(token.anchorPosition)) {
@@ -621,30 +415,22 @@ class CommandCorrelator {
         return null
     }
 
-    /**
-     * Record forward progress: advance the reference point so subsequent deltas
-     * are measured from here.
-     *
+    /** Record forward progress: advance the reference point so subsequent deltas.
      * @param {{lastSeenPosition: (number|null), settleCount: number}} token
      * @param {number} position
-     * @private
-     */
+     * @private */
     #noteProgress(token, position) {
         token.lastSeenPosition = position
         token.settleCount = 0
         this.#trace(`progress noted ${token.token} position=${position}`)
     }
 
-    /**
-     * Is `position` strictly closer to the commanded end state than `reference`?
-     * Used for slow-creep detection when per-step deltas stay within jitter tolerance.
-     *
+    /** Is `position` strictly closer to the commanded end state than `reference`?
      * @param {{expectedState: string}} token
      * @param {number} position
      * @param {number} reference
      * @returns {boolean}
-     * @private
-     */
+     * @private */
     #isCloserToTarget(token, position, reference) {
         const expected = token.expectedState
         if (expected === 'OPEN') return position > reference
@@ -658,22 +444,18 @@ class CommandCorrelator {
     }
 }
 
-// ---------------------------------------------------------------------------
-// DeviceBase (abstract)
-// ---------------------------------------------------------------------------
+//  DeviceBase (abstract)
 
-/**
- * Device defaults. All device types extend this class.
- */
+/** Device defaults. All device types extend this class. */
 export default class DeviceBase {
 
-    // -- Private state ----------------------------------------------------
+    //  -- Private state ----------------------------------------------------
 
     /** Device display name (e.g., `"Living Room Light"`) */
     #name = ''
-    /** Zigbee2MQTT device ID or friendly-name slug */
+    /** Zigbee2MQTT device ID or friendly-name slug. */
     #id = ''
-    /** Raw device configuration data from zigbee.yaml */
+    /** Raw device configuration data from zigbee.yaml. */
     #data = {}
     /** Last known state payload from MQTT (e.g., `{state: 'ON', position: 45}`) */
     #stateLast = {}
@@ -681,17 +463,13 @@ export default class DeviceBase {
     #stateOrigin = DeviceStateOrigin.UNKNOWN
     /** ISO-8601 timestamp of last state change, or `null` on first boot */
     #stateLastAt = null
-    /** Tracks the single in-flight rule-engine expectation for override detection */
+    /** Tracks the single in-flight rule-engine expectation for override detection. */
     #correlator = new CommandCorrelator()
-    /** Watchdog timer handle detecting externally-stalled automated motion */
+    /** Watchdog timer handle detecting externally-stalled automated motion. */
     #stallTimer = null
 
-    /**
-     * Retry-backoff metadata for the last automated command that produced no observable
-     * response; receiveCommand suppresses identical descriptions until `until` or until a
-     * real state change clears it.
-     * @type {{description: string, positionAtFailure: (number|null), until: number}|null}
-     */
+    /** Retry-backoff metadata for the last automated command that produced no observable
+     * @type {{description: string, positionAtFailure: (number|null), until: number}|null} */
     #failedCommand = null
     /** Redis cache key: `"zigbeedevice:<slug>:<id>"` */
     #cacheKey = ''
@@ -704,15 +482,12 @@ export default class DeviceBase {
     /** Custom event listeners map (eventType -> callback[]) */
     #eventListeners = new Map()
 
-    // -- Constructor ------------------------------------------------------
+    //  -- Constructor ------------------------------------------------------
 
-    /**
-     * Construct a device instance.
-     *
+    /** Construct a device instance.
      * @param {string} name - Device display name from zigbee.yaml config
      * @param {string} id - Zigbee2MQTT friendly-name or device ID
-     * @param {Record<string, unknown>} [data] - Raw device configuration object
-     */
+     * @param {Record<string, unknown>} [data] - Raw device configuration object */
     constructor(name, id, data) {
         if (this.constructor === DeviceBase) {
             throw new Error('Abstract classes cannot be instantiated.')
@@ -722,17 +497,13 @@ export default class DeviceBase {
         this.#id = id
         this.#data = data
         this.#cacheKey = this.#generateCacheKey(name, id)
-        // Attribute correlator TRACE diagnostics to this device in the trace log.
+        //  Attribute correlator TRACE diagnostics to this device in the trace log.
         this.#correlator.setLogContext(`${this.getLogPrefix()}:${name}`)
     }
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Async initialization called after construction.
-     * Loads cached state from Redis into local variables.
-     * Subclasses may override to add their own init logic.
-     */
+    /** Async initialization called after construction. */
     async init() {
         const cached = await this.getCachedState()
         if (cached) {
@@ -745,10 +516,7 @@ export default class DeviceBase {
             )
         }
 
-        // Restore an in-flight automation expectation that survived a restart so
-        // echoes of a pre-restart rule-engine command keep their attribution and
-        // external overrides remain detectable. Devices that do not track origin
-        // never persist one; expired markers self-clean via Redis TTL.
+        //  Restore an in-flight automation expectation that survived a restart.
         if (this.shouldTrackOrigin()) {
             const marker = await CacheService.get(this.#pendingMarkerKey())
             if (marker && typeof marker.expectedState === 'string' && Number.isFinite(marker.expiresAt) && marker.expiresAt > Date.now()) {
@@ -765,77 +533,55 @@ export default class DeviceBase {
         }
     }
 
-    // -- Identity accessors -----------------------------------------------
+    //  -- Identity accessors -----------------------------------------------
 
-    /**
-     * Get device name.
-     * @returns {string}
-     */
+    /** Get device name.
+     * @returns {string} */
     getName() {
         return this.#name
     }
 
-    /**
-     * Get device ID.
-     * @returns {string}
-     */
+    /** Get device ID.
+     * @returns {string} */
     getId() {
         return this.#id
     }
 
-    /**
-     * Return the raw configuration data bag this instance was constructed with
-     * (zigbee2mqtt definition merged with per-device config entries such as
-     * `channels`, `type`, or `brightness_range`). Read-only convenience for
-     * subclasses that need to inspect their own declarative parameters without
-     * reaching into private state.
-     * @returns {Object|null} Constructor-provided data object, or null when none given
-     */
+    /** Return the raw configuration data bag this instance was constructed with
+     * @returns {Object|null} Constructor-provided data object, or null when none given */
     getData() {
         return this.#data
     }
 
-    // -- Cache accessors --------------------------------------------------
+    //  -- Cache accessors --------------------------------------------------
 
-    /**
-     * Generate a unique cache key for this device.
-     * Uses slugify for consistent naming and prefixes with "zigbeedevice".
-     *
+    /** Generate a unique cache key for this device.
      * @param {string} name - Device name
      * @param {string} id - Device ID
      * @returns {string} Cache key
-     * @private
-     */
+     * @private */
     #generateCacheKey(name, id) {
         return `zigbeedevice:${slugify(name)}:${id}`
     }
 
-    /**
-     * Get the cache key for this device.
-     * @returns {string}
-     */
+    /** Get the cache key for this device.
+     * @returns {string} */
     getCacheKey() {
         return this.#cacheKey
     }
 
-    /**
-     * Retrieve persisted device state from Redis cache.
-     *
-     * @returns {Promise<{stateLast: Record<string,unknown>, stateLastAt: string|null, stateOrigin: string}|undefined>}
-     */
+    /** Retrieve persisted device state from Redis cache.
+     * @returns {Promise<{stateLast: Record<string,unknown>, stateLastAt: string|null, stateOrigin: string}|undefined>} */
     async getCachedState() {
         return await CacheService.get(this.#cacheKey)
     }
 
-    /**
-     * Persist device state to Redis cache.
-     *
+    /** Persist device state to Redis cache.
      * @param {Record<string, unknown>} state - Latest MQTT payload or computed state object
      * @param {object} [options] - Optional overrides
      * @param {string} [options.stateLastAt] - Explicit ISO-8601 timestamp (defaults to `now`)
      * @param {'unknown'|'automation'|'human'} [options.origin] - Explicit provenance override
-     * @returns {Promise<boolean>} `true` on success
-     */
+     * @returns {Promise<boolean>} `true` on success */
     async setCachedState(state, options = {}) {
         this.#stateLast = state
         this.#stateLastAt = options.stateLastAt || new Date().toISOString()
@@ -852,120 +598,75 @@ export default class DeviceBase {
         return await CacheService.set(this.#cacheKey, payload)
     }
 
-    // -- State tracking accessors -----------------------------------------
+    //  -- State tracking accessors -----------------------------------------
 
-    /**
-     * Retrieve the most recent MQTT payload for this device.
-     *
-     * @returns {Record<string, unknown>} Last known state object
-     */
+    /** Retrieve the most recent MQTT payload for this device.
+     * @returns {Record<string, unknown>} Last known state object */
     getStateLast() {
         return this.#stateLast
     }
 
-    /**
-     * Get the timestamp of the last state change (by anyone).
-     * @returns {string|null} ISO timestamp or null if unknown
-     */
+    /** Get the timestamp of the last state change (by anyone).
+     * @returns {string|null} ISO timestamp or null if unknown */
     getStateLastAt() {
         return this.#stateLastAt
     }
 
-    /**
-     * Get the origin of the current state.
-     * Returns 'unknown', 'automation', or 'human'.
-     *
-     * This is the single source of truth for determining who caused the
-     * current device state. Unlike the old timestamp-comparison approach,
-     * this is explicit, deterministic, and survives restarts.
-     *
-     * @returns {string} One of DeviceStateOrigin.UNKNOWN, .AUTOMATION, .HUMAN
-     */
+    /** Get the origin of the current state.
+     * @returns {string} One of DeviceStateOrigin.UNKNOWN, .AUTOMATION, .HUMAN */
     getStateOrigin() {
         return this.#stateOrigin
     }
 
-    /**
-     * Whether this device participates in origin classification at all. Only
-     * actuator devices whose state can be driven by both automations and humans
-     * need it; sensors/remotes/bridges just cache payloads. Subclasses override
-     * to opt in (see Mechanism).
-     * @returns {boolean} false by default
-     */
+    /** Whether this device participates in origin classification at all. Only
+     * @returns {boolean} false by default */
     shouldTrackOrigin() {
         return false
     }
 
-    // -- Origin classification tuning --------------------------------------
+    //  -- Origin classification tuning --------------------------------------
 
-    /**
-     * Echo window for instant commands (ON/OFF/TOGGLE), read live from main config
-     * (`automation.echo_window_instant_ms`) so the value can be tuned without code changes.
-     * Missing values silently use INSTANT_ECHO_WINDOW_DEFAULT_MS; present but
-     * invalid ones log a warning and fall back to that same default (fail-open).
-     * @returns {number} Window in milliseconds (> 0)
-     */
+    /** Echo window for instant commands (ON/OFF/TOGGLE), read live from main config
+     * @returns {number} Window in milliseconds (> 0) */
     getInstantEchoWindowMs() {
         return this.#durationFromConfig('automation.echo_window_instant_ms', INSTANT_ECHO_WINDOW_DEFAULT_MS)
     }
 
-    /**
-     * Echo window for travel commands (OPEN/CLOSE/POS:N/STOP); see
-     * {@link getInstantEchoWindowMs} for resolution rules. Config key:
-     * `automation.echo_window_travel_ms`.
-     * @returns {number} Window in milliseconds (> 0)
-     */
+    /** Echo window for travel commands (OPEN/CLOSE/POS:N/STOP); see
+     * @returns {number} Window in milliseconds (> 0) */
     getTravelEchoWindowMs() {
         return this.#durationFromConfig('automation.echo_window_travel_ms', TRAVEL_ECHO_WINDOW_DEFAULT_MS)
     }
 
-    /**
-     * Motion-stall watchdog timeout; see {@link getInstantEchoWindowMs} for
-     * resolution rules. Config key: `automation.motion_stall_timeout_ms`.
-     * @returns {number} Timeout in milliseconds (> 0)
-     */
+    /** Motion-stall watchdog timeout; see {@link getInstantEchoWindowMs} for
+     * @returns {number} Timeout in milliseconds (> 0) */
     getMotionStallTimeoutMs() {
         return this.#durationFromConfig('automation.motion_stall_timeout_ms', MOTION_STALL_TIMEOUT_DEFAULT_MS)
     }
 
-    /**
-     * Settle-absorption window (ms): how long follow-up reports of a just-confirmed travel
-     * outcome are absorbed as the same physical event instead of being classified anew.
-     * @returns {number} Window in milliseconds
-     */
+    /** Settle-absorption window (ms): how long follow-up reports of a just-confirmed travel
+     * @returns {number} Window in milliseconds */
     getSettleAbsorbWindowMs() {
         return this.#durationFromConfig('automation.settle_absorb_window_ms', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
     }
 
-    /**
-     * Pre-motion grace during which near-target travel reports cannot confirm completion;
-     * see {@link getInstantEchoWindowMs} for resolution rules. Config key:
-     * `automation.travel_echo_grace_ms`.
-     * @returns {number} Grace window in milliseconds (> 0)
-     */
+    /** Pre-motion grace during which near-target travel reports cannot confirm completion;
+     * @returns {number} Grace window in milliseconds (> 0) */
     getTravelEchoGraceMs() {
         return this.#durationFromConfig('automation.travel_echo_grace_ms', TRAVEL_ECHO_GRACE_DEFAULT_MS)
     }
 
-    /**
-     * Backoff (ms) before re-dispatching an automated command that produced no observable
-     * response, while the device state stays unchanged.
-     * @returns {number} Backoff in milliseconds
-     */
+    /** Backoff (ms) before re-dispatching an automated command that produced no observable
+     * @returns {number} Backoff in milliseconds */
     getFailedCommandBackoffMs() {
         return this.#durationFromConfig('automation.failed_command_backoff_ms', FAILED_COMMAND_BACKOFF_DEFAULT_MS)
     }
 
-    /**
-     * Shared duration-config reader: accepts plain milliseconds or a human-readable
-     * string ("30s", "25m", "1h") via temporal.parseDurationMs(). Missing values use
-     * the default silently; invalid ones warn and fall back to it (fail-open).
-     *
+    /** Shared duration-config reader: accepts plain milliseconds or a human-readable.
      * @private
      * @param {string} key - Main config key name
      * @param {number} defaultMs - Fallback value in milliseconds
-     * @returns {number} Duration in milliseconds (> 0)
-     */
+     * @returns {number} Duration in milliseconds (> 0) */
     #durationFromConfig(key, defaultMs) {
         const raw = ConfigService.get(key)
         if (raw == null || raw === '') return defaultMs
@@ -980,14 +681,11 @@ export default class DeviceBase {
         return Math.round(ms)
     }
 
-    // -- Event emission ---------------------------------------------------
+    //  -- Event emission ---------------------------------------------------
 
-    /**
-     * Emit an event with optional data.
-     *
+    /** Emit an event with optional data.
      * @param {string} eventType - The type of event to emit
-     * @param {Object} [data={}] - Optional data to pass with the event
-     */
+     * @param {Object} [data={}] - Optional data to pass with the event */
     emit(eventType, data = {}) {
         if (eventType === 'mqttMessage') {
             this.handleMqttMessage(data)
@@ -999,17 +697,9 @@ export default class DeviceBase {
         }
     }
 
-    /**
-     * Resolve the human-interaction cooldown duration in whole seconds for the
-     * Redis cooldown key TTL. Reads `automation.human_interaction_cooldown_ms` from main
-     * config -- either legacy plain milliseconds or a human-readable duration
-     * ("25m", "1h") via temporal.parseDurationMs(). Missing values silently fall back
-     * to HUMAN_INTERACTION_COOLDOWN_SECONDS; present but invalid ones log a warning
-     * and use the same fallback; an explicit zero disables the cooldown entirely
-     * (returns 0, caller skips writing the key).
+    /** Resolve the human-interaction cooldown duration in whole seconds.
      * @private
-     * @returns {number} Cooldown in whole seconds (>= 0)
-     */
+     * @returns {number} Cooldown in whole seconds (>= 0) */
     #humanCooldownSeconds() {
         const raw = ConfigService.get('automation.human_interaction_cooldown_ms')
         if (raw == null) return HUMAN_INTERACTION_COOLDOWN_SECONDS
@@ -1024,16 +714,11 @@ export default class DeviceBase {
         return Math.max(0, Math.round(ms / 1000))
     }
 
-    /**
-     * Mark the device as human-controlled for a given payload: flip origin to
-     * HUMAN (timestamped now), persist it, cancel any automation expectation and
-     * watchdog, clear the persisted marker, and start the Redis cooldown so
-     * automations back off from this device.
+    /** Mark the device as human-controlled for a given payload: flip origin.
      * @private
      * @param {*} parsed - New state payload from MQTT
      * @param {string} reason - Why this is attributed to a human (for logs)
-     * @param {'debug'|'warn'} [level='debug'] - Log level for the attribution line
-     */
+     * @param {'debug'|'warn'} [level='debug'] - Log level for the attribution line */
     #markHumanInteraction(parsed, reason, level = 'debug') {
         this.#stateLast = parsed
         this.#stateOrigin = DeviceStateOrigin.HUMAN
@@ -1050,19 +735,15 @@ export default class DeviceBase {
         this.#clearMotionWatchdog()
         this.#correlator.cancelAll()
         this.#correlator.clearSettling()
-        // A genuine external change means the device moved -- allow ineffective-command retries again.
+        //  A genuine external change means the device moved -- allow ineffective-command retries again.
         this.#failedCommand = null
         this.#clearPendingCommandMarker()
         this.#writeHumanCooldown(reason)
     }
 
-    /**
-     * Start the Redis human-interaction cooldown for this device. Failures are
-     * logged loudly -- a silent miss here means automations may fight the user.
-     * A configured zero disables the cooldown entirely.
+    /** Start the Redis human-interaction cooldown for this device.
      * @private
-     * @param {string} reason - Why the cooldown is starting (for logs)
-     */
+     * @param {string} reason - Why the cooldown is starting (for logs) */
     #writeHumanCooldown(reason) {
         const cooldownSec = this.#humanCooldownSeconds()
         if (cooldownSec <= 0) {
@@ -1085,24 +766,18 @@ export default class DeviceBase {
             })
     }
 
-    /**
-     * Redis key for the persisted in-flight automation expectation.
+    /** Redis key for the persisted in-flight automation expectation.
      * @private
-     * @returns {string}
-     */
+     * @returns {string} */
     #pendingMarkerKey() {
         return this.#cacheKey + PENDING_MARKER_KEY_SUFFIX
     }
 
-    /**
-     * Persist the active correlator token so a restart mid-motion does not lose
-     * attribution context. Best-effort with loud failure logging; the TTL mirrors
-     * the token lifetime so markers self-clean even if never explicitly cleared.
+    /** Persist the active correlator token so a restart mid-motion does not lose.
      * @private
      * @param {string} description - Normalized command description (ON/OFF/OPEN/CLOSE/STOP/TOGGLE or "POS:N")
      * @param {'instant'|'travel'|'wildcard'} kind - Command family
-     * @param {number} ttlMs - Token lifetime in milliseconds
-     */
+     * @param {number} ttlMs - Token lifetime in milliseconds */
     #persistPendingCommandMarker(description, kind, ttlMs) {
         const marker = {
             expectedState: String(description ?? '').toUpperCase(),
@@ -1117,11 +792,8 @@ export default class DeviceBase {
             })
     }
 
-    /**
-     * Remove any persisted in-flight automation marker (best-effort cleanup; the
-     * key may simply not exist yet).
-     * @private
-     */
+    /** Remove any persisted in-flight automation marker (best-effort cleanup; the
+     * @private */
     #clearPendingCommandMarker() {
         CacheService.delete(this.#pendingMarkerKey())
             .catch(err => {
@@ -1129,23 +801,10 @@ export default class DeviceBase {
             })
     }
 
-    // -- Motion watchdog ----------------------------------------------------
+    //  -- Motion watchdog ----------------------------------------------------
 
-    /**
-     * Arm (or re-arm) the stall watchdog for an active travel expectation. Only
-     * OPEN/CLOSE/POS:N commands expect continued motion; STOP/instant/wildcard do
-     * not arm it. If the timer fires while the same expectation is still unresolved,
-     * the outcome depends on whether ANY forward progress was observed since dispatch:
-     *   - progress then halt -> something external stopped our motion (e.g., wall
-     *     switch), so origin flips to human + cooldown.
-     *   - zero progress      -> the device never responded at all (offline/faulty), or
-     *     slow label-only travel not yet confirmed by telemetry. Nothing a person could
-     *     have stopped, so attribution is preserved and NO human cooldown is written;
-     *     identical retries are backed off instead, while the token stays alive until its
-     *     natural TTL expiry so late completions still match as automation echoes.
-     * Forward-progress reports call this again to reset the clock.
-     * @private
-     */
+    /** Arm (or re-arm) the stall watchdog for an active travel expectation. Only
+     * @private */
     #armMotionWatchdog() {
         this.#clearMotionWatchdog()
         const token = this.#correlator.getActiveToken()
@@ -1172,25 +831,13 @@ export default class DeviceBase {
                 this.#handleNoResponseStall(live.expectedState)
             }
         }, timeoutMs)
-        // Do not keep the process alive just for a watchdog.
+        //  Do not keep the process alive just for a watchdog.
         this.#stallTimer.unref?.()
     }
 
-    /**
-     * Handle an automated travel command that showed no progress within its motion
-     * window: either the device never moved at all (offline/faulty), or it is a slow
-     * label-only traveler whose telemetry has not confirmed motion yet. Record
-     * retry-backoff metadata WITHOUT touching origin or cooldowns, and keep the token
-     * alive until its natural TTL expiry: on devices that report only state labels
-     * during travel (e.g., roller shutters emitting STOP->OPEN->CLOSE with no position
-     * data), a "no progress" verdict can arrive mid-travel, and any late completion must
-     * still match as an automation echo instead of falling into the unmatched-change ->
-     * human fallback. Attribution stays safe because human-directed commands cancel
-     * tokens immediately and positional contradictions flip via conflict; identical
-     * re-dispatches are suppressed by the backoff recorded below.
+    /** Handle an automated travel command that showed no progress within its motion.
      * @private
-     * @param {string} expectedState - the commanded description (OPEN/CLOSE/POS:N)
-     */
+     * @param {string} expectedState - the commanded description (OPEN/CLOSE/POS:N) */
     #handleNoResponseStall(expectedState) {
         LoggerService.warn(
             `Automated command ${expectedState} produced no observable response -- possible offline/faulty device; backing off identical retries`,
@@ -1208,10 +855,8 @@ export default class DeviceBase {
         )
     }
 
-    /**
-     * Clear any armed stall watchdog.
-     * @private
-     */
+    /** Clear any armed stall watchdog.
+     * @private */
     #clearMotionWatchdog() {
         if (this.#stallTimer != null) {
             clearTimeout(this.#stallTimer)
@@ -1219,12 +864,10 @@ export default class DeviceBase {
         }
     }
 
-    /**
-     * Map a normalized command description to its correlator family.
+    /** Map a normalized command description to its correlator family.
      * @private
      * @param {string} description - Normalized description (ON/OFF/OPEN/CLOSE/STOP/TOGGLE or "POS:N")
-     * @returns {'instant'|'travel'|'wildcard'}
-     */
+     * @returns {'instant'|'travel'|'wildcard'} */
     #commandKindFor(description) {
         const state = String(description ?? '').toUpperCase()
         if (state === 'OPEN' || state === 'CLOSE' || state === 'STOP' || state.startsWith('POS:')) return 'travel'
@@ -1232,30 +875,10 @@ export default class DeviceBase {
         return 'instant'
     }
 
-    // -- MQTT message handling --------------------------------------------
+    //  -- MQTT message handling --------------------------------------------
 
-    /**
-     * Handle incoming MQTT messages.
-     *
-     * Classification policy: a live causality token -- registered ONLY by
-     * rule-engine commands in receiveCommand() -- is the sole evidence that
-     * current activity is automation-driven. Everything else (unmatched changes,
-     * contradictions of an active command, motion stalling mid-travel) is human
-     * interaction and starts the Redis cooldown so automations back off.
-     *
-     * Decision tree for origin-tracking devices ({@link shouldTrackOrigin}):
-     *   matchEcho -> 'echo'         : confirmed outcome of our own command; keep AUTOMATION
-     *   matchEcho -> 'continuation' : commanded motion still progressing; keep AUTOMATION
-     *   matchEcho -> 'conflict'     : external override detected; flip to HUMAN + cooldown
-     *   no verdict + no change      : periodic report; cache payload only
-     *   no verdict + changed        : HUMAN unless a travel expectation is still alive
-     *
-     * Non-origin-tracking devices (sensors, remotes, bridges) just refresh their
-     * cached payload -- they are never automation targets, so classifying them as
-     * "human" would be noise.
-     *
-     * @param {Object} data - Event data containing topic and message
-     */
+    /** Handle incoming MQTT messages.
+     * @param {Object} data - Event data containing topic and message */
     handleMqttMessage(data) {
         let parsed
         try {
@@ -1265,8 +888,7 @@ export default class DeviceBase {
             parsed = data.message
         }
 
-        // File-only TRACE intake record: raw payload plus live-token context so any
-        // later misclassification can be explained from the trace log alone.
+        //  File-only TRACE intake record: raw payload plus live-token context.
         const activeSnapshot = this.#correlator.getActiveToken()
         LoggerService.trace(
             `MQTT intake topic="${data.topic}" payload=${JSON.stringify(parsed)}` +
@@ -1277,9 +899,7 @@ export default class DeviceBase {
         )
 
         if (!this.shouldTrackOrigin()) {
-            // Payload-only refresh for non-actuator devices (sensors, remotes,
-            // bridges): they are never automation targets, so classifying their
-            // reports would only add noise. Origin stays untouched.
+            // Payload-only refresh for non-actuator devices.
             const hadChange = this.#didStateChange(parsed)
             this.#stateLast = parsed
             this.setCachedState(parsed, {
@@ -1293,15 +913,11 @@ export default class DeviceBase {
 
             switch (verdict) {
                 case 'echo': {
-                    // Confirmed outcome of our own rule-engine command: keep AUTOMATION.
-                    // Do NOT update stateLastAt -- it was set when the command was sent.
+                    //  Confirmed outcome of our own rule-engine command: keep AUTOMATION.
                     LoggerService.debug('Automation echo matched -- origin=automation', `${this.getLogPrefix()}:${this.#name}`)
                     this.#clearMotionWatchdog()
                     this.#clearPendingCommandMarker()
-                    // Begin short settle-absorption so tail reports of this same physical event
-                    // (motor-status label churn, small overshoot wobble) are not misread as
-                    // external input once the token is consumed above. Only positional echoes
-                    // start it -- label-only outcomes keep legacy classification rules.
+                    //  Begin short settle-absorption so tail reports of this same physical event.
                     if (parsed && typeof parsed === 'object' && Number.isFinite(parsed.position)) {
                         this.#correlator.beginSettling(parsed.position, this.getSettleAbsorbWindowMs())
                     }
@@ -1315,8 +931,7 @@ export default class DeviceBase {
                     break
                 }
                 case 'continuation': {
-                    // Commanded motion still in progress (slow shutters etc.): keep
-                    // AUTOMATION and re-arm the watchdog from fresh forward progress.
+                    //  Commanded motion still in progress (slow shutters etc.)
                     LoggerService.debug('Commanded motion continuing -- origin preserved as automation', `${this.getLogPrefix()}:${this.#name}`)
                     this.#armMotionWatchdog()
                     this.#stateLast = parsed
@@ -1329,16 +944,14 @@ export default class DeviceBase {
                     break
                 }
                 case 'conflict': {
-                    // Reported motion contradicts our active command: someone else moved it.
+                    //  Reported motion contradicts our active command: someone else moved it.
                     this.#markHumanInteraction(parsed, 'external override detected during automated motion', 'warn')
                     break
                 }
                 default: {
                     const hadStateChange = this.#didStateChange(parsed)
                     if (!hadStateChange) {
-                        // Periodic report / no meaningful change -- payload only, origin untouched.
-                        // This prevents zigbee2mqtt's periodic state advertisements from being
-                        // misclassified as human input.
+                        //  Periodic report / no meaningful change -- payload only, origin untouched.
                         this.#stateLast = parsed
                         this.setCachedState(parsed, {
                             stateLastAt: this.#stateLastAt,
@@ -1347,9 +960,7 @@ export default class DeviceBase {
                             this.log(`Failed to cache state: ${err.message}`, 'error')
                         })
                     } else if (this.#correlator.hasActive()) {
-                        // Unmatched change while an expectation is still alive (e.g., label-only
-                        // reports mid-motion): preserve current attribution; the watchdog decides
-                        // later if the motion truly stalled without progress.
+                        // Unmatched change while an expectation is still alive.
                         LoggerService.debug('Unmatched change inside active command window -- preserving origin', `${this.getLogPrefix()}:${this.#name}`)
                         this.#stateLast = parsed
                         this.setCachedState(parsed, {
@@ -1359,10 +970,7 @@ export default class DeviceBase {
                             this.log(`Failed to cache state: ${err.message}`, 'error')
                         })
                     } else if (this.#correlator.absorbPostCompletionReport(parsed)) {
-                        // Small positional wobble around a just-confirmed outcome (motor
-                        // overshoot/settle bounce): same physical event we already attributed
-                        // to automation -- absorb without changing origin or cooldowns. A real
-                        // human action moves beyond the wobble tolerance and falls through.
+                        // Small positional wobble around a just-confirmed outcome.
                         LoggerService.debug('Post-completion settling report absorbed -- origin preserved', `${this.getLogPrefix()}:${this.#name}`)
                         this.#stateLast = parsed
                         this.setCachedState(parsed, {
@@ -1372,7 +980,7 @@ export default class DeviceBase {
                             this.log(`Failed to cache state: ${err.message}`, 'error')
                         })
                     } else {
-                        // Changed with no automation explanation -> human interaction.
+                        //  Changed with no automation explanation -> human interaction.
                         this.#markHumanInteraction(parsed, 'unmatched state change with no pending automation command')
                     }
                 }
@@ -1389,47 +997,14 @@ export default class DeviceBase {
         EventBus.publish(`zigbee:${this.#name}`)
     }
 
-    /**
-     * Receive a command from another device (e.g., a Remote) or from automation.
-     * This is the unified interface for device-to-device communication
-     * via DeviceContainer, replacing direct MQTT publishing.
-     * Subclasses may override for custom behavior.
-     *
-     * The origin and correlator token are deferred until MqttService actually
-     * publishes the message (via an onPublish callback). This eliminates the race
-     * condition where a pending correlator token survives longer than the queue
-     * latency window and misclassifies a human-initiated echo as our own AI command.
-     *
-     * The `source` parameter makes provenance explicit (see DeviceCommandSource):
-     *   - AUTOMATION: rule-engine action. Registers a causality token at publish
-     *     time so the resulting MQTT echoes are attributed as automation, persists
-     *     an in-flight marker that survives restarts, and arms the motion-stall
-     *     watchdog for travel commands.
-     *   - HUMAN: any person-directed action -- physical remote presses routed
-     *     through interactions, YAML interaction targets, Home Assistant / z2m UI
-     *     actions, or AI chat tool calls (a human gave the AI the order). Cancels
-     *     any pending automation expectation immediately, marks origin human NOW
-     *     (not when the echo arrives), and starts the Redis cooldown so automations
-     *     back off even before motion is visible on MQTT.
-     *
-     * Supports both simple string commands ("ON", "OFF", "OPEN", "CLOSE") and
-     * structured JSON payloads ({position: 12}, {state: 'OPEN'}, etc.).
-     *
-     * Before publishing to zigbee2mqtt, the command is compared against the cached
-     * device state. If the device is already in (or very close to) the requested
-     * state, the MQTT publish is suppressed to avoid unnecessary traffic and
-     * redundant physical actuation.
-     *
+    /** Receive a command from another device (e.g., a Remote) or from automation.
      * @param {string|Object} command - Command to send. Either a state string
-     *   ("ON", "OFF", "TOGGLE", "OPEN", "CLOSE", "STOP") or a payload object
-     *   like {position: 12} or {state: 'OPEN'}.
-     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command
-     */
+     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command */
     receiveCommand(command, source = DeviceCommandSource.HUMAN) {
         let finalPayload
         let description
 
-        // Build payload -- no extra fields merged, just the command itself.
+        //  Build payload -- no extra fields merged, just the command itself.
         if (typeof command === 'object' && command !== null) {
             finalPayload = { ...command }
             if ('state' in command) {
@@ -1448,7 +1023,7 @@ export default class DeviceBase {
 
         const isAutomation = source === DeviceCommandSource.AUTOMATION
 
-        // --- Suppress redundant commands ---
+        //  --- Suppress redundant commands ---
         if (this.#isCommandRedundant(finalPayload, description)) {
             LoggerService.info(
                 `Command "${description}" suppressed: device already at target state`,
@@ -1468,17 +1043,13 @@ export default class DeviceBase {
                 this.log(`Failed to cache state: ${err.message}`, 'error')
             })
             if (!isAutomation) {
-                // The person still expressed intent even though nothing moved.
+                //  The person still expressed intent even though nothing moved.
                 this.#writeHumanCooldown('redundant human command suppressed -- intent still counts')
             }
             return
         }
 
-        // --- Suppress retries of ineffective automation commands ---
-        // If our last attempt at this exact description produced zero observable response,
-        // do not hammer the device again while its state is unchanged: the failure was
-        // already logged once and will be retried when something else moves the device or
-        // the backoff elapses. Human-directed commands are never suppressed here.
+        //  --- Suppress retries of ineffective automation commands ---
         if (isAutomation && this.#failedCommand != null) {
             const fc = this.#failedCommand
             if (Date.now() < fc.until && fc.description === description) {
@@ -1508,16 +1079,13 @@ export default class DeviceBase {
         const topic = `${prefix}/${this.#name}/set`
         const self = this
 
-        // Defer correlator registration and origin assignment until the message
-        // is actually published by MqttService so a queued but never-sent command
-        // cannot leave stale attribution behind.
+        //  Defer correlator registration and origin assignment until the message.
         const _onPublish = () => {
             const now = new Date().toISOString()
             self.#stateLastAt = now
 
             if (isAutomation) {
-                // Rule-engine action: register the expectation so its echoes are
-                // recognized as automation and external overrides stay detectable.
+                //  Rule-engine action: register the expectation so its echoes are.
                 const kind = self.#commandKindFor(description)
                 const ttlMs = kind === 'travel' ? self.getTravelEchoWindowMs() : self.getInstantEchoWindowMs()
                 self.#correlator.register(description, {
@@ -1530,8 +1098,7 @@ export default class DeviceBase {
                 self.#persistPendingCommandMarker(description, kind, ttlMs)
                 self.#armMotionWatchdog()
             } else {
-                // Human-directed command: invalidate any stale automation expectations NOW --
-                // before their echoes can arrive -- and start the cooldown immediately.
+                //  Human-directed command: invalidate any stale automation expectations NOW --
                 self.#clearMotionWatchdog()
                 self.#correlator.cancelAll()
                 self.#stateOrigin = DeviceStateOrigin.HUMAN
@@ -1555,26 +1122,19 @@ export default class DeviceBase {
         )
     }
 
-    // -- MQTT subscription management -------------------------------------
+    //  -- MQTT subscription management -------------------------------------
 
-    /**
-     * Set MQTT service for this device to use for subscriptions and publishing.
-     * Triggers initial topic subscription if the broker is connected.
-     *
-     * @param {Object} mqttService - The MQTT service instance
-     */
+    /** Set MQTT service for this device to use for subscriptions and publishing.
+     * @param {Object} mqttService - The MQTT service instance */
     setMqttService(mqttService) {
         this.#mqttService = mqttService
         this.#subscribeToTopics()
     }
 
-    /**
-     * Publish a message to an arbitrary MQTT topic.
-     *
+    /** Publish a message to an arbitrary MQTT topic.
      * @protected
      * @param {string} topic - MQTT topic to publish to
-     * @param {string} payload - Message payload (already stringified)
-     */
+     * @param {string} payload - Message payload (already stringified) */
     publish(topic, payload) {
         if (!this.#mqttService) {
             LoggerService.warn(`Cannot publish to "${topic}": MqttService not available`, `${this.getLogPrefix()}:${this.#name}`)
@@ -1583,33 +1143,19 @@ export default class DeviceBase {
         this.#mqttService.publish(topic, payload)
     }
 
-    /**
-     * Return the list of MQTT topics this device should subscribe to.
-     * Subclasses may override to add or change topics.
-     *
-     * Default: subscribes to <prefix>/<name> -- state updates reported by
-     * zigbee2mqtt for this specific device. The /set topic is NOT included
-     * since it carries our own outgoing command echoes.
-     *
+    /** Return the list of MQTT topics this device should subscribe to.
      * @param {string} prefix - MQTT topic prefix (e.g., "zigbee2mqtt")
-     * @returns {string[]} Array of topic strings to subscribe to
-     */
+     * @returns {string[]} Array of topic strings to subscribe to */
     getSubscribedTopics(prefix) {
         return [`${prefix}/${this.getName()}`]
     }
 
-    /**
-     * Idempotent re-subscription called after MQTT reconnect.
-     * The Set-based guard prevents double-subscribing to already-active topics.
-     */
+    /** Idempotent re-subscription called after MQTT reconnect. */
     reconnect() {
         this.#subscribeToTopics()
     }
 
-    /**
-     * Clean up all MQTT subscriptions for this device.
-     * Called during graceful shutdown to free broker resources.
-     */
+    /** Clean up all MQTT subscriptions for this device. */
     cleanup() {
         for (const unsub of this.#subscriptions) {
             try {
@@ -1623,13 +1169,10 @@ export default class DeviceBase {
         LoggerService.debug('All subscriptions cleaned up', `${this.getLogPrefix()}:${this.#name}`)
     }
 
-    // -- Private helpers --------------------------------------------------
+    //  -- Private helpers --------------------------------------------------
 
-    /**
-     * Subscribe to all topics returned by getSubscribedTopics().
-     * Uses a Set to prevent double-subscription on reconnect.
-     * @private
-     */
+    /** Subscribe to all topics returned by getSubscribedTopics().
+     * @private */
     #subscribeToTopics() {
         if (!this.#mqttService || !this.#mqttService.isConnected()) {
             LoggerService.debug('MQTT not ready yet, skipping subscription', `${this.getLogPrefix()}:${this.#name}`)
@@ -1654,44 +1197,26 @@ export default class DeviceBase {
         }
     }
 
-    /**
-     * Detect whether an incoming MQTT payload represents a genuine state change
-     * compared to the last known cached state.
-     *
-     * Compares only meaningful fields: state, position, temperature, illuminance,
-     * humidity -- plus per-channel suffixed variants (state_*, position_*,
-     * brightness_*) used by multi-channel devices such as DualSwitch/DualDimmer.
-     * If none of these changed meaningfully, it's treated as a periodic report rather than
-     * a human interaction.
-     *
+    /** Detect whether an incoming MQTT payload represents a genuine state change.
      * @param {Object} newPayload - Parsed MQTT message payload
      * @returns {boolean} true if the payload represents a meaningful state change
-     * @private
-     */
+     * @private */
     #didStateChange(newPayload) {
         if (typeof newPayload !== 'object' || newPayload === null) return true
 
         const old = this.#stateLast
-        // Cold start or empty baseline: treat incoming data as calibration, not a
-        // state change. Prevents zigbee2mqtt's initial calibration reports from being
-        // misclassified as human interactions after a restart or Redis wipe.
+        //  Cold start or empty baseline: treat incoming data as calibration.
         if (!old || typeof old !== 'object' || Object.keys(old).length === 0) {
             return false
         }
 
-        // Positional telemetry is ground truth for mechanisms like roller shutters: when
-        // both payloads carry positions within jitter tolerance of each other, a difference
-        // confined to the `state` label is motor-status churn at a fixed point (e.g., z2m
-        // flipping OPEN -> STOP as the motor idles right after our own completed travel),
-        // not an input event -- it must not change attribution. Non-positional devices
-        // (lights etc.) never satisfy this gate and keep strict label comparison.
+        //  Positional telemetry is ground truth for mechanisms like roller shutters.
         const stableNewPos = Number(newPayload.position)
         const stableOldPos = Number(old.position)
         const positionUnchanged = Number.isFinite(stableNewPos) && Number.isFinite(stableOldPos)
             && Math.abs(stableNewPos - stableOldPos) <= POSITION_MATCH_TOLERANCE
 
-        // Compare state field (ON/OFF/OPEN/CLOSE/STOP) -- unless positional data shows the
-        // device has not moved (see above).
+        //  Compare state field (ON/OFF/OPEN/CLOSE/STOP)
         if (!positionUnchanged) {
             if ('state' in newPayload && 'state' in old) {
                 if (String(newPayload.state) !== String(old.state)) return true
@@ -1700,7 +1225,7 @@ export default class DeviceBase {
             }
         }
 
-        // Compare position field with tolerance for roller shutters
+        //  Compare position field with tolerance for roller shutters.
         if ('position' in newPayload && 'position' in old) {
             const newPos = Number(newPayload.position)
             const oldPos = Number(old.position)
@@ -1709,11 +1234,7 @@ export default class DeviceBase {
             return true
         }
 
-        // Multi-channel devices (DualSwitch/DualDimmer) report per-channel fields such as
-        // state_left / brightness_l1 instead of a top-level state/position. Apply the same
-        // rules as above: presence on only one side counts as a change; when both sides
-        // carry the key, compare values -- numeric fields use the shared jitter tolerance
-        // so bridge rounding at range bounds does not read as input.
+        //  Multi-channel devices (DualSwitch/DualDimmer) report per-channel fields such.
         const SUFFIXED_FIELD_RE = /^(?:state|position|brightness)_/
         const suffixedUnion = [...new Set([
             ...Object.keys(newPayload).filter(k => SUFFIXED_FIELD_RE.test(k)),
@@ -1733,7 +1254,7 @@ export default class DeviceBase {
             }
         }
 
-        // Compare illuminance with threshold
+        //  Compare illuminance with threshold.
         if ('illuminance' in newPayload && 'illuminance' in old) {
             const diff = Math.abs(Number(newPayload.illuminance) - Number(old.illuminance))
             if (diff > ILLUMINANCE_CHANGE_THRESHOLD) return true
@@ -1741,7 +1262,7 @@ export default class DeviceBase {
             return true
         }
 
-        // Compare temperature with threshold
+        //  Compare temperature with threshold.
         if ('temperature' in newPayload && 'temperature' in old) {
             const diff = Math.abs(Number(newPayload.temperature) - Number(old.temperature))
             if (diff > TEMPERATURE_CHANGE_THRESHOLD) return true
@@ -1749,7 +1270,7 @@ export default class DeviceBase {
             return true
         }
 
-        // Compare humidity with threshold
+        //  Compare humidity with threshold.
         if ('humidity' in newPayload && 'humidity' in old) {
             const diff = Math.abs(Number(newPayload.humidity) - Number(old.humidity))
             if (diff > HUMIDITY_CHANGE_THRESHOLD) return true
@@ -1760,38 +1281,22 @@ export default class DeviceBase {
         return false
     }
 
-    /**
-     * Determine whether an outgoing command would be redundant given the cached state.
-     *
-     * Expands semantic commands into their expected state values and compares
-     * against `#stateLast` with appropriate tolerances:
-     *
-     *   - `{state: 'ON'}`      -> suppressed if cached state === 'ON'
-     *   - `{state: 'OFF'}`     -> suppressed if cached state === 'OFF'
-     *   - `{state: 'OPEN'}`    -> suppressed if cached position >= 98
-     *   - `{state: 'CLOSE'}`   -> suppressed if cached position <= 2
-     *   - `{position: 12}`     -> suppressed if cached position within +2 of target
-     *   - Plain strings like "ON", "OFF" are expanded to `{state: 'ON'}` etc.
-     *
-     * Commands that cannot be meaningfully compared (e.g., TOGGLE, STOP with no
-     * cached state) are NEVER suppressed -- they always pass through.
-     *
+    /** Determine whether an outgoing command would be redundant given the cached state.
      * @param {Object} finalPayload - The resolved payload object ({state: ...} or {position: ...})
      * @param {string} description - Human-readable description (e.g., "POS:12", "OPEN")
      * @returns {boolean} true if the command is redundant and should be suppressed
-     * @private
-     */
+     * @private */
     #isCommandRedundant(finalPayload, description) {
         const cached = this.#stateLast
 
-        // No cached state -> we can't compare, so always send.
+        //  No cached state -> we can't compare, so always send.
         if (!cached || typeof cached !== 'object' || Object.keys(cached).length === 0) {
             return false
         }
 
         const descUpper = String(description).toUpperCase()
 
-        // --- Position-based commands ---
+        //  --- Position-based commands ---
         if ('position' in finalPayload && typeof finalPayload.position === 'number') {
             const targetPos = finalPayload.position
             const cachedPos = cached.position
@@ -1802,29 +1307,27 @@ export default class DeviceBase {
             return false
         }
 
-        // --- State-based commands ---
+        //  --- State-based commands ---
         if ('state' in finalPayload) {
             const cmdState = String(finalPayload.state).toUpperCase()
 
-            // TOGGLE has no deterministic target -- always send.
+            //  TOGGLE has no deterministic target -- always send.
             if (cmdState === 'TOGGLE') return false
 
-            // Direct state comparison for ON/OFF devices (lights, switches).
+            //  Direct state comparison for ON/OFF devices (lights, switches).
             if (cmdState === 'ON' || cmdState === 'OFF') {
                 const cachedState = typeof cached.state === 'string' ? cached.state.toUpperCase() : null
                 return cachedState === cmdState
             }
 
-            // Roller shutter semantic commands: compare against cached position.
+            //  Roller shutter semantic commands: compare against cached position.
             const cachedPos = cached.position
             if (typeof cachedPos === 'number' && !isNaN(cachedPos)) {
                 if (cmdState === 'OPEN' && cachedPos >= POSITION_NEARLY_OPEN_THRESHOLD) return true
                 if (cmdState === 'CLOSE' && cachedPos <= POSITION_NEARLY_CLOSED_THRESHOLD) return true
             }
 
-            // Fallback: when no reliable position data is available, use cached state field.
-            // BUT when position IS available, it is authoritative -- do NOT trust state
-            // for roller shutters because zigbee2mqtt may report state=OPEN while position=45.
+            //  Fallback: when no reliable position data is available, use cached state field.
             if ((cachedPos === undefined || typeof cachedPos !== 'number') && (cmdState === 'OPEN' || cmdState === 'CLOSE')) {
                 const cachedState = typeof cached.state === 'string' ? cached.state.toUpperCase() : null
                 if (cachedState && cachedState === cmdState) return true
@@ -1834,14 +1337,10 @@ export default class DeviceBase {
         return false
     }
 
-    /**
-     * Extract a meaningful summary from a JSON payload.
-     * Prioritizes the "state" field (ON/OFF/etc.), falls back to a truncated raw payload.
-     *
+    /** Extract a meaningful summary from a JSON payload.
      * @param {string} message - Raw message string
      * @returns {string} Human-readable summary
-     * @private
-     */
+     * @private */
     #extractMessageSummary(message) {
         try {
             const parsed = JSON.parse(message)
@@ -1871,42 +1370,28 @@ export default class DeviceBase {
         return String(message)
     }
 
-    // -- Logging helpers --------------------------------------------------
+    //  -- Logging helpers --------------------------------------------------
 
-    /**
-     * Return the label used in log prefixes.
-     * Subclasses override to return their type name (e.g. "Sensor", "Mechanism", "Remote").
-     * Defaults to "Device" for unknown or generic types.
-     * @returns {string} Log prefix label
-     */
+    /** Return the label used in log prefixes.
+     * @returns {string} Log prefix label */
     getLogPrefix() {
         return 'Device'
     }
 
-    /**
-     * Unified logging helper with device prefix. Default level is debug.
-     * Subclasses (e.g. Sensor) may override this method to use info level.
-     *
-     * @param {string} message - Message to log
-     */
+    /** Unified logging helper with device prefix. Default level is debug.
+     * @param {string} message - Message to log */
     log(message) {
         LoggerService.debug(message, `${this.getLogPrefix()}:${this.#name}`)
     }
 
-    /**
-     * Log a warning message with device prefix.
-     *
-     * @param {string} message - Message to log
-     */
+    /** Log a warning message with device prefix.
+     * @param {string} message - Message to log */
     warn(message) {
         LoggerService.warn(message, `${this.getLogPrefix()}:${this.#name}`)
     }
 
-    /**
-     * Log an error message with device prefix.
-     *
-     * @param {string} message - Message to log
-     */
+    /** Log an error message with device prefix.
+     * @param {string} message - Message to log */
     error(message) {
         LoggerService.error(message, `${this.getLogPrefix()}:${this.#name}`)
     }

@@ -1,13 +1,8 @@
 /**
  * MQTT service for Zigbee2MQTT bridge communication.
- *
- * Manages broker connection with circuit-breaker auto-reconnect, semantic
- * message deduplication, and a single-dispatcher subscription registry that
- * avoids Node's MaxListenersExceededWarning.
- *
+ * Manages broker connection with circuit-breaker auto-reconnect, semantic.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -19,134 +14,80 @@ import EventBus from './eventBus.js'
 import LoggerService from './loggerService.js'
 import StateService from './stateService.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Maximum number of reconnection attempts before opening the circuit breaker.
- * @type {number}
- */
+/** Maximum number of reconnection attempts before opening the circuit breaker.
+ * @type {number} */
 const MAX_RECONNECT_ATTEMPTS = 15
 
-/**
- * Upper bound for exponential backoff delay in milliseconds.
- * Reconnect delays grow as 1s, 2s, 4s, 8s ... capped at this value.
- * @type {number}
- */
+/** Upper bound for exponential backoff delay in milliseconds.
+ * @type {number} */
 const MAX_RECONNECT_DELAY_MS = 30_000
 
-/**
- * Base delay for exponential backoff in milliseconds.
- * @type {number}
- */
+/** Base delay for exponential backoff in milliseconds.
+ * @type {number} */
 const RECONNECT_BASE_DELAY_MS = 1_000
 
-/**
- * Deduplication window in milliseconds.
- * Semantic-duplicate messages arriving within this window are silently dropped.
- * @type {number}
- */
+/** Deduplication window in milliseconds.
+ * @type {number} */
 const DEDUPE_WINDOW_MS = 300
 
-/**
- * Client ID prefix for MQTT connections.
- * @type {string}
- */
+/** Client ID prefix for MQTT connections.
+ * @type {string} */
 const CLIENT_ID_PREFIX = 'AUTOMATONv2-'
 
-/**
- * Maximum number of commands released per batch from the outgoing queue.
- * Zigbee herdsman can handle ~3 concurrent outbound transactions reliably.
- * Batches of 2 provide a safe margin while keeping throughput reasonable.
- * @type {number}
- */
+/** Maximum number of commands released per batch from the outgoing queue.
+ * @type {number} */
 const COMMAND_BATCH_SIZE = 2
 
-/**
- * Delay in milliseconds between consecutive batches of outgoing commands.
- * Zigbee herdsman transaction queue needs ~200-400ms per round-trip
- * (request -> acknowledgment through mesh). 300ms is a safe middle ground.
- * @type {number}
- */
+/** Delay in milliseconds between consecutive batches of outgoing commands.
+ * @type {number} */
 const INTER_BATCH_DELAY_MS = 300
 
-/**
- * Retry delay when the drain loop finds the client disconnected.
- * Checked every second until reconnection restores the pipeline.
- * @type {number}
- */
+/** Retry delay when the drain loop finds the client disconnected.
+ * @type {number} */
 const DISCONNECT_RETRY_DELAY_MS = 1_000
 
-/**
- * Maximum listeners on the underlying MqttClient event emitter.
- * Raised above Node's default (10) to accommodate our single dispatcher
- * plus internal library listeners without triggering warnings.
- * @type {number}
- */
+/** Maximum listeners on the underlying MqttClient event emitter.
+ * @type {number} */
 const MAX_CLIENT_LISTENERS = 32
 
-/**
- * Interval between MQTT heartbeat events in milliseconds.
- * Emits `mqtt:heartbeat` via EventBus for monitoring dashboards and health checks.
- * @type {number}
- */
+/** Interval between MQTT heartbeat events in milliseconds.
+ * @type {number} */
 const HEARTBEAT_INTERVAL_MS = 30_000
 
-/**
- * Semantic keys that define meaningful device state.
- * Everything else is treated as volatile metadata and excluded from
- * deduplication signatures.
+/** Semantic keys that define meaningful device state.
  * @readonly
- * @type {Set<string>}
- */
+ * @type {Set<string>} */
 const SEMANTIC_KEYS = Object.freeze(new Set([
-    // Core actuator state
+    //  Core actuator state.
     'state', 'position', 'action', 'action_group',
-    // Environmental sensors
+    //  Environmental sensors.
     'temperature', 'humidity', 'illuminance', 'brightness',
-    // Power metrics
+    //  Power metrics.
     'power', 'energy', 'current', 'voltage',
-    // Safety / climate
+    //  Safety / climate.
     'child_lock', 'countdown', 'fan_mode', 'mode',
     'heating_setpoint', 'cooling_setpoint',
     'occupied_heating_setpoint', 'unoccupied_heating_setpoint',
     'running_state', 'local_temperature',
-    // Cover / motion events
+    //  Cover / motion events.
     'cover_event',
-    // Presence / air quality
+    //  Presence / air quality.
     'consumer_connected', 'gas', 'co2',
     'formaldehyde', 'pm25', 'smoke', 'water_leak', 'gas_density',
-    // Appliance controls
+    //  Appliance controls.
     'motor_speed', 'opening_mode', 'factory_reset',
     'indicator_mode', 'power_outage_memory',
 ]))
 
-/**
- * Per-channel suffixed variants of semantic fields (state_l1, brightness_left,
- * position_right, ...). Multi-channel devices (dual switches/dimmers) report
- * ONLY these suffixed keys -- without matching them here their dedup signature
- * would always be "{}" and every report after the first within the dedupe
- * window would be silently discarded.
- * @readonly
- */
+/** Per-channel suffixed variants of semantic fields (state_l1, brightness_left,
+ * @readonly */
 const CHANNEL_SIG_RE = /^(state|position|brightness)_[a-z0-9]+$/i
 
-// ---------------------------------------------------------------------------
-// SMQTTService (module-level singleton)
-// ---------------------------------------------------------------------------
+//  SMQTTService (module-level singleton)
 
-/**
- * MQTT service wrapper around the `mqtt` package.
- *
- * Provides connection management with circuit-breaker reconnection,
- * semantic message deduplication, and a subscription registry that
- * supports MQTT wildcard topic patterns without exceeding Node's
- * MaxListenersExceededWarning threshold.
- * ES module caching guarantees single instantiation.
- *
- * @see {@link https://www.npmjs.com/package/mqtt}
- */
+/** MQTT service wrapper around the `mqtt` package.
+ * @see {@link https://www.npmjs.com/package/mqtt} */
 class SMQTTService {
 
     #client
@@ -158,31 +99,22 @@ class SMQTTService {
     #reconnectCallbacks = []
     #circuitOpen = false
     #shuttingDown = false
-    /** Heartbeat interval timer */
-    /** @type {NodeJS.Timeout|null} */
+    /** Heartbeat interval timer. */
+     /** @type {NodeJS.Timeout|null} */
     #heartbeatTimer = null
-    /** Outgoing command queue - FIFO array of { topic, payload, options } objects */
+    /** Outgoing command queue - FIFO array of { topic, payload, options } objects. */
     #commandQueue = []
-    /** Whether a drain cycle is currently in progress */
+    /** Whether a drain cycle is currently in progress. */
     #draining = false
-    /** Injectable client factory (defaults to mqtt.connect); used by tests */
+    /** Injectable client factory (defaults to mqtt.connect); used by tests. */
     #connectFn = null
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Initialize and connect to the MQTT broker.
-     *
-     * Reads `MQTT_URL` (required) and optional `MQTT_PREFIX` env vars,
-     * establishes the client connection, sets up event handlers, and starts
-     * the single-message dispatcher.
-     *
+    /** Initialize and connect to the MQTT broker.
      * @param {Object} [options] - Optional initialization overrides
      * @param {Function} [options.connectFn] - Client factory with the same signature as
-     *   mqtt.connect(url, opts) -> MqttClient. Injectable for tests so the real
-     *   queue/drain pipeline can be exercised without a live broker.
-     * @async
-     */
+     * @async */
     async init(options = {}) {
         LoggerService.info('Initializing...', 'MqttService')
 
@@ -195,14 +127,8 @@ class SMQTTService {
         this.#startDispatcher()
     }
 
-    /**
-     * Create a new MQTT client and wait for the `'connect'` event.
-     *
-     * Disables the built-in mqtt library reconnection (`reconnectPeriod: 0`)
-     * because reconnect logic is handled by our circuit breaker.
-     *
-     * @private
-     */
+    /** Create a new MQTT client and wait for the `'connect'` event.
+     * @private */
     async #connect() {
         return new Promise((resolve, reject) => {
             this.#client = (this.#connectFn || mqtt.connect)(this.#url, {
@@ -226,15 +152,9 @@ class SMQTTService {
         })
     }
 
-    // -- Heartbeat ---------------------------------------------------------
 
-    /**
-     * Start periodic heartbeat events via EventBus.
-     * Emits `mqtt:heartbeat` every {@link HEARTBEAT_INTERVAL_MS} milliseconds
-     * with connection status and uptime for monitoring dashboards.
-     *
-     * @private
-     */
+    /** Start periodic heartbeat events via EventBus.
+     * @private */
     #startHeartbeat() {
         this.#stopHeartbeat()
         this.#heartbeatTimer = setInterval(() => {
@@ -246,11 +166,8 @@ class SMQTTService {
         }, HEARTBEAT_INTERVAL_MS)
     }
 
-    /**
-     * Stop the heartbeat interval timer.
-     *
-     * @private
-     */
+    /** Stop the heartbeat interval timer.
+     * @private */
     #stopHeartbeat() {
         if (this.#heartbeatTimer !== null) {
             clearInterval(this.#heartbeatTimer)
@@ -258,15 +175,12 @@ class SMQTTService {
         }
     }
 
-    // -- Reconnection (Circuit Breaker) -----------------------------------
+    //  -- Reconnection (Circuit Breaker) -----------------------------------
 
-    /**
-     * Calculate exponential backoff delay for a reconnection attempt.
-     *
+    /** Calculate exponential backoff delay for a reconnection attempt.
      * @param {number} attempt - 1-based attempt number
      * @returns {number} Delay in milliseconds
-     * @private
-     */
+     * @private */
     #getReconnectDelay(attempt) {
         return Math.min(
             RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
@@ -274,13 +188,8 @@ class SMQTTService {
         )
     }
 
-    /**
-     * Schedule a reconnection with exponential backoff and circuit breaker.
-     * After {@link MAX_RECONNECT_ATTEMPTS} failures the circuit opens and
-     * further attempts stop -- call {@link resetCircuit} to manually retry.
-     *
-     * @private
-     */
+    /** Schedule a reconnection with exponential backoff and circuit breaker.
+     * @private */
     #scheduleReconnect() {
         if (this.#circuitOpen) return
 
@@ -303,7 +212,7 @@ class SMQTTService {
             'MqttService'
         )
 
-        // Notify registered callbacks so devices know a reconnect is pending.
+        //  Notify registered callbacks so devices know a reconnect is pending.
         this.#reconnectCallbacks.forEach(cb => cb())
 
         setTimeout(() => {
@@ -311,24 +220,18 @@ class SMQTTService {
         }, delay)
     }
 
-    /**
-     * Perform the actual reconnect by destroying the old client and creating a new one.
-     *
-     * @private
-     */
+    /** Perform the actual reconnect by destroying the old client and creating a new one.
+     * @private */
     #doReconnect() {
         if (this.#circuitOpen) return
 
-        // Stop heartbeat before tearing down the old client
+        //  Stop heartbeat before tearing down the old client.
         this.#stopHeartbeat()
 
-        // Immediately mark as disconnected so the status bar updates right away
+        //  Immediately mark as disconnected so the status bar updates right away.
         StateService.set('mqtt.connected', false)
 
-        // Safely destroy the old client - it may be in a corrupted state
-        // after certain types of connection failures (e.g., device power loss).
-        // mqtt v5.x destroy(force=true) handles listener cleanup internally,
-        // so do NOT call removeAllListeners() first as it can corrupt internal state.
+        //  Safely destroy the old client - it may be in a corrupted state.
         if (this.#client && typeof this.#client.destroy === 'function') {
             try {
                 this.#client.destroy(true)
@@ -348,11 +251,11 @@ class SMQTTService {
                 this.#circuitOpen = false
                 StateService.set('mqtt.connected', true)
                 LoggerService.info('** MQTT RECONNECTED successfully', 'MqttService')
-                // Restore full event handling after reconnect
+                //  Restore full event handling after reconnect.
                 this.#setupEventHandlers()
-                // Re-subscribe to all previously registered topics
+                //  Re-subscribe to all previously registered topics.
                 this.#resubscribeAll()
-                // Restart dispatcher and heartbeat
+                //  Restart dispatcher and heartbeat.
                 this.#startDispatcher()
                 this.#startHeartbeat()
             })
@@ -374,10 +277,7 @@ class SMQTTService {
         }
     }
 
-    /**
-     * Reset the circuit breaker so reconnection attempts resume.
-     * Useful when the broker comes back online after an extended outage.
-     */
+    /** Reset the circuit breaker so reconnection attempts resume. */
     resetCircuit() {
         if (!this.#circuitOpen) return
 
@@ -387,15 +287,10 @@ class SMQTTService {
         this.#doReconnect()
     }
 
-    // -- Re-subscription --------------------------------------------------
+    //  -- Re-subscription --------------------------------------------------
 
-    /**
-     * Re-subscribe to all previously registered broker-level topics.
-     * Called after each successful reconnect since the mqtt library requires
-     * explicit re-subscription on every new connection.
-     *
-     * @private
-     */
+    /** Re-subscribe to all previously registered broker-level topics.
+     * @private */
     #resubscribeAll() {
         const seen = new Set()
         for (const sub of this.#subscriptions) {
@@ -411,16 +306,10 @@ class SMQTTService {
         }
     }
 
-    // -- Callbacks --------------------------------------------------------
+    //  -- Callbacks --------------------------------------------------------
 
-    /**
-     * Attach lifecycle event listeners to the MQTT client after initial connect.
-     *
-     * Handles `close`, `error`, and `offline` events -- all delegate to the
-     * circuit-breaker scheduler when the connection is lost unexpectedly.
-     *
-     * @private
-     */
+    /** Attach lifecycle event listeners to the MQTT client after initial connect.
+     * @private */
     #setupEventHandlers() {
         this.#client.on('close', () => {
             if (this.#shuttingDown) return
@@ -443,18 +332,9 @@ class SMQTTService {
         })
     }
 
-    // -- Message Dispatcher -----------------------------------------------
 
-    /**
-     * Start a single message dispatcher on the MQTT client.
-     *
-     * Instead of adding one listener per subscription (which hits Node's
-     * MaxListenersExceededWarning at 10+ listeners), we add exactly ONE
-     * listener and iterate the subscription registry, checking each incoming
-     * topic against the subscribed pattern via MQTT wildcard matching.
-     *
-     * @private
-     */
+    /** Start a single message dispatcher on the MQTT client.
+     * @private */
     #startDispatcher() {
         if (this.#client.listenerCount('message') > 0) return
 
@@ -464,13 +344,9 @@ class SMQTTService {
             const message = payload.toString()
             const now = Date.now()
 
-            // Semantic deduplication is skipped when at least one matching subscriber opted out via
-            // subscribe(topic, cb, { dedupe:false }). Chat-style channels need this because their payloads
-            // are non-idempotent user input whose "semantic signature" collapses to a constant (no SEMANTIC_KEYS
-            // present), so the 300ms window would drop real prompts as duplicates. Topics with NO such
-            // subscriber take EXACTLY the original code path below -- pre-existing behavior is unchanged.
+            //  Semantic deduplication is skipped when at least one matching subscriber opted out.
             if (!this.#hasNoDedupeSubscriber(topic)) {
-                // Build a semantic signature from the payload (ignores volatile fields).
+                //  Build a semantic signature from the payload (ignores volatile fields).
                 const sig = this.#extractSignature(message)
                 const last = this.#lastSemanticByTopic.get(topic)
 
@@ -495,16 +371,10 @@ class SMQTTService {
         })
     }
 
-    /**
-     * Whether any registered subscription that matches an incoming topic has opted out of semantic
-     * deduplication via subscribe(..., { dedupe:false }). The dispatcher uses this to decide whether to
-     * apply the 300ms duplicate window for a given delivery. Wildcard patterns are honored because matching
-     * reuses {@link #topicMatches}. Returns false when no such subscriber exists, which keeps every
-     * pre-existing code path byte-for-byte identical to the original always-dedupe behavior.
+    /** Whether any registered subscription that matches an incoming topic has opted out of semantic.
      * @param {string} topic - The exact received MQTT topic
      * @returns {boolean} true only when at least one matching subscriber disabled dedupe
-     * @private
-     */
+     * @private */
     #hasNoDedupeSubscriber(topic) {
         for (const sub of this.#subscriptions) {
             if (sub.dedupe === false && this.#topicMatches(sub.topic, topic)) return true
@@ -512,20 +382,16 @@ class SMQTTService {
         return false
     }
 
-    /**
-     * Extract a deduplication signature from an MQTT payload by keeping only
-     * semantic state fields ({@link SEMANTIC_KEYS}) and discarding volatile metadata.
-     *
+    /** Extract a deduplication signature from an MQTT payload by keeping only.
      * @param {string} raw - Raw JSON payload string
      * @returns {string} Deduplication signature
-     * @private
-     */
+     * @private */
     #extractSignature(raw) {
         try {
             const obj = JSON.parse(raw)
             if (typeof obj !== 'object' || obj === null) return raw
 
-            // If this is a bridge logging wrapper, extract the inner payload string.
+            //  If this is a bridge logging wrapper, extract the inner payload string.
             if ('level' in obj && 'message' in obj) {
                 const m = obj.message
                 if (typeof m === 'string' && m.includes('payload ')) {

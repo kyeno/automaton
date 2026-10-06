@@ -1,17 +1,8 @@
 /**
  * Channel Configuration Manager.
- *
- * Loads window/channel definitions from automaton.yaml and provides
- * lookup methods so that channel names, shortcuts, and read-only flags
- * are no longer hardcoded throughout the UI codebase.
- *
- * IRC-style naming convention:
- *   !prefix  -- readonly channel (e.g., !log, !sensors)
- *   #prefix  -- interactive channel (e.g., #automaton)
- *
+ * Loads window/channel definitions from automaton.yaml and provides.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -20,31 +11,23 @@
 import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
 
-// ---------------------------------------------------------------------------
-// SChannelManager (singleton)
-// ---------------------------------------------------------------------------
+//  SChannelManager (singleton)
 
-/**
- * Manages window/channel definitions loaded from automaton.yaml.
- * Provides lookup by internal id and numeric shortcut key.
- */
+/** Manages window/channel definitions loaded from automaton.yaml. */
 class SChannelManager {
     #channels = []
     #byId = new Map()
     #byShortcut = new Map()
     #loaded = false
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Load channel definitions from the ui.windows section of automaton.yaml.
-     * Safe to call multiple times; subsequent calls return cached data.
-     */
+    /** Load channel definitions from the ui.windows section of automaton.yaml. */
     load() {
         if (this.#loaded) return this.#channels
 
         try {
-            // Use get() not getSection() -- ui.windows is an array and getSection rejects arrays
+            //  Use get() not getSection() -- ui.windows is an array and getSection rejects arrays.
             const raw = ConfigService.get('ui.windows') || []
             this.#channels = raw.map((w, index) => ({
                 id: w.id || `window${index + 1}`,
@@ -54,7 +37,7 @@ class SChannelManager {
                 readonly: Boolean(w.readonly ?? false),
             }))
 
-            // Build lookup maps
+            //  Build lookup maps.
             for (const ch of this.#channels) {
                 this.#byId.set(ch.id, ch)
                 this.#byShortcut.set(ch.shortcut, ch)
@@ -70,48 +53,35 @@ class SChannelManager {
         return this.#channels
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Get all channel definitions.
-     * @returns {Array<Object>} Array of channel objects
-     */
+    /** Get all channel definitions.
+     * @returns {Array<Object>} Array of channel objects */
     getAll() {
         return this.load()
     }
 
-    /**
-     * Look up a channel by its internal id ('logs', 'device', 'ai').
+    /** Look up a channel by its internal id ('logs', 'device', 'ai').
      * @param {string} id - Window/channel ID
-     * @returns {Object|null}
-     */
+     * @returns {Object|null} */
     getById(id) {
         return this.#byId.get(id) || null
     }
 
-    /**
-     * Look up a channel by its numeric shortcut (1, 2, 3...).
+    /** Look up a channel by its numeric shortcut (1, 2, 3...).
      * @param {number} shortcut
-     * @returns {Object|null}
-     */
+     * @returns {Object|null} */
     getByShortcut(shortcut) {
         return this.#byShortcut.get(Number(shortcut)) || null
     }
 
-    /**
-     * Whether definitions have been read from config at least once -- gate callers use so
-     * `/config reload` only resets the cache when there is actually something stale to drop.
-     * @returns {boolean}
-     */
+    /** Whether definitions have been read from config at least once -- gate callers use so
+     * @returns {boolean} */
     get isLoaded() {
         return this.#loaded
     }
 
-    /**
-     * Drop all cached channel definitions so the next access re-reads automaton.yaml's
-     * ui.windows block. Called by /config reload when window definitions changed; adding or
-     * removing windows still requires a restart because Ui builds window instances eagerly.
-     */
+    /** Drop all cached channel definitions so the next access re-reads automaton.yaml's. */
     reset() {
         this.#channels = []
         this.#byId.clear()
@@ -119,18 +89,15 @@ class SChannelManager {
         this.#loaded = false
     }
 
-    /**
-     * Get the active window's channel name given its internal id.
-     * Falls back to the title if no channel is configured.
+    /** Get the active window's channel name given its internal id.
      * @param {string} windowId
-     * @returns {string} Channel name (e.g., "!log", "#automaton")
-     */
+     * @returns {string} Channel name (e.g., "!log", "#automaton") */
     getChannelName(windowId) {
         const ch = this.getById(windowId)
         return ch ? ch.channel : `[window:${windowId}]`
     }
 }
 
-// Export a singleton instance
+//  Export a singleton instance.
 const channels = new SChannelManager()
 export default channels

@@ -1,16 +1,8 @@
 /**
  * Configuration Base Class.
- *
- * Factory-like class that loads a single YAML configuration file, optionally
- * validates it against a schema found in src/validators/, and provides dot-
- * notation access to its contents via get(), has(), toJSON().
- *
- * Not intended for direct use outside ConfigService - individual modules should
- * access configs through ConfigService.section(name).
- *
+ * Factory-like class that loads a single YAML configuration file, optionally.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -22,44 +14,26 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 
 import { PROJECT_ROOT } from '../../lib/projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// Type definitions
-// ---------------------------------------------------------------------------
+//  Type definitions.
 
-/**
- * Schema node definition for recursive config validation.
- *
+/** Schema node definition for recursive config validation.
  * @typedef {Object} ConfigSchemaNode
  * @property {'string'|'number'|'boolean'|'object'|'array'|Array<'string'|'number'|'boolean'|'object'|'array'>} [type] - Expected JavaScript type(s); an array allows any of the listed types
  * @property {boolean} [required] - Whether this key must be present
  * @property {unknown[]} [enum] - Allowed values (mutually exclusive with `type` checking)
  * @property {Record<string, ConfigSchemaNode>} [properties] - Child schema for nested objects
  * @property {ConfigSchemaItems} [items] - Schema for array element validation
- *
  * @typedef {Object} ConfigSchemaItems
- * @property {Record<string, ConfigSchemaNode>} [properties] - Per-element schema when array contains objects
- */
+ * @property {Record<string, ConfigSchemaNode>} [properties] - Per-element schema when array contains objects */
 
-// ---------------------------------------------------------------------------
-// ConfigBase class
-// ---------------------------------------------------------------------------
+//  ConfigBase class.
 
-/**
- * Loads and provides access to a single YAML configuration file.
- *
- * On construction, attempts to discover an optional validator at
- * src/validators/<sectionName>.js. If found, validates the loaded data against
- * it and logs warnings for any issues. Missing validators are silently ignored
- * (the config is still usable without validation).
- */
+/** Loads and provides access to a single YAML configuration file. */
 class ConfigBase {
 
-    /**
+    /**                               (relative paths resolved against project root)
      * @param {string} filePath   - Absolute or relative path to the YAML file
-     *                               (relative paths resolved against project root)
-     * @param {string} [sectionName] - Section name used to look up optional validator
-     *                                 in src/validators/{sectionName}.js
-     */
+     * @param {string} [sectionName] - Section name used to look up optional validator */
     constructor(filePath, sectionName) {
         this.#filePath = filePath
         this.#sectionName = sectionName ?? path.basename(filePath, '.yaml')
@@ -72,7 +46,7 @@ class ConfigBase {
         this.#load()
     }
 
-    // -- Private properties -------------------------------------------------
+    //  -- Private properties -------------------------------------------------
 
     /** @type {string} */ #filePath
     /** @type {string} */ #sectionName
@@ -81,22 +55,19 @@ class ConfigBase {
     /** @type {Promise<Record<string, ConfigSchemaNode>|null>} */ #schemaPromise
 
 
-    // -- Loading ------------------------------------------------------------
+    //  -- Loading ------------------------------------------------------------
 
-    /**
-     * Read and parse the YAML file, then attempt schema validation.
-     * Falls back to a <path>.dist template when the active config is missing.
-     * @private
-     */
+    /** Read and parse the YAML file, then attempt schema validation.
+     * @private */
     #load() {
         let absolutePath = this.#filePath
 
-        // If not already absolute, resolve relative to project root
+        //  If not already absolute, resolve relative to project root.
         if (!path.isAbsolute(absolutePath)) {
             absolutePath = path.join(PROJECT_ROOT, absolutePath)
         }
 
-        // Fall back to .dist template if the active config doesn't exist
+        //  Fall back to .dist template if the active config doesn't exist.
         if (!fs.existsSync(absolutePath)) {
             const distPath = absolutePath + '.dist'
             if (fs.existsSync(distPath)) {
@@ -118,15 +89,9 @@ class ConfigBase {
 
     }
 
-    /**
-     * Load (and cache) this section's validator schema from src/validators/.
-     *
-     * Memoized: repeated calls share one import promise so validation stays
-     * deterministic no matter how many code paths trigger it. A missing or
-     * broken validator file simply means "nothing to check" for this section.
+    /** Load (and cache) this section's validator schema from src/validators/.
      * @private
-     * @returns {Promise<Record<string, ConfigSchemaNode>|null>} Schema object, or null when absent
-     */
+     * @returns {Promise<Record<string, ConfigSchemaNode>|null>} Schema object, or null when absent */
     async #ensureSchema() {
         if (!this.#schemaPromise) {
             this.#schemaPromise = (async () => {
@@ -146,7 +111,7 @@ class ConfigBase {
                     }
                     return null
                 } catch {
-                    // Validator load failure is non-fatal - skip validation for this section.
+                    //  Validator load failure is non-fatal - skip validation for this section.
                     return null
                 }
             })()
@@ -155,14 +120,8 @@ class ConfigBase {
         return this.#schemaPromise
     }
 
-    /**
-     * Validate the current data against this section's schema WITHOUT throwing.
-     * Returns every problem as a descriptive string -- an empty array means valid (or
-     * that the section has no validator at all). Pure read-only check; the non-fatal
-     * twin of ensureValidated(), meant for callers that report problems instead of
-     * aborting (e.g., the /config set live-override command).
-     * @returns {Promise<string[]>} Array of error messages (empty if OK)
-     */
+    /** Validate the current data against this section's schema WITHOUT throwing.
+     * @returns {Promise<string[]>} Array of error messages (empty if OK) */
     async validate() {
         const schema = await this.#ensureSchema()
         if (!schema) return []
@@ -170,17 +129,8 @@ class ConfigBase {
         return this.#validate(this.#data, schema, '')
     }
 
-    /**
-     * Validate the current data and THROW on any violation.
-     *
-     * Strict by design (nginx-style): a config that exists but breaks its schema must
-     * abort startup with every problem listed at once instead of running degraded.
-     * Sections without a validator are no-ops. Safe to call repeatedly -- e.g., after
-     * applyOverrides() -- since it always re-checks the live data. The pure checking
-     * work lives in validate(); this wrapper only adds the fatal throw on top.
-     *
-     * @throws {Error} Aggregated list of every schema violation found
-     */
+    /** Validate the current data and THROW on any violation.
+     * @throws {Error} Aggregated list of every schema violation found */
     async ensureValidated() {
         const errors = await this.validate()
         if (errors.length > 0) {
@@ -191,26 +141,14 @@ class ConfigBase {
         }
     }
 
-    /**
-     * Re-read the backing YAML file from disk and atomically replace this section's data.
-     * Used by ConfigService.reload(): parse/read errors propagate so callers can abort
-     * before swapping anything; schema checking stays the caller's job (ensureValidated()).
-     * The .dist fallback rule re-evaluates on every call -- a hand-written active file
-     * promoted over its template is picked up again without a restart.
-     */
+    /** Re-read the backing YAML file from disk and atomically replace this section's data. */
     refresh() {
         this.#load()
     }
 
-    /**
-     * Check that every target parameter is known -- present in the loaded data or
-     * declared by the section's schema. Pure read-only; collects all problems before
-     * reporting so typos can never silently create brand-new keys. Shared between the
-     * fatal startup path (applyOverrides()) and the non-fatal UI path (/config set).
+    /** Check that every target parameter.
      * @param {{ path: string, value: unknown }[]} [entries] - Override pairs to check
-     * @returns {Promise<{problems: string[], validTopLevel: string[]|null}>} Problem lines plus
-     *          sorted valid top-level key names when at least one path was unknown
-     */
+     * @returns {Promise<{problems: string[], validTopLevel: string[]|null}>} Problem lines plus */
     async checkOverridePaths(entries = []) {
         if (!Array.isArray(entries) || entries.length === 0) return { problems: [], validTopLevel: null }
 
@@ -233,18 +171,9 @@ class ConfigBase {
         return { problems, validTopLevel: null }
     }
 
-    /**
-     * Apply parsed CLI overrides ("key.path: value" pairs) onto the loaded data.
-     *
-     * Every target parameter must already exist in the configuration or be declared
-     * by the section's schema; anything else is reported as an unknown-parameter error
-     * so typos can never silently create brand-new keys. All problems are collected
-     * before any mutation happens. Type/enum conformance of the merged document is
-     * enforced afterwards by ensureValidated().
-     *
+    /** Apply parsed CLI overrides ("key.path: value" pairs) onto the loaded data.
      * @param {{ path: string, value: unknown }[]} entries - Parsed override pairs
-     * @throws {Error} When one or more target parameters are unknown
-     */
+     * @throws {Error} When one or more target parameters are unknown */
     async applyOverrides(entries) {
         if (!Array.isArray(entries) || entries.length === 0) return
 
@@ -262,21 +191,14 @@ class ConfigBase {
         }
     }
 
-    /**
-     * Dry-run a single override against both the known-parameter guard and the full
-     * schema WITHOUT mutating anything. Returns every problem found as descriptive
-     * strings -- an empty list means the value would pass startup validation and may
-     * be committed with applyOverrides(). Sections without a validator still get the
-     * unknown-path check, so typos are caught there too.
+    /** Dry-run a single override against both the known-parameter guard and the full.
      * @param {{ path: string, value: unknown }} entry - Override pair to test
-     * @returns {Promise<{problems: string[], validTopLevel: string[]|null}>} Problems plus
-     *          valid top-level keys when the target parameter itself was unknown
-     */
+     * @returns {Promise<{problems: string[], validTopLevel: string[]|null}>} Problems plus */
     async validateOverride(entry) {
         const { problems, validTopLevel } = await this.checkOverridePaths([entry])
         if (problems.length > 0) return { problems, validTopLevel }
 
-        // Candidate tree on a deep clone -- live data stays untouched no matter what.
+        //  Candidate tree on a deep clone -- live data stays untouched no matter what.
         const candidate = structuredClone(this.#data)
         this.#writeInto(candidate, String(entry.path).split('.'), entry.value)
 
@@ -285,15 +207,11 @@ class ConfigBase {
         return { problems: this.#validate(candidate, schema, ''), validTopLevel: null }
     }
 
-    /**
-     * Resolve a dot-notation path against the validator schema and return the leaf
-     * definition, or undefined when any segment is missing. Walks through each node's
-     * `properties` map; array item schemas are intentionally not addressable by name.
+    /** Resolve a dot-notation path against the validator schema and return the leaf.
      * @private
      * @param {Record<string, ConfigSchemaNode>} schema - Top-level schema object
      * @param {string} dotPath - Dot-separated key path
-     * @returns {ConfigSchemaNode|undefined} Leaf schema definition, if present
-     */
+     * @returns {ConfigSchemaNode|undefined} Leaf schema definition, if present */
     #resolveInSchema(schema, dotPath) {
         const parts = dotPath.split('.')
         if (!parts.length || !schema[parts[0]]) return undefined
@@ -307,29 +225,19 @@ class ConfigBase {
         return def
     }
 
-    /**
-     * Write a value at a dot-path inside the loaded data, materializing plain-object
-     * intermediates as needed (e.g., overriding paths.configs.network while the whole
-     * `paths:` block is still commented out in the YAML file). Existing objects and
-     * arrays are descended into untouched.
+    /** Write a value at a dot-path inside the loaded data, materializing plain-object.
      * @private
      * @param {string[]} segments - Non-empty key segments
-     * @param {unknown} value - Value to store at the leaf
-     */
+     * @param {unknown} value - Value to store at the leaf */
     #setPath(segments, value) {
         this.#writeInto(this.#data, segments, value)
     }
 
-    /**
-     * Core of #setPath() operating on an arbitrary root object -- shared with
-     * validateOverride(), which writes candidate values into a deep clone instead of
-     * the live data. Materializes plain-object intermediates as needed; existing
-     * objects and arrays are descended into untouched.
+    /** Core of #setPath() operating on an arbitrary root object.
      * @private
      * @param {Record<string, unknown>} root - Object tree to write into
      * @param {string[]} segments - Non-empty key segments
-     * @param {unknown} value - Value to store at the leaf
-     */
+     * @param {unknown} value - Value to store at the leaf */
     #writeInto(root, segments, value) {
         /** @type {Record<string, unknown>} */
         let cur = root
@@ -346,18 +254,12 @@ class ConfigBase {
     }
 
 
-    /**
-     * Recursively validate a config object against a schema definition.
-     * Collects all errors and returns them as an array of descriptive strings.
-     *
-     * Schema format matches the existing CONFIG_SCHEMA structure in validators.
-     *
+    /** Recursively validate a config object against a schema definition.
      * @private
      * @param {Record<string, unknown>}             value  - Config subtree to validate
      * @param {Record<string, ConfigSchemaNode>}    schema - Schema for this level
      * @param {string}                              prefix - Dot-notation path prefix (e.g., "logger.file")
-     * @returns {string[]} Array of error messages (empty if valid)
-     */
+     * @returns {string[]} Array of error messages (empty if valid) */
     #validate(value, schema, prefix) {
         /** @type {string[]} */
         const errors = []
@@ -371,7 +273,7 @@ class ConfigBase {
             const isRequired = def.required === true
             const hasValue = key in value
 
-            // Check required fields
+            //  Check required fields.
             if (isRequired && !hasValue) {
                 errors.push(`Missing required config key: "${fullPath}"`)
                 continue
@@ -381,7 +283,7 @@ class ConfigBase {
 
             const actualValue = value[key]
 
-            // Type checking (a schema may list several allowed types as an array)
+            //  Type checking (a schema may list several allowed types as an array)
             if (def.type && actualValue !== undefined) {
                 const actualType = Array.isArray(actualValue) ? 'array' : typeof actualValue
                 const allowedTypes = Array.isArray(def.type) ? def.type : [def.type]
@@ -393,7 +295,7 @@ class ConfigBase {
                 }
             }
 
-            // Enum validation
+            //  Enum validation.
             if (def.enum && actualValue !== undefined && !def.enum.includes(actualValue)) {
                 errors.push(
                     `Invalid value for "${fullPath}": expected one of [${def.enum.join(', ')}],`
@@ -401,7 +303,7 @@ class ConfigBase {
                 )
             }
 
-            // Recurse into nested objects
+            //  Recurse into nested objects.
             if (def.properties
                 && typeof actualValue === 'object'
                 && actualValue !== null
@@ -410,7 +312,7 @@ class ConfigBase {
                 errors.push(...nestedErrors)
             }
 
-            // Validate array items
+            //  Validate array items.
             if (def.items && Array.isArray(actualValue)) {
                 for (let i = 0; i < actualValue.length; i++) {
                     const item = actualValue[i]
@@ -427,25 +329,21 @@ class ConfigBase {
         return errors
     }
 
-    // -- Public API ---------------------------------------------------------
+    //  -- Public API ---------------------------------------------------------
 
-    /**
-     * Get a config value using dot notation.
+    /** Get a config value using dot notation.
      * @template T
      * @param {string} key       - Dot-separated key (e.g., "logger.file.max_size")
      * @param {T}      [defaultVal] - Fallback value if key doesn't exist
-     * @returns {T | undefined}
-     */
+     * @returns {T | undefined} */
     get(key, defaultVal) {
         const val = this.#resolve(key)
         return val === undefined ? defaultVal : val
     }
 
-    /**
-     * Get an entire section of the configuration as a shallow copy.
+    /** Get an entire section of the configuration as a shallow copy.
      * @param {string} key - Dot-notation path to a nested object
-     * @returns {Record<string, unknown>|undefined} Shallow copy of the section, or undefined
-     */
+     * @returns {Record<string, unknown>|undefined} Shallow copy of the section, or undefined */
     getSection(key) {
         const val = this.#resolve(key)
         if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
@@ -454,19 +352,15 @@ class ConfigBase {
         return undefined
     }
 
-    /**
-     * Check whether a key exists in the configuration.
+    /** Check whether a key exists in the configuration.
      * @param {string} key - Dot-separated key
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     has(key) {
         return this.#resolve(key) !== undefined
     }
 
-    /**
-     * Return the full parsed config data as a deep-cloned plain object.
-     * @returns {Record<string, unknown>}
-     */
+    /** Return the full parsed config data as a deep-cloned plain object.
+     * @returns {Record<string, unknown>} */
     toJSON() {
         return structuredClone(this.#data)
     }
@@ -481,24 +375,18 @@ class ConfigBase {
         return this.#sectionName
     }
 
-    /**
-     * Whether a validator was found and applied for this section.
-     * @returns {boolean}
-     */
+    /** Whether a validator was found and applied for this section.
+     * @returns {boolean} */
     get hasValidator() {
         return this.#hasValidator
     }
 
-    // -- Private helpers ----------------------------------------------------
+    //  -- Private helpers ----------------------------------------------------
 
-    /**
-     * Resolve a dot-notation key against the loaded config.
-     * Supports nested traversal (e.g., "a.b.c") and returns undefined if any
-     * intermediate segment is not a traversable object.
+    /** Resolve a dot-notation key against the loaded config.
      * @param {string} key - Dot-separated key path
      * @returns {unknown|undefined}
-     * @private
-     */
+     * @private */
     #resolve(key) {
         const parts = key.split('.')
         /** @type {unknown} */
@@ -511,5 +399,5 @@ class ConfigBase {
     }
 }
 
-// Export ConfigBase class
+//  Export ConfigBase class.
 export default ConfigBase

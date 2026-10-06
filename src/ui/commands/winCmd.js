@@ -1,13 +1,8 @@
 /**
  * Window Switch Command -- switches to a window by shortcut number or id.
- *
  * Usage: /win <shortcut|id>
- *   /win 1          Switch to window with shortcut 1 (typically logs)
- *   /win device     Switch to window with id 'device'
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -21,11 +16,8 @@ class WinCmd extends CommandBase {
     static description = 'Switch window by shortcut number or id'
     static takesArgs = true
 
-    /**
-     * Switch to a window by shortcut number or id; resolution of both forms happens
-     * inside ctx.switchWindow(). Bare invocation prints usage instead.
-     * @param {string} args - Shortcut number or window id
-     */
+    /** Switch to a window by shortcut number or id; resolution of both forms happens
+     * @param {string} args - Shortcut number or window id */
     async execute(args) {
         const target = args.trim()
         if (!target) {
@@ -33,16 +25,13 @@ class WinCmd extends CommandBase {
             return
         }
 
-        // Pass through switchWindow -- it resolves both numeric shortcuts and ids
+        //  Pass through switchWindow -- it resolves both numeric shortcuts and ids.
         this.ctx.switchWindow(target)
     }
 
-    /**
-     * Tab-completion candidates for /win arguments: every configured window id plus its
-     * numeric shortcut, so "/win d<Tab>" offers "device" alongside the raw digits.
+    /** Tab-completion candidates for /win arguments: every configured window id.
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
-     * @returns {Array<string>|null} Candidates for the next token, or null when none apply
-     */
+     * @returns {Array<string>|null} Candidates for the next token, or null when none apply */
     completeNextToken(typedTokens) {
         if (typedTokens && typedTokens.length > 0) return null
         try {

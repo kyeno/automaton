@@ -1,37 +1,9 @@
 /**
- * DualSwitch -- multi-channel wall switches (two or more independent on/off
- * outputs exposed by a single zigbee2mqtt device, e.g. "left"/"right" buttons
+ * DualSwitch -- multi-channel wall switches.
+ * outputs exposed by a single zigbee2mqtt device, e.g.
  * or "l1"/"l2" channels).
- *
- * Extends Mechanism so it participates in origin tracking, redundancy checks,
- * echo correlation, and the mechanism UI bucket exactly like any other actuator,
- * while translating commands into per-channel suffixed payloads that zigbee2mqtt
- * understands natively:
- *
- *   - bare string commands ("ON", "OFF", "TOGGLE") fan out to every configured
- *     channel at once:  {state_left:'ON', state_right:'ON'}
- *   - object commands may target one channel explicitly via `channel`,
- *     validated against the declared topology; unknown channels warn + no-op
- *
- * Channel references use the positional AI vocabulary (ONE/TWO, mapped by
- * declaration order -- see src/lib/channelAliases.js); raw wire names are
- * accepted as identity aliases so existing payloads keep working.
- *   - `{action: ...}` MQTT reports are routed through the InteractionContainer
- *     under this device's slugified name, preserving YAML interaction bindings
- *     (e.g. Kuchnia Wlacznik Jadalnia right button -> Kuchnia Gniazdo) without
- *     turning the switch itself into a Remote
- *
- * Channel topology is declarative, coming from etc/device/zigbee.yaml entries:
- *   mechanism:
- *     - name: "Kuchnia Wlacznik Jadalnia"
- *       type: dualSwitch
- *       channels: [left, right]
- * Devices typed as dualSwitch without `channels` degrade gracefully to plain
- * single-state Mechanism behavior instead of silently becoming dummies.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -52,34 +24,24 @@ export default class DualSwitch extends Mechanism {
     #lastActionTime = 0
     #debounceWindowMs = BUTTON_DEBOUNCE_WINDOW_MS
 
-    // -- Identity -----------------------------------------------------------
+    //  -- Identity -----------------------------------------------------------
 
-    /**
-     * Return the log prefix label for dual switches.
-     * @returns {string}
-     */
+    /** Return the log prefix label for dual switches.
+     * @returns {string} */
     getLogPrefix() {
         return 'DualSwitch'
     }
 
-    /**
-     * Whether this device supports per-channel brightness at all. DualSwitch is
-     * on/off only; DualDimmer overrides to true.
-     * @returns {boolean} false
-     */
+    /** Whether this device supports per-channel brightness at all. DualSwitch is
+     * @returns {boolean} false */
     supportsBrightness() {
         return false
     }
 
-    // -- Channel topology ---------------------------------------------------
+    //  -- Channel topology ---------------------------------------------------
 
-    /**
-     * Resolve the configured channel list (e.g. ['left','right'] or ['l1','l2']).
-     * Values are lowercased and trimmed; empty entries dropped. Returns null when
-     * no usable `channels` array was declared in the device config, which callers
-     * treat as "degrade to plain single-state mechanism behavior".
-     * @returns {Array<string>|null} Configured channel names, or null
-     */
+    /** Resolve the configured channel list (e.g. ['left','right'] or ['l1','l2']).
+     * @returns {Array<string>|null} Configured channel names, or null */
     getChannels() {
         const raw = this.getData()?.channels
         if (!Array.isArray(raw)) return null
@@ -90,24 +52,15 @@ export default class DualSwitch extends Mechanism {
         return channels.length > 0 ? channels : null
     }
 
-    // -- Command translation --------------------------------------------------
+    //  -- Command translation --------------------------------------------------
 
-    /**
-     * Translate a command into zigbee2mqtt's suffixed multi-channel payload shape
-     * before delegating to the base publisher. Bare ON/OFF/TOGGLE fan out across
-     * all channels; object commands may narrow scope with `channel`. Commands that
-     * cannot be expressed on this topology warn and are dropped instead of being
-     * published as an invalid generic `{state}` payload.
-     *
+    /** Translate a command into zigbee2mqtt's suffixed multi-channel payload shape.
      * @param {string|Object} command - State string or structured payload (may carry channel/brightness/state keys; brightness may be a number or a per-channel map)
-     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command
-     */
+     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command */
     receiveCommand(command, source = DeviceCommandSource.HUMAN) {
         const channels = this.getChannels()
 
-        // No declared topology: behave exactly like a plain mechanism so devices
-        // typed dualSwitch without channels keep working with legacy payloads.
-        // Multi-channel-only keys are stripped so they never leak into the payload.
+        //  No declared topology: behave exactly like a plain mechanism so devices.
         if (!channels) {
             if (typeof command === 'object' && command !== null
                 && ('channel' in command || 'brightness' in command)) {
@@ -132,15 +85,11 @@ export default class DualSwitch extends Mechanism {
         this._publishResolved(resolved, source)
     }
 
-    /**
-     * Build the state_* fields of the payload for a resolved command. Kept as a
-     * separate helper so DualDimmer can compose its own brightness_* fields on top
-     * and so the split-publish path can build each half independently.
+    /** Build the state_* fields of the payload for a resolved command.
      * @param {Array<string>} targetChannels - Channels the command applies to
      * @param {string|null} fieldState - ON/OFF/TOGGLE value, or null when absent
      * @returns {Object} Partial payload with one state_<channel> key per channel (empty when no state requested)
-     * @protected
-     */
+     * @protected */
     _buildStateFields(targetChannels, fieldState) {
         const payload = {}
         if (fieldState !== null) {
@@ -151,25 +100,19 @@ export default class DualSwitch extends Mechanism {
         return payload
     }
 
-    /**
-     * Build the brightness_* fields of the payload for a resolved command. Base
-     * DualSwitch is on/off only, so this returns an empty object; DualDimmer
-     * overrides it to map the requested percentage into per-channel level fields.
+    /** Build the brightness_* fields of the payload for a resolved command.
      * @param {Array<string>} targetChannels - Channels the command applies to
      * @param {number|Object<string, number>|undefined} fieldBrightness - Uniform percentage 0-100, or a per-channel percentage map, if any
      * @returns {Object} Partial payload with one brightness_<channel> key per channel (empty when none requested)
-     * @protected
-     */
+     * @protected */
     _buildBrightnessFields(targetChannels, fieldBrightness) {
         return {}
     }
 
-    /**
-     * Compose the full wire payload (state_* + brightness_*) for a resolved command.
+    /** Compose the full wire payload (state_* + brightness_*) for a resolved command.
      * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
      * @returns {Object|null} Payload ready for zigbee2mqtt, or null when empty
-     * @protected
-     */
+     * @protected */
     _buildPayload(resolved) {
         const { targetChannels, fieldState, fieldBrightness } = resolved
         const payload = {
@@ -179,48 +122,28 @@ export default class DualSwitch extends Mechanism {
         return Object.keys(payload).length > 0 ? payload : null
     }
 
-    /**
-     * Publish a raw payload to zigbee2mqtt via the base mechanism publisher,
-     * bypassing this class's command translation. Used by the split-publish path
-     * so DualDimmer can emit state and brightness as separate messages without
-     * re-entering the translator.
+    /** Publish a raw payload to zigbee2mqtt via the base mechanism publisher.
      * @param {Object} payload - Payload ready for zigbee2mqtt
      * @param {DeviceCommandSource} source - Who is behind this command
-     * @protected
-     */
+     * @protected */
     _publishRaw(payload, source) {
         super.receiveCommand(payload, source)
     }
 
-    /**
-     * Publish a resolved command to zigbee2mqtt. Default: a single combined
-     * payload. DualDimmer overrides this to split state and brightness into two
-     * sequential publishes because some converters (Tuya/AVATTO) drop combined
-     * payloads.
+    /** Publish a resolved command to zigbee2mqtt. Default: a single combined.
      * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
      * @param {DeviceCommandSource} source - Who is behind this command
-     * @protected
-     */
+     * @protected */
     _publishResolved(resolved, source) {
         const payload = this._buildPayload(resolved)
         if (payload) this._publishRaw(payload, source)
     }
 
-    /**
-     * Resolve a raw command into its effective scope and fields without building
-     * the wire payload. Returns null (with a warning) when the command cannot be
-     * expressed on this device's topology.
-     *
-     * Recognizes the `SET_BRIGHTNESS` sentinel in the state/action slot: the model
-     * learned that verb from our own "AI performed SET_BRIGHTNESS=NN" log lines, so
-     * it is accepted as "set brightness only, leave state alone" rather than
-     * rejected as an unknown state.
-     *
+    /** Resolve a raw command into its effective scope and fields without building.
      * @param {string|Object} command - Raw command from any caller
      * @param {Array<string>} channels - Validated channel names
      * @returns {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}|null} Resolved command, or null to drop
-     * @protected
-     */
+     * @protected */
     _resolveCommand(command, channels) {
         let fieldState = null              // 'ON' | 'OFF' | 'TOGGLE'
         let fieldBrightness = undefined    // percentage 0-100 (dimmers only)
@@ -235,8 +158,7 @@ export default class DualSwitch extends Mechanism {
             fieldState = st
         } else if (command && typeof command === 'object') {
             if ('channel' in command) {
-                // Positional aliases (ONE/TWO/1/2) map by declaration order; raw
-                // wire names pass through as identity aliases.
+                //  Positional aliases (ONE/TWO/1/2) map by declaration order; raw.
                 const ch = resolveChannelAlias(channels, command.channel)
                 if (ch === null) {
                     this.warn(
@@ -251,8 +173,7 @@ export default class DualSwitch extends Mechanism {
             if ('state' in command || 'action' in command) {
                 const st = String(command.state ?? command.action).toUpperCase()
                 if (st === 'SET_BRIGHTNESS') {
-                    // Sentinel the model learned from our own log lines: means
-                    // "set brightness only, leave state alone."
+                    //  Sentinel the model learned from our own log lines: means.
                     fieldState = null
                 } else if (['ON', 'OFF', 'TOGGLE'].includes(st)) {
                     fieldState = st
@@ -265,9 +186,7 @@ export default class DualSwitch extends Mechanism {
             if ('brightness' in command) {
                 if (command.brightness !== null && typeof command.brightness === 'object'
                     && !Array.isArray(command.brightness)) {
-                    // Per-channel map: {l1: 50, l2: 25} (wire names or ONE/TWO
-                    // aliases). The mapped channels define the command's scope;
-                    // any state field applies to exactly those channels.
+                    // Per-channel map: {l1: 50, l2: 25}
                     if ('channel' in command) {
                         this.warn('Both "channel" and a per-channel brightness map were given -- ambiguous. Command dropped.')
                         return null
@@ -305,10 +224,7 @@ export default class DualSwitch extends Mechanism {
                 }
             }
 
-            // Brightness is only meaningful on dimmable subclasses; warn instead of
-            // silently publishing a field the converter may ignore or reject. Checked
-            // before the "no usable fields" gate so a brightness-only command on a
-            // non-dimmable device is dropped with an explanatory warning.
+            //  Brightness is only meaningful on dimmable subclasses.
             if (fieldBrightness !== undefined && !this.supportsBrightness()) {
                 this.warn(`Channel(s) [${targetChannels.join(', ')}] are not dimmable -- ignoring brightness`)
                 fieldBrightness = undefined
@@ -326,17 +242,10 @@ export default class DualSwitch extends Mechanism {
         return { targetChannels, fieldState, fieldBrightness }
     }
 
-    // -- Button action passthrough -------------------------------------------
+    //  -- Button action passthrough -------------------------------------------
 
-    /**
-     * Override handleMqttMessage so `{action: ...}` reports from physical buttons
-     * are routed through the InteractionContainer under this device's slugified
-     * name -- preserving YAML interaction bindings (Jadalnia right button ->
-     * Kuchnia Gniazdo) without reclassifying the switch as a Remote. The report is
-     * still cached/logged via super exactly like Remote does today.
-     *
-     * @param {Object} data - Event data containing topic and message
-     */
+    /** Override handleMqttMessage so `{action: ...}` reports from physical buttons
+     * @param {Object} data - Event data containing topic and message */
     handleMqttMessage(data) {
         let parsed
         try {
@@ -349,20 +258,13 @@ export default class DualSwitch extends Mechanism {
             this.processButtonAction(parsed.action, parsed)
         }
 
-        // Always call parent to cache and log the message (default behavior).
+        //  Always call parent to cache and log the message (default behavior).
         super.handleMqttMessage(data)
     }
 
-    /**
-     * Route one physical button action with debounce protection, mirroring
-     * Remote's semantics: 800ms window per instance, then lookup by slugified
-     * friendly name in the shared interaction registry. When no interaction is
-     * registered for this device the press is logged and ignored -- dual switches
-     * have no legacy action-map fallback of their own.
-     *
+    /** Route one physical button action with debounce protection, mirroring.
      * @param {string} action - Action identifier from zigbee2mqtt (e.g., "single_right")
-     * @param {Object} [data] - Full parsed message payload for context
-     */
+     * @param {Object} [data] - Full parsed message payload for context */
     processButtonAction(action, data = {}) {
         if (this.#isDebounced()) return
 
@@ -379,11 +281,9 @@ export default class DualSwitch extends Mechanism {
         }
     }
 
-    /**
-     * Check whether a button action falls within the debounce window.
+    /** Check whether a button action falls within the debounce window.
      * @returns {boolean} true when debounced (caller should ignore the event)
-     * @private
-     */
+     * @private */
     #isDebounced() {
         if (!this.#lastActionTime) return false
 
@@ -398,15 +298,10 @@ export default class DualSwitch extends Mechanism {
         return false
     }
 
-    // -- State reporting ------------------------------------------------------
+    //  -- State reporting ------------------------------------------------------
 
-    /**
-     * Synthesize a per-channel state summary instead of reading a single top-level
-     * `state` field that dual switches do not have: "ON | OFF" style output for UI
-     * windows and AI context. Falls back to base behavior when no channels are
-     * configured or nothing has been reported yet.
-     * @returns {Promise<string|null>} Human-readable multi-channel state, or null
-     */
+    /** Synthesize a per-channel state summary instead of reading a single top-level
+     * @returns {Promise<string|null>} Human-readable multi-channel state, or null */
     async getCurrentState() {
         const channels = this.getChannels()
         if (!channels) return super.getCurrentState()
@@ -431,12 +326,5 @@ export default class DualSwitch extends Mechanism {
         return parts.length > 0 ? parts.join(' | ') : super.getCurrentState()
     }
 
-    // -- Subclass extension points --------------------------------------------
-    //
-    // DualDimmer extends this class by overriding:
-    //   - _buildBrightnessFields: maps the requested percentage into per-channel
-    //     brightness_* level fields (base returns an empty object).
-    //   - _publishResolved: splits a combined state+brightness command into two
-    //     sequential publishes (state first, then brightness) because some
-    //     converters (Tuya/AVATTO) drop combined payloads.
+    //  -- Subclass extension points --------------------------------------------
 }

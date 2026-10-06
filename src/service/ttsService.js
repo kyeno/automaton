@@ -1,22 +1,8 @@
 /**
  * TTS Service -- EventBus-driven text-to-speech client.
- *
- * Listens for "tts:speak" events on the EventBus and forwards them to a
- * remote tts-server API via HTTP POST. Fully decoupled: callers simply
- * emit events without importing or checking this service. If TTS_API_URL
- * is not defined in .env, the service silently does nothing during init.
- *
- * Locale-aware: loads per-locale TTS templates from etc/i18n/{locale}/tts.yaml
- * (model required, all other fields optional). Merges template defaults with
- * runtime event payload before sending the request.
- *
- * The same template may carry a `profiles:` registry of named framing sets
- * (intro/outro/intro_spacing for a class of speech); getProfile() exposes the raw
- * entry and src/lib/ttsProfiles.js owns resolving them for every speaker.
- *
+ * Listens for "tts:speak" events on the EventBus and forwards them.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -34,9 +20,6 @@ import I18nLoader    from './i18nLoader.js'
 import EventBus      from './eventBus.js'
 import { PROJECT_ROOT } from '../lib/projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Root directory containing per-locale i18n subdirectories. */
 const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
@@ -50,20 +33,9 @@ const REQUEST_TIMEOUT_MS = 5000
 /** Event channel this service subscribes to. */
 const SPEAK_CHANNEL = 'tts:speak'
 
-// ---------------------------------------------------------------------------
-// STtsService (module-level singleton)
-// ---------------------------------------------------------------------------
+//  STtsService (module-level singleton)
 
-/**
- * Stateless, EventBus-driven TTS client.
- *
- * On init, checks for TTS_API_URL in environment. If present, loads the
- * locale-specific tts.yaml template and subscribes to "tts:speak" events.
- * Each event carries { text, output_endpoint?, intro?, outro?, intro_spacing? }
- * which is merged with the template (runtime values win) before posting to
- * the remote API.
- * ES module caching guarantees single instantiation.
- */
+/** Stateless, EventBus-driven TTS client. */
 class STtsService {
 
     /** @type {string|null} */ #apiUrl = null
@@ -72,13 +44,10 @@ class STtsService {
     /** @type {Function|null} */ #unsubscribe = null
     /** @type {boolean} */     #initialized = false
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Initialize the TTS service. Call once during application startup.
-     * If TTS_API_URL is not set, the service remains disabled -- no-op.
-     * @async
-     */
+    /** Initialize the TTS service. Call once during application startup.
+     * @async */
     async init() {
         const apiUrl = process.env.TTS_API_URL
 
@@ -109,45 +78,29 @@ class STtsService {
         this.#initialized = true
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Check whether TTS is active and ready to speak.
-     * @returns {boolean}
-     */
+    /** Check whether TTS is active and ready to speak.
+     * @returns {boolean} */
     isEnabled() {
         return this.#enabled
     }
 
-    /**
-     * Check whether TTS has been configured via environment variables, regardless of init state.
-     * Safe to call before init(); used by bootstrap and the UI to skip work entirely
-     * when no backend URL was provided.
-     * @returns {boolean} True if TTS_API_URL is set and non-empty.
-     */
+    /** Check whether TTS has been configured via environment variables, regardless of init state.
+     * @returns {boolean} True if TTS_API_URL is set and non-empty. */
     isConfigured() {
         return Boolean(process.env.TTS_API_URL && String(process.env.TTS_API_URL).trim())
     }
 
-    /**
-     * Whether init() has completed at all (enabled or not) -- gate callers use before
-     * invoking refreshConfig() from `/config reload` so uninitialized services are never touched.
-     * @returns {boolean}
-     */
+    /** Whether init() has completed at all (enabled or not) -- gate callers use before
+     * @returns {boolean} */
     isReady() {
         return this.#initialized
     }
 
-    /**
-     * Raw named framing profile from the active locale's tts.yaml `profiles:` registry
-     * (intro/outro/intro_spacing for a class of speech), looked up case-insensitively.
-     * Returns null when the profile, the registry, or the locale template is missing --
-     * validating the entry itself is the caller's job (see lib/ttsProfiles.js). A profile
-     * carries framing only and never output_endpoint: the audio sink stays
-     * runtime > locale template > TTS_TCP_ENDPOINT, exactly as #buildPayload() resolves it.
+    /** Raw named framing profile from the active locale's tts.yaml `profiles:` registry.
      * @param {string} name - Profile name as written in `tts_profile:`
-     * @returns {Record<string, unknown>|null} Raw profile entry, or null when undefined
-     */
+     * @returns {Record<string, unknown>|null} Raw profile entry, or null when undefined */
     getProfile(name) {
         const registry = this.#template?.profiles
         if (!registry || typeof registry !== 'object' || Array.isArray(registry)) return null
@@ -157,15 +110,9 @@ class STtsService {
         return key ? registry[key] : null
     }
 
-    /**
-     * Re-read locale-dependent TTS settings after a successful /config reload. The payload
-     * template lives under etc/i18n/{active locale}/tts.yaml, so switching locale.language
-     * changes which one applies; editing that file in place is detected by comparing the newly
-     * loaded template against the cached one (`changed`). The speak-channel subscription is
-     * reconciled to match. Environment-driven enablement (TTS_API_URL) still wins over everything here.
+    /** Re-read locale-dependent TTS settings after a successful /config reload.
      * @async
-     * @returns {Promise<{enabled:boolean, model:string|null, changed:boolean}>} Post-refresh state for caller reporting
-     */
+     * @returns {Promise<{enabled:boolean, model:string|null, changed:boolean}>} Post-refresh state for caller reporting */
     async refreshConfig() {
         const apiUrl = process.env.TTS_API_URL
         if (!apiUrl || !String(apiUrl).trim()) {
@@ -174,7 +121,7 @@ class STtsService {
             return { enabled: false, model: null, changed: hadState }
         }
 
-        // Force full re-resolution -- the locale directory may have changed since init().
+        //  Force full re-resolution -- the locale directory may have changed since init().
         const before = JSON.stringify(this.#template ?? null)
         this.#template = null
         await this.#loadTemplate()
@@ -203,19 +150,14 @@ class STtsService {
         }
     }
 
-    /**
-     * Synchronously speak text without going through EventBus.
-     * Useful for one-off calls that need the result before continuing.
-     * Internally checks #enabled -- silently returns false if disabled.
-     *
+    /** Synchronously speak text without going through EventBus.
      * @param {string} text - The text to synthesize.
      * @param {Object} [opts] - Optional overrides.
      * @param {string} [opts.outputEndpoint] - Override global output_endpoint.
      * @param {string} [opts.intro] - Wave filename played before the synthesized speech.
      * @param {string} [opts.outro] - Wave filename played after the synthesized speech.
      * @param {number} [opts.introSpacing] - Seconds between intro end and speech start; negative overlaps them.
-     * @returns {Promise<boolean>} True if request was sent successfully.
-     */
+     * @returns {Promise<boolean>} True if request was sent successfully. */
     async speak(text, opts = {}) {
         if (!this.#enabled || !this.#template) return false
 
@@ -223,14 +165,11 @@ class STtsService {
         return this.#post(payload)
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Load the locale-specific tts.yaml template from etc/i18n/{locale}/tts.yaml.
-     * Falls back to DEFAULT_LOCALE if the file does not exist or is invalid.
+    /** Load the locale-specific tts.yaml template from etc/i18n/{locale}/tts.yaml.
      * @async
-     * @private
-     */
+     * @private */
     async #loadTemplate() {
         const localeDir = I18nLoader.getLocale()
         const filePath  = path.join(I18N_ROOT, localeDir, 'tts.yaml')
@@ -266,10 +205,8 @@ class STtsService {
         }
     }
 
-    /**
-     * Load the fallback tts.yaml from DEFAULT_LOCALE.
-     * @private
-     */
+    /** Load the fallback tts.yaml from DEFAULT_LOCALE.
+     * @private */
     #loadFallbackTemplate() {
         try {
             const filePath = path.join(I18N_ROOT, DEFAULT_LOCALE, 'tts.yaml')
@@ -289,10 +226,8 @@ class STtsService {
     }
 
 
-    /**
-     * Subscribe to the EventBus speak channel.
-     * @private
-     */
+    /** Subscribe to the EventBus speak channel.
+     * @private */
     #subscribe() {
         this.#unsubscribe = EventBus.subscribe(SPEAK_CHANNEL, async (payload) => {
             if (!this.#enabled || !this.#template) return
@@ -318,37 +253,28 @@ class STtsService {
         })
     }
 
-    /**
-     * Build the JSON payload for a TTS API request by merging template defaults
-     * with runtime overrides. Only includes optional fields when they are defined;
-     * for every optional field the runtime override wins over the tts.yaml default.
-     *
-     * Required fields in final payload: model, text, output_endpoint
-     * Optional fields: triple_leading_consonant, piper_effects, sox_effects,
-     * intro, outro, intro_spacing
-     *
+    /** Build the JSON payload for a TTS API request by merging template defaults.
      * @param {string} text - The text to synthesize.
      * @param {Object} opts - Runtime options from caller.
      * @returns {Object} The complete JSON payload.
-     * @private
-     */
+     * @private */
     #buildPayload(text, opts = {}) {
         const t = this.#template
 
-        // Resolve output_endpoint with priority: per-call override > tts.yaml > .env (TTS_TCP_ENDPOINT)
+        //  Resolve output_endpoint with priority: per-call override > tts.yaml > .env (TTS_TCP_ENDPOINT)
         let outputEndpoint = opts.outputEndpoint || t.output_endpoint
         if (!outputEndpoint) {
             outputEndpoint = process.env.TTS_TCP_ENDPOINT
         }
 
-        // Start with required fields
+        //  Start with required fields.
         const payload = {
             model:           t.model,
             text:            String(text),
             output_endpoint: outputEndpoint,
         }
 
-        // Merge optional fields -- only include if explicitly set in template
+        //  Merge optional fields -- only include if explicitly set in template.
         if (t.triple_leading_consonant != null) {
             payload.triple_leading_consonant = t.triple_leading_consonant
         }
@@ -359,8 +285,7 @@ class STtsService {
             payload.sox_effects = t.sox_effects
         }
 
-        // Jingle framing + spacing: runtime event params override tts.yaml defaults,
-        // which themselves stay unset unless a locale opts in globally.
+        //  Jingle framing + spacing: runtime event params override tts.yaml defaults.
         const intro  = opts.intro ?? t.intro
         if (typeof intro === 'string' && intro.trim()) {
             payload.intro = intro.trim()
@@ -377,13 +302,10 @@ class STtsService {
         return payload
     }
 
-    /**
-     * Send a POST request to the TTS API endpoint.
-     *
+    /** Send a POST request to the TTS API endpoint.
      * @param {Object} payload - The JSON body to send.
      * @returns {Promise<boolean>} True if the request completed without error.
-     * @private
-     */
+     * @private */
     #post(payload) {
         return new Promise((resolve) => {
             try {
@@ -405,7 +327,7 @@ class STtsService {
                 }
 
                 const req = transport.request(options, (res) => {
-                    // Consume response data to free up memory
+                    //  Consume response data to free up memory.
                     res.resume()
                     res.on('end', () => {
                         const ok = res.statusCode >= 200 && res.statusCode < 300
@@ -439,9 +361,7 @@ class STtsService {
         })
     }
 
-    /**
-     * Gracefully unsubscribe from EventBus during shutdown.
-     */
+    /** Gracefully unsubscribe from EventBus during shutdown. */
     cleanup() {
         if (this.#unsubscribe) {
             this.#unsubscribe()
@@ -451,6 +371,6 @@ class STtsService {
     }
 }
 
-// Module-level singleton -- ES module caching guarantees single instantiation.
+//  Module-level singleton -- ES module caching guarantees single instantiation.
 const TtsServiceInstance = Object.freeze(new STtsService())
 export default TtsServiceInstance

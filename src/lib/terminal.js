@@ -1,14 +1,9 @@
 /**
  * Terminal utility functions for ANSI-aware text manipulation and formatting.
- *
- * Provides string helpers that correctly handle invisible ANSI escape sequences
- * when computing visible length, padding, wrapping, and cell rendering. Color
- * constants live in `enum/ansiColors` -- imported here only where needed internally.
- *
+ * Provides string helpers that correctly handle invisible ANSI escape sequences.
  * @module lib/terminal
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -17,39 +12,27 @@
 import I18nLoader from '../service/i18nLoader.js'
 import AnsiColors from '../enum/ansiColors.js'
 
-// ---------------------------------------------------------------------------
-// ANSI String Utilities
-// ---------------------------------------------------------------------------
+//  ANSI String Utilities.
 
-/**
- * Strip all ANSI escape sequences from a string.
- * Matches the standard CSI (Control Sequence Introducer) format: \x1b[<params>m
- *
+/** Strip all ANSI escape sequences from a string.
  * @param {string} str - Input text possibly containing ANSI codes
- * @returns {string} Text with all ANSI sequences removed
- */
+ * @returns {string} Text with all ANSI sequences removed */
 export function stripAnsi(str) {
     return str.replace(/\x1b\[[0-9;]*m/g, '')
 }
 
-/**
- * Return the visible (ANSI-stripped) length of a string.
- *
+/** Return the visible (ANSI-stripped) length of a string.
  * @param {string} str - Input text possibly containing ANSI codes
- * @returns {number} Number of printable characters
- */
+ * @returns {number} Number of printable characters */
 export function visibleLen(str) {
         return stripAnsi(str).length
 }
 
-/**
- * Pad a string to a target visible width, ignoring ANSI escapes when counting.
- *
+/** Pad a string to a target visible width, ignoring ANSI escapes when counting.
  * @param {string} str - Input possibly containing ANSI codes
  * @param {number} width - Target visible character count
  * @param {'left'|'right'} [align='left'] - 'left' pads right, 'right' pads left
- * @returns {string} Padded string preserving original ANSI codes
- */
+ * @returns {string} Padded string preserving original ANSI codes */
 export function padVisible(str, width, align = 'left') {
         const vlen = visibleLen(str)
         if (vlen >= width) return str
@@ -57,16 +40,12 @@ export function padVisible(str, width, align = 'left') {
         return align === 'right' ? spaces + str : str + spaces
 }
 
-/**
- * Build a colored cell: apply color code, pad to the desired visible width,
- * then reset formatting. The plain-text content must not contain ANSI codes.
- *
+/** Build a colored cell: apply color code, pad to the desired visible width.
  * @param {string} text - Plain text (no ANSI inside)
  * @param {string} color - ANSI color SGR code
  * @param {number} width - Column width in visible characters
  * @param {'left'|'right'} [align='left']
- * @returns {string} Formatted cell string with color and padding
- */
+ * @returns {string} Formatted cell string with color and padding */
 export function colCell(text, color, width, align = 'left') {
         const raw = String(text)
         const vlen = raw.length
@@ -79,29 +58,16 @@ export function colCell(text, color, width, align = 'left') {
         : color + raw + spaces + AnsiColors.reset
 }
 
-// ---------------------------------------------------------------------------
-// Text Wrapping Utilities
-// ---------------------------------------------------------------------------
+//  Text Wrapping Utilities.
 
-/**
- * Word-aware wrap that preserves ANSI escape sequences.
- *
- * Splits the input into "words" (sequences separated by spaces), then accumulates
- * words per line until adding the next word would exceed `maxWidth`. If a single
- * word is longer than `maxWidth` it is hard-broken at that boundary.
- *
- * ANSI codes are passed through and carried to every wrapped line prefix so color
- * formatting carries across segments. Newlines in the input text should be handled
- * BY THE CALLER (split before calling this function).
- *
+/** Word-aware wrap that preserves ANSI escape sequences.
  * @param {string} str - Input text possibly containing ANSI codes (no newlines)
  * @param {number} maxWidth - Maximum visible characters per line
- * @returns {string[]} Array of wrapped lines
- */
+ * @returns {string[]} Array of wrapped lines */
 export function wrapAnsi(str, maxWidth) {
         if (!str) return ['']
 
-        // --- Tokenize: split into words while preserving ANSI sequences attached to them ---
+        //  --- Tokenize: split into words while preserving ANSI sequences attached to them ---
         const words = []
         let token = ''
         for (let i = 0; i < str.length; i++) {
@@ -125,7 +91,7 @@ export function wrapAnsi(str, maxWidth) {
 
         if (words.length === 0) return ['']
 
-        // --- Collect any leading ANSI codes (before first visible char) so they prefix every line ---
+        //  --- Collect any leading ANSI codes (before first visible char) so they prefix every line ---
         let leadingAnsi = ''
         {
             let idx = 0
@@ -143,7 +109,7 @@ export function wrapAnsi(str, maxWidth) {
             }
         }
 
-        // --- Accumulate words into lines using index-based loop for safe hard-break insertion ---
+        //  --- Accumulate words into lines using index-based loop for safe hard-break insertion ---
         const lines = []
         let currentLine = leadingAnsi
         let visibleLength = visibleLen(leadingAnsi)
@@ -154,23 +120,20 @@ export function wrapAnsi(str, maxWidth) {
             const needed = (currentLine !== leadingAnsi ? 1 : 0) + wLen
 
             if (visibleLength + needed > maxWidth) {
-                // Flush current line -- skip when nothing accumulated yet so an
-                // over-long leading word does not emit an empty first line
+                //  Flush current line.
                 if (visibleLength > 0) lines.push(currentLine)
-                // Start new line -- carry leading ANSI codes
+                //  Start new line -- carry leading ANSI codes.
                 currentLine = leadingAnsi
                 visibleLength = visibleLen(leadingAnsi)
 
-                // If the single word itself exceeds maxWidth, hard-break it
+                //  If the single word itself exceeds maxWidth.
                 if (wLen > maxWidth) {
                     let segment = takeVisibleN(word, maxWidth)
                     let rest = dropVisibleN(word, maxWidth)
 
-                    // Safety: if no progress was made (e.g., segment has zero visible chars, or
-                    // rest equals the original word), force-consume exactly one visible character
-                    // to guarantee forward progress and avoid an infinite splice-back loop.
+                    // Safety: if no progress was made.
                     if (!visibleLen(segment) || rest === word) {
-                        // Find the first non-ANSI character and include it in the segment
+                        //  Find the first non-ANSI character and include it in the segment.
                         let consumed = 0
                         for (let ci = 0; ci < word.length && consumed < 1; ci++) {
                             if (word[ci] === '\x1b' && word[ci + 1] === '[') {
@@ -188,15 +151,14 @@ export function wrapAnsi(str, maxWidth) {
 
                     lines.push(segment)
                     if (rest && visibleLen(rest) > 0) {
-                        // Insert the remainder AFTER the current slot so wi++ lands on it
-                        // next pass; splicing before would re-process the original word forever.
+                        //  Insert the remainder AFTER the current slot so wi++ lands.
                         words.splice(wi + 1, 0, rest)
                     }
                     continue
                 }
             }
 
-            // Append word (with space separator if not first on line)
+            //  Append word (with space separator if not first on line)
             if (currentLine !== leadingAnsi) {
                 currentLine += ' '
                 visibleLength++
@@ -211,13 +173,9 @@ export function wrapAnsi(str, maxWidth) {
         return lines
 }
 
-// ---------------------------------------------------------------------------
-// Helpers for wrapAnsi -- visible-length aware slicing of strings with ANSI codes
-// ---------------------------------------------------------------------------
+//  Helpers for wrapAnsi -- visible-length aware slicing of strings with ANSI codes.
 
-/**
- * Take the first `n` visible characters from str, preserving ANSI sequences.
- */
+/** Take the first `n` visible characters from str, preserving ANSI sequences. */
 function takeVisibleN(str, n) {
         let result = ''
         let count = 0
@@ -235,9 +193,7 @@ function takeVisibleN(str, n) {
         return result
 }
 
-/**
- * Drop the first `n` visible characters from str, preserving trailing ANSI sequences.
- */
+/** Drop the first `n` visible characters from str, preserving trailing ANSI sequences. */
 function dropVisibleN(str, n) {
         let remaining = str
         let count = 0
@@ -252,34 +208,21 @@ function dropVisibleN(str, n) {
             idx++
             count++
         }
-        // Preserve any trailing ANSI codes that were after the cut point -- carry them forward
+        //  Preserve any trailing ANSI codes that were after the cut point -- carry them forward.
         return remaining.slice(idx)
 }
 
-/**
- * Whitespace-preserving wrap for preformatted content (box-drawing trees,
- * aligned tables, code blocks).
- *
- * Unlike {@link wrapAnsi}, which reflows prose word by word, this treats the
- * input as already laid out: a line that fits within `maxWidth` is returned
- * byte-identical, and an over-long line is hard-broken at the width boundary.
- * Continuation lines are re-indented with the original line's leading
- * whitespace (and leading ANSI codes) so wrapped segments stay inside the
- * tree's column. Callers must split multi-line text on '\n' first -- this
- * function handles a single line only.
- *
+/** Whitespace-preserving wrap for preformatted content.
  * @param {string} str - Preformatted line, may contain ANSI codes (no newlines)
  * @param {number} maxWidth - Maximum visible characters per line
- * @returns {string[]} Wrapped lines
- */
+ * @returns {string[]} Wrapped lines */
 export function wrapPreformatted(str, maxWidth) {
     if (!str) return ['']
 
-    // Fast path: the line fits -- return it untouched so every space is preserved
+    //  Fast path: the line fits -- return it untouched so every space is preserved.
     if (visibleLen(str) <= maxWidth) return [str]
 
-    // Leading whitespace + ANSI codes: carried onto every continuation line so
-    // wrapped segments stay aligned under the original indent
+    //  Leading whitespace + ANSI codes: carried onto every continuation line.
     let leading = ''
     {
         let idx = 0
@@ -298,8 +241,7 @@ export function wrapPreformatted(str, maxWidth) {
         }
     }
 
-    // Hard-break `remaining` at `budget` visible chars, guaranteeing forward
-    // progress (force-consume one visible char if the slice made none)
+    //  Hard-break `remaining` at `budget` visible chars, guaranteeing forward.
     const hardBreak = (remaining, budget) => {
         let segment = takeVisibleN(remaining, budget)
         let rest = dropVisibleN(remaining, budget)
@@ -322,42 +264,36 @@ export function wrapPreformatted(str, maxWidth) {
         return [segment, rest]
     }
 
-    // Continuation lines are re-indented, so they must fit the width left after
-    // the re-applied leading whitespace
+    //  Continuation lines are re-indented.
     const contBudget = Math.max(0, maxWidth - visibleLen(leading))
     const lines = []
     let remaining = str
 
-    // First line gets the full budget (the leading whitespace is part of it)
+    //  First line gets the full budget (the leading whitespace is part of it)
     if (visibleLen(remaining) > maxWidth) {
         const [segment, rest] = hardBreak(remaining, maxWidth)
         lines.push(segment)
         remaining = rest
     }
 
-    // Every subsequent line is re-indented, so it must fit the smaller budget
+    //  Every subsequent line is re-indented, so it must fit the smaller budget.
     while (visibleLen(remaining) > contBudget) {
         const [segment, rest] = hardBreak(remaining, contBudget)
         lines.push(leading + segment)
         remaining = rest
     }
 
-    // Final segment is already within the continuation budget, so re-applying the
-    // indent keeps the whole line within maxWidth
+    //  Final segment is already within the continuation budget.
     if (remaining || lines.length === 0) {
         lines.push(leading + remaining)
     }
     return lines
 }
 
-/**
- * Simple word-wrap that respects a max visible width. Does NOT handle ANSI codes --
- * use {@link wrapAnsi} for colored text. Suitable for plain-text chat messages.
- *
+/** Simple word-wrap that respects a max visible width. Does NOT handle ANSI codes --
  * @param {string} text - Plain text to wrap
  * @param {number} maxWidth - Maximum characters per line
- * @returns {string[]} Array of wrapped lines
- */
+ * @returns {string[]} Array of wrapped lines */
 export function wrapText(text, maxWidth) {
         const words = text.split(' ')
         const lines = []
@@ -375,33 +311,22 @@ export function wrapText(text, maxWidth) {
         return lines
 }
 
-// ---------------------------------------------------------------------------
-// Time Formatting Helpers
-// ---------------------------------------------------------------------------
+//  Time Formatting Helpers.
 
-/**
- * Return the current local time as an HH:mm:ss string (24-hour format).
- *
- * @returns {string} Current local time
- */
+/** Return the current local time as an HH:mm:ss string (24-hour format).
+ * @returns {string} Current local time */
 export function nowTime() {
         return formatTime(new Date())
 }
 
-/**
- * Format a Date as a plain time string respecting the global time_format setting.
- * Produces zero-padded output like "02:13:34am" or "14:05:09".
- * No ANSI codes -- just raw text suitable for any consumer.
- *
+/** Format a Date as a plain time string respecting the global time_format setting.
  * @param {Date|string|number} date - Date to format
  * @param {boolean} [includeSeconds=true] - Whether to render seconds
- * @returns {string} Formatted time string
- */
+ * @returns {string} Formatted time string */
 export function formatTime(date, includeSeconds = true) {
         const d = typeof date === 'object' && date instanceof Date ? date : new Date(date)
 
-        // I18nLoader is imported statically but may not be .init()'d yet;
-        // is12HourFormat safely returns the default (true = 12h) before initialization.
+        //  I18nLoader is imported statically but may not be .init()'d yet;
         const use12Hour = I18nLoader.is12HourFormat?.() ?? true
 
         let hours = d.getHours()
@@ -421,13 +346,9 @@ export function formatTime(date, includeSeconds = true) {
         : `${String(hours).padStart(2, '0')}:${minutes}`
 }
 
-/**
- * Format a timestamp prefix for IRC-style display: `[02:13:34am]` in dim gray.
- * Respects the time_format setting from I18nLoader (12h vs 24h).
- *
+/** Format a timestamp prefix for IRC-style display: `[02:13:34am]` in dim gray.
  * @param {number|string|Date} [date] - Optional date; defaults to now
- * @returns {string} Formatted timestamp with ANSI codes
- */
+ * @returns {string} Formatted timestamp with ANSI codes */
 export function tsPrefix(date) {
         const d = date ? (typeof date === 'object' && date instanceof Date ? date : new Date(date)) : new Date()
         return `${AnsiColors.dim}[${formatTime(d)}]${AnsiColors.reset}`

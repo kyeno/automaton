@@ -1,27 +1,18 @@
 /**
  * AnsiColors -- common ANSI SGR color codes for terminal output.
- *
- * Single source of truth for every colored string rendered by the UI or
- * printed to stderr. Frozen so values cannot be mutated at runtime, and free
- * of any dependencies so it can be used even from early-boot crash handlers
- * before services are initialized.
- *
+ * Single source of truth for every colored string rendered by the UI.
  * @module enum/ansiColors
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
 
 'use strict'
 
-/**
- * Common ANSI SGR color codes for terminal output.
- *
+/** Common ANSI SGR color codes for terminal output.
  * @readonly
- * @enum {string}
- */
+ * @enum {string} */
 const AnsiColors = Object.freeze({
     reset:   '\x1b[0m',
     bold:    '\x1b[1m',

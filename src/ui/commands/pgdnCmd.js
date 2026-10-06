@@ -1,9 +1,7 @@
 /**
  * Page Down Command -- scrolls the active window down one page.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -16,10 +14,8 @@ class PgDnCmd extends CommandBase {
     static description = 'Scroll page down'
     static takesArgs = false
 
-    /**
-     * Scroll the active window down one page via ctx.scrollPageDown().
-     * @param {string} args - Raw argument string after the verb (unused)
-     */
+    /** Scroll the active window down one page via ctx.scrollPageDown().
+     * @param {string} args - Raw argument string after the verb (unused) */
     async execute(args) {
         this.ctx.scrollPageDown?.()
     }

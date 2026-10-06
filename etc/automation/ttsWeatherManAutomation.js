@@ -1,38 +1,9 @@
 /**
  * TTS WeatherMan Automation.
- * Rule-based weather announcer that builds a speech message from a base sentence
- * and condition-matched additions, then routes through AI -> TTS pipeline (or
- * direct TTS when AI is unavailable or disabled via the `use_ai` config flag,
- * default ON). Supports {{ DeviceName.property }} string
- * interpolation for live sensor data in i18n strings. Optional tts_options config entries
- * (intro/outro wave files, intro_spacing) are forwarded verbatim into the TTS server request
- * via the 'tts:speak' EventBus payload -- on both output paths -- so only this automation's
- * utterances carry them; see resolveTtsOptions(). Framing may also be named by
- * `tts_profile:`, resolved through the shared rules in src/lib/ttsProfiles.js.
- *
- * When routing through AI, day-position markers derived purely from clock + config
- * (no stored state) frame the core content: an opening line marks the first / last /
- * only announcement of each daily session (the stretch between two silence windows),
- * while "next update in {% next_interval %}" now closes every run except the last (first/middle runs included), not just middle-of-session runs.
- *
- * An opening time-of-day line is rendered before the base sentence on both output
- * paths; its clock parts are pre-rendered as plain digits so tiny models never have
- * to convert a clock string into words.
- *
- * On the first run of the day (within one interval of local midnight) and on the
- * first run of each daily session (after a silence window), the calendar date is
- * fused into that opening line via the {% date %} token -- e.g. "Jest wtorek,
- * 1 września 2026 roku, 32 minut po godzinie 9 w nocy." The date is pre-rendered,
- * so a weak model never has to convert it. The date vocabulary (day/month names,
- * period words, duration units) lives in the per-locale date.yaml bundle owned by
- * the date helper, not in this bundle.
- *
- * If neither the AI pipeline nor the TTS server is available the run is skipped
- * entirely (no output channel); a run with exactly one of the two still proceeds.
- *
+ * Rule-based weather announcer that builds a speech message from a base sentence.
+ * and condition-matched additions, then routes through AI -> TTS pipeline.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -57,9 +28,6 @@ import { readRandomLine } from '../../src/lib/randomLine.js'
 import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import temporal from '../../src/lib/date.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Path to this automation's YAML config file. */
 const CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tts-weatherman.yaml')
@@ -82,58 +50,38 @@ const INTERPOLATION_REGEX = /\{\{\s*([\w\s]+?)\.([\w]+)\s*\}\}/g
 /** Scan horizon when predicting the next non-silent tick -- two days exceeds any sane config. */
 const NEXT_ANNOUNCEMENT_HORIZON_MS = 48 * 3600 * 1000
 
-// ---------------------------------------------------------------------------
-// Class
-// ---------------------------------------------------------------------------
 
 export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
     /** @type {Record<string, unknown>|null} Cached weatherman i18n bundle */
     #bundle = null
 
-    /**
-     * Fixed identity constructor -- name and config path are constants of this automation.
-     */
+    /** Fixed identity constructor -- name and config path are constants of this automation. */
     constructor() {
         super({ name: 'TtsWeatherManAutomation', configPath: CONFIG_PATH })
     }
 
-    /**
-     * Lifecycle hook -- loads the weatherman i18n bundle once on top of the base init;
-     * execute() re-reads it fresh per run so interpolation always sees current values.
-     */
+    /** Lifecycle hook -- loads the weatherman i18n bundle once on top of the base init; */
     async init() {
         await super.init()
         this.#bundle = this.#loadWeathermanBundle()
     }
 
-    // -- Public API (override template method) ------------------------------
+    //  -- Public API (override template method) ------------------------------
 
-    /**
-     * Custom execute that builds a speech message and sends it to TTS.
-     * Overrides the parent's device-targeting flow entirely since this
-     * automation has no device targets -- only TTS output.
-     *
-     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} [triggerData] -
-     *   Trigger info; force:true bypasses the silent-period suppression below, and
-     *   forceFirst:true forces the first-of-day day-position (dated opening time line)
-     */
+    /** Custom execute that builds a speech message and sends it to TTS.
+     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} [triggerData] - */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
-        // Off-guard: if neither the AI pipeline nor the TTS server is available there is
-        // no output channel for the report -- skip the run entirely (no context build, no
-        // device reads, no log spam) rather than assembling a message that can only be
-        // dropped. A run with exactly one of the two available still proceeds: AI-only
-        // runs are rewritten and voiced by the assistant, TTS-only runs speak directly.
+        //  Off-guard: if neither the AI pipeline nor the TTS server is available there.
         if (!AiAssistant.isAvailable() && !TtsService.isEnabled()) {
             this.log('Both AI and TTS unavailable -- skipping weather run', 'debug')
             return
         }
 
-        // Suppress execution during configured silent period (before any work begins),
-        // unless explicitly forced from outside (e.g., "/automation force")
+        //  Suppress execution during configured silent period (before any work begins)
         if (this.isInSilentPeriod()) {
             if (triggerData?.force === true) {
                 this.log(`Forced run -- silent period bypassed (${triggerSource})`, 'info')
@@ -146,23 +94,20 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
-        // Stand down while a configured player is actively playing -- do not interrupt an active
-        // movie with weather chatter. WeatherMan overrides execute(), so apply the same
-        // video_player_suppression gate here that the parent's shared flow would otherwise run;
-        // like the parent, this is NOT bypassed by a forced run.
+        //  Stand down while a configured player is actively playing -- do not interrupt an active.
         if (await this.isVideoPlayerSuppressionActive()) {
             this.log(`Suppressed by video_player_suppression (${triggerSource})`, 'debug')
             return
         }
 
-        // Reload bundle fresh each run (interpolation is runtime, not cached)
+        //  Reload bundle fresh each run (interpolation is runtime, not cached)
         this.#bundle = this.#loadWeathermanBundle()
         if (!this.#bundle) {
             this.log('No weatherman i18n bundle loaded, skipping', 'warn')
             return
         }
 
-        // Build context for condition evaluation (reuses parent logic)
+        //  Build context for condition evaluation (reuses parent logic)
         let context
         try {
             context = await this.buildContext()
@@ -171,17 +116,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             return
         }
 
-        // One shared clock instant per run -- the opening time line and the day-position
-        // markers must never mix two different "now"s across a minute boundary.
+        //  One shared clock instant per run -- the opening time line and the day-position.
         const now = new Date()
 
-        // Day position (first/last/only/next + first-of-day) computed once, before the
-        // message is assembled, so the opening time line can fuse the calendar date into
-        // the clock sentence on first-of-day / first-of-session runs.
+        //  Day position (first/last/only/next + first-of-day) computed once.
         const meta = this.computeDayPosition(now)
-        // Debug poke: a forced "first" run (e.g. "/automation force <name> first") pretends
-        // this is the first run of the session, so the dated opening time line renders even
-        // at a mid-session clock time.
+        //  Debug poke: a forced "first" run (e.g. "/automation force <name> first") pretends.
         if (triggerData?.forceFirst === true) {
             meta.isFirst = true
             this.log(`Forced first-of-day day-position (${triggerSource})`, 'info')
@@ -194,14 +134,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             )
         }
 
-        // Opening time-of-day line rendered BEFORE the base sentence on both output paths
-        // (AI rewrite and direct TTS). Dated runs (first of day/session) fuse the calendar
-        // date into the clock sentence via the {% date %} token. Empty when the active
-        // bundle has no decoupled time_sentence templates; such bundles keep their inline
-        // {% time %} in the base.
+        //  Opening time-of-day line rendered BEFORE the base sentence on both output paths.
         const timeLine = this.buildTimeSentence(now, this.#bundle, meta)
 
-        // Start with base sentence + interpolate sensor data
+        //  Start with base sentence + interpolate sensor data.
         const baseKey = this.config.sentence_base
         let baseText = this.#resolveI18n(baseKey, '')
         if (!baseText) {
@@ -214,10 +150,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         const baseMessage = this.#interpolate(baseText, context)
         let message = timeLine ? `${timeLine} ${baseMessage}` : baseMessage
 
-        // Evaluate all rules, collect matches, then pick highest priority winner.
-        // When multiple rules match, only the one with the highest `priority` fires.
-        // Default priority is 0; higher number wins. Ties are broken by YAML order
-        // (first rule in file wins).
+        //  Evaluate all rules, collect matches, then pick highest priority winner.
         const rules = this.config.rules ?? []
         const winners = []
 
@@ -236,11 +169,11 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
 
         if (winners.length > 0) {
-            // Sort descending by priority; stable sort preserves YAML order for ties
+            //  Sort descending by priority; stable sort preserves YAML order for ties.
             winners.sort((a, b) => b.priority - a.priority)
             const best = winners[0]
 
-            // Log suppressed lower-priority rules for debugging
+            //  Log suppressed lower-priority rules for debugging.
             if (winners.length > 1) {
                 const losers = winners.slice(1).map(
                     w => `"${w.rule.name}" (p=${w.priority})`
@@ -251,7 +184,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
                 )
             }
 
-            // Append only the winner's sentence
+            //  Append only the winner's sentence.
             if (best.rule.sentence) {
                 const ruleText = this.#resolveI18n(best.rule.sentence, '')
                 if (ruleText) {
@@ -262,73 +195,42 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
-        // Route output through AI->TTS or direct TTS
+        //  Route output through AI->TTS or direct TTS.
         await this.#speak(message, meta)
     }
 
-    /**
-     * No device targets for this automation -- returns empty Map so parent
-     * execute() short-circuits gracefully. We override execute() entirely
-     * but keep this for compatibility.
-     * @returns {Map<string, never>}
-     */
+    /** No device targets for this automation -- returns empty Map so parent
+     * @returns {Map<string, never>} */
     loadDevices() {
         return new Map()
     }
 
-    /**
-     * Not used by ttsWeatherman (no device commands). Required abstract method.
+    /** Not used by ttsWeatherman (no device commands). Required abstract method.
      * @param {Object|null} _device - Unused in this override (kept for signature parity)
      * @param {string} _targetKey - Unused in this override
      * @param {Array<Object>} _matchingRules - Unused in this override
-     * @returns {null}
-     */
+     * @returns {null} */
     resolveCommand(_device, _targetKey, _matchingRules) {
         return null
     }
 
-    /**
-     * Compute where an announcement sits within its daily "session" -- the continuous
-     * stretch between two silence windows (with silence_between "0230-1030", one session
-     * runs from ~10:30 until ~02:30 next morning). Pure function of clock and config: no
-     * state is kept, so results are deterministic per wall-clock time.
-     *
-     * Because timer ticks are spaced at least one interval apart even across process
-     * restarts (setInterval re-anchors on boot), a run less than one interval after the
-     * session began can never have had a predecessor in that same session -- making
-     * first/last detection exact for timer-driven runs. The only residual error is a
-     * missed "first" marker when the process was down across the wake-up boundary.
-     *
-     * Exposed without the # prefix (like AutomationBase._initialized/_timer) so unit
-     * tests can verify the matrix without MQTT or AI providers.
-     *
+    /** Compute where an announcement sits within its daily "session" -- the continuous.
      * @param {Date} [now=new Date()] - Moment to evaluate
-     * @returns {{isFirst: boolean, isLast: boolean, isFirstOfDay: boolean, nextIntervalMs: number|null}}
-     *   isFirst/isLast require both a positive timer interval and a valid silence window;
-     *   isFirstOfDay (first run of the calendar day, within one interval of local midnight)
-     *   requires only a positive interval; nextIntervalMs is milliseconds until the next
-     *   non-silent tick, or null when the timer is disabled or no such tick exists within
-     *   the scan horizon.
-     */
+     * @returns {{isFirst: boolean, isLast: boolean, isFirstOfDay: boolean, nextIntervalMs: number|null}} */
     computeDayPosition(now = new Date()) {
         const result = { isFirst: false, isLast: false, isFirstOfDay: false, nextIntervalMs: null }
 
         const intervalMs = this.getTimerIntervalMs()
         if (!(intervalMs > 0)) return result            // event-driven only -- nothing periodic to predict
 
-        // "First run of the day": within one interval of local midnight. Independent of
-        // the silence window (a midnight run is usually mid-session), so it is computed
-        // before the mid-silence early-return below. Drives the calendar date in the
-        // opening time line (see buildTimeSentence()).
+        // "First run of the day": within one interval of local midnight.
         const midnight = new Date(now)
         midnight.setHours(0, 0, 0, 0)
         result.isFirstOfDay = (now.getTime() - midnight.getTime()) < intervalMs
 
         if (this.isInSilentPeriodAt(now)) return result // defensive: markers are meaningless mid-silence
 
-        // Next announcement = first upcoming tick outside the silent window. For pure
-        // timer runs this resolves in one step (ticks sit exactly `intervalMs` apart);
-        // the loop also stays correct for hypothetical out-of-band trigger invocations.
+        // Next announcement = first upcoming tick outside the silent window.
         let t = now.getTime() + intervalMs
         const horizon = now.getTime() + NEXT_ANNOUNCEMENT_HORIZON_MS
         while (t <= horizon) {
@@ -347,35 +249,16 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return result
     }
 
-    /**
-     * Assemble the ordered day-position speech segments for a run -- an optional single
-     * opener (first / last / only), then the core message, then an optional proverb,
-     * then an optional "next update" closer. Excludes the creative ai_prefix entirely;
-     * these are plain sentences meant to be spoken verbatim on BOTH output paths. The
-     * closer appears on every run except the last (and whenever a next tick can be
-     * predicted), so first runs announce it too.
-     *
-     * When `add_proverb` is enabled, the proverb sits BETWEEN the core message and the
-     * "next update" closer, so the next-update time stays the very last thing said.
-     * That placement is deliberate and the i18n wording depends on it:
-     *   - ai_proverb carries NO positional claim of its own (it asks the model to
-     *     "remind listeners of a proverb"), because the prompt's own line order already
-     *     places the proverb. A "close with this" wording would now be false, since the
-     *     next-update line follows it; and reusing ai_prefix's "Na koniec / Finally"
-     *     anchor would collide with the anecdote instruction the prefix already carries.
-     *   - the caller picks the wording via `proverbKey` because the two output paths
-     *     need different text: an instruction for the model vs. a line to speak.
+    /** Assemble the ordered day-position speech segments for a run -- an optional single.
      * @private
      * @param {string} message - Interpolated core speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position computed by {@link computeDayPosition}
      * @param {string} [proverbKey] - i18n key for the proverb line, per output path
-     * @returns {string[]} Ordered segments (message always present)
-     */
+     * @returns {string[]} Ordered segments (message always present) */
     #speechSegments(message, meta = {}, proverbKey) {
         const parts = []
 
-        // Opening day-position marker -- exactly one of first / last / only applies per run.
+        //  Opening day-position marker -- exactly one of first / last / only applies per run.
         let openerKey = null
         if (meta.isFirst && meta.isLast)      openerKey = 'weatherman.ai_message_only'
         else if (meta.isFirst)                openerKey = 'weatherman.ai_message_first'
@@ -387,11 +270,11 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
         parts.push(message)
 
-        // Proverb -- directly after the report body, ahead of the next-update closer.
+        //  Proverb -- directly after the report body, ahead of the next-update closer.
         const proverb = this.#buildProverbSegment(proverbKey)
         if (proverb) parts.push(proverb)
 
-        // Closing "next update" line -- every run except the last, when a next tick is known.
+        //  Closing "next update" line -- every run except the last, when a next tick is known.
         if (!meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
             const template = this.#resolveI18n('weatherman.ai_message_next', '')
             const phrase = temporal.msToHumanPhrase(meta.nextIntervalMs, temporal.getDurationUnits())
@@ -403,29 +286,16 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return parts
     }
 
-    /**
-     * Assemble the full prompt sent to the AI for a weather update. Layout: creative prefix
-     * -> optional day-position opener (first / last / only) -> core message -> optional
-     * "next update in ..." closer. The creative prefix is prepended whenever it is
-     * configured, independent of whether any day-position markers apply; the core message
-     * itself is always present.
-     *
-     * Exposed without the # prefix so unit tests can verify assembly order and i18n
-     * degradation without a live AI provider; #speak() is the sole production caller.
-     *
+    /** Assemble the full prompt sent to the AI for a weather update. Layout: creative prefix.
      * @param {string} message - Interpolated core speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position computed by {@link computeDayPosition}
-     * @returns {string} Full AI prompt (creative prefix + day-position markers + core message)
-     */
+     * @returns {string} Full AI prompt (creative prefix + day-position markers + core message) */
     buildAiPrompt(message, meta = {}) {
-        // The AI leg gets the instruction phrasing: the model reads it as a direction and
-        // announces the proverb in its own voice rather than reciting the sentence verbatim.
+        //  The AI leg gets the instruction phrasing: the model reads it as a direction.
         const segments = this.#speechSegments(message, meta, 'weatherman.ai_proverb')
         const body = segments.join('\n')          // keep the newline layout the model expects
 
-        // Creative instruction prefix (existing behaviour). Only the AI leg carries it --
-        // direct TTS must never read these instructions aloud.
+        //  Creative instruction prefix (existing behaviour). Only the AI leg carries it --
         const aiPrefixKey = this.config.sentence_ai_prefix
         if (aiPrefixKey && this.#bundle) {
             const prefixText = this.#resolveI18n(aiPrefixKey, '')
@@ -435,82 +305,39 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return body
     }
 
-    /**
-     * Plain-speech text for the direct-TTS path (AI unavailable). Includes every day-position
-     * marker (first / last / only + next-update closer) so listeners get the same framing even
-     * without AI -- but deliberately excludes the creative ai_prefix, which is an instruction to
-     * the model, not something to be spoken. Segments are space-joined for natural sentence flow.
-     *
-     * Exposed without the # prefix so unit tests can pin the pure-TTS output shape; #speak()
-     * is the sole production caller.
-     *
+    /** Plain-speech text for the direct-TTS path (AI unavailable). Includes every day-position.
      * @param {string} message - Interpolated core speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position computed by {@link computeDayPosition}
-     * @returns {string} Speech text with markers (no ai_prefix)
-     */
+     * @returns {string} Speech text with markers (no ai_prefix) */
     buildDirectTtsText(message, meta = {}) {
-        // Direct TTS gets the spoken phrasing -- there is no model to obey an instruction,
-        // so the line must read as natural speech on its own.
+        //  Direct TTS gets the spoken phrasing -- there is no model to obey an instruction.
         const segments = this.#speechSegments(message, meta, 'weatherman.tts_proverb')
         return segments.join(' ').trim()
     }
 
-    /**
-     * Build the validated extra-TTS-server-parameters object for this automation's
-     * utterances, delegating to the shared resolver in src/lib/ttsProfiles.js. Two
-     * optional sections of the YAML config are understood:
-     *   tts_profile   - name of a framing profile in the active locale's tts.yaml
-     *                   `profiles:` registry (intro/outro/intro_spacing)
-     *   tts_options   - explicit framing block, wins over the profile key by key:
-     *     intro         - string, wave filename played before the synthesized speech
-     *     outro         - string, wave filename played after the synthesized speech
-     *     intro_spacing - number (negative allowed), seconds between intro end and speech start
-     * Malformed entries are dropped with a warning instead of failing the run; an absent
-     * or fully empty shape yields {} so emissions keep their plain { text } form.
-     * Exposed without the # prefix so unit tests can pin resolution behaviour per
-     * instance by injecting synthetic configs without touching the on-disk YAML file.
+    /** Build the validated extra-TTS-server-parameters object for this automation's.
      * @param {Record<string, unknown>} [rawConfig=this.config] - Config source to read from
-     * @returns {{intro?: string, outro?: string, intro_spacing?: number}} Validated options (possibly empty)
-     */
+     * @returns {{intro?: string, outro?: string, intro_spacing?: number}} Validated options (possibly empty) */
     resolveTtsOptions(rawConfig = this.config) {
         return TtsProfiles.resolve(rawConfig, (message) => this.log(message, 'warn'))
     }
 
-    /**
-     * Render the opening time-of-day line for a weather update, or '' when no applicable
-     * template exists. The line is prepended to the base sentence on both output paths
-     * (AI rewrite and direct TTS), which keeps tiny models away from converting clock
-     * strings into words and keeps Piper TTS away from ambiguous bare H:M digits -- the
-     * "N minutes past H + period word" frame stays unambiguous either way.
-     *
-     * #pickTimeTemplate() chooses the variant matching the clock fraction with fallback
-     * to the default entry. Clock tokens are pre-resolved from `now` via the
-     * specialValues mechanism so rendering is deterministic per instant.
-     *
-     * Exposed without the # prefix so unit tests can verify rendering and i18n degradation
-     * without MQTT or AI providers; execute() is the sole production caller. The optional
-     * bundle parameter lets tests inject synthetic bundles without touching private state.
-     *
+    /** Render the opening time-of-day line for a weather update, or '' when no applicable.
      * @param {Date} [now=new Date()] - Moment to render
      * @param {Record<string, unknown>|null} [bundle=this.#bundle] - Weatherman i18n bundle
      * @param {{isFirst?: boolean, isFirstOfDay?: boolean}} [meta] - Day position from
-     *   {@link computeDayPosition}; when either flag is set the line is "dated" (see below)
-     * @returns {string} Interpolated opening line, or '' when nothing applicable exists
-     */
+     * @returns {string} Interpolated opening line, or '' when nothing applicable exists */
     buildTimeSentence(now = new Date(), bundle = this.#bundle, meta = {}) {
         const tree = bundle?.time_sentence
         if (!tree || typeof tree !== 'object') return ''
 
-        // Dated runs (first of the day / first of the session) fuse the calendar date
-        // into the clock sentence via the {% date %} token.
+        //  Dated runs (first of the day / first of the session) fuse the calendar date.
         const dated = Boolean(meta?.isFirst || meta?.isFirstOfDay)
         const tpl = this.#pickTimeTemplate(tree, now, dated)
         if (!tpl) return ''
 
         const period = temporal.getCurrentTimePeriod(now)
-        // Day-period words come from the date bundle (date.yaml) -- all date/time
-        // vocabulary now lives in one place owned by the date helper.
+        //  Day-period words come from the date bundle (date.yaml) -- all date/time.
         const words = temporal.getPeriodWords()
         const h24 = now.getHours()
         return this.#interpolate(tpl, null, {
@@ -521,16 +348,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         })
     }
 
-    /**
-     * Render the localized calendar-date fragment (e.g. "wtorek, 1 września 2026 roku")
-     * by interpolating the date bundle's `date_sentence` template with the resolved date
-     * parts. The fragment carries no leading "Jest"/"It is" and no trailing period -- it is
-     * fused into the opening time line via the `{% date %}` token so the date and the clock
-     * read as one grammatical sentence rather than two.
+    /** Render the localized calendar-date fragment (e.g. "wtorek, 1 września 2026 roku")
      * @private
      * @param {Date} now - Moment to render
-     * @returns {string} Interpolated date fragment, or '' when the bundle has no template
-     */
+     * @returns {string} Interpolated date fragment, or '' when the bundle has no template */
     #buildDateFragment(now) {
         const template = temporal.loadDateBundle()?.date_sentence
         if (!template || typeof template !== 'string') return ''
@@ -538,24 +359,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     }
 
 
-    // -- Private Helpers ----------------------------------------------------
+    //  -- Private Helpers ----------------------------------------------------
 
-    /**
-     * Build the closing proverb segment, or '' when it should not be spoken.
-     *
-     * Gated on `config.add_proverb: true` (strict boolean, like the greeter/gardener
-     * `use_ai` switch) and on `proverbKey`, which the caller supplies so each output
-     * path uses its own wording. A fresh proverb is drawn on every call -- there is no
-     * "last spoken" memory, so a small file will repeat; that is the file's business,
-     * not the automation's.
-     *
-     * Degrades silently to '' (segment simply dropped) when the flag is off, the bundle
-     * has no such key, or the proverb file is missing/empty -- a missing proverb must
-     * never cost the listener the whole weather report.
+    /** Build the closing proverb segment, or '' when it should not be spoken.
      * @private
      * @param {string} [proverbKey] - i18n key to resolve, e.g. 'weatherman.ai_proverb'
-     * @returns {string} Interpolated proverb line, or '' when unavailable
-     */
+     * @returns {string} Interpolated proverb line, or '' when unavailable */
     #buildProverbSegment(proverbKey) {
         if (!proverbKey || this.config?.add_proverb !== true) return ''
 
@@ -566,8 +375,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
 
         const filePath = path.join(I18N_ROOT, I18nLoader.getLocale(), PROVERBS_FILENAME)
-        // readRandomLine streams the file -- it is never loaded whole, so an oversized
-        // proverb list costs the same as a three-line one.
+        //  readRandomLine streams the file -- it is never loaded whole, so an oversized.
         const proverb = readRandomLine(filePath, { commentChar: PROVERBS_COMMENT_CHAR })
         if (!proverb) {
             this.log(`add_proverb is on but no proverb could be read from ${filePath}`, 'warn')
@@ -577,21 +385,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return this.#interpolate(template, null, { proverb })
     }
 
-    /**
-     * Pick the variant template for a moment within bundle.time_sentence. Exact clock
-     * fractions win when their locale-specific template exists (:00 -> exact_hour;
-     * :30/:15/:45 -> half_past/quarter_to/quarter_past -- reserved hooks for future i18n
-     * templates, none shipped yet); otherwise fall back to the generic default entry.
-     * Dated runs prefer their own dated_* variants (which fuse the {% date %} token) but
-     * fall back to the plain variants, then to the default, so a bundle that ships only
-     * the dated default still renders. Returns '' when nothing usable is present so
-     * callers can skip the opening line gracefully.
+    /** Pick the variant template for a moment within bundle.time_sentence.
      * @private
      * @param {Record<string, unknown>} variants - The bundle.time_sentence object
      * @param {Date} now - Moment to evaluate
      * @param {boolean} [dated=false] - Whether this is a dated run (first of day/session)
-     * @returns {string} Chosen raw (uninterpolated) template, or ''
-     */
+     * @returns {string} Chosen raw (uninterpolated) template, or '' */
     #pickTimeTemplate(variants, now, dated = false) {
         const m = now.getMinutes()
         let suffix = null
@@ -600,7 +399,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         else if (m === 15)    suffix = 'quarter_past'
         else if (m === 45)    suffix = 'quarter_to'
 
-        // Priority: dated-specific -> dated default -> plain specific -> plain default.
+        //  Priority: dated-specific -> dated default -> plain specific -> plain default.
         const candidates = []
         if (dated && suffix) candidates.push(`dated_${suffix}`)
         if (dated)            candidates.push('dated')
@@ -613,12 +412,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return ''
     }
 
-    /**
-     * Load the weatherman i18n bundle from etc/i18n/{locale}/weatherman.yaml.
-     * Falls back to pl_PL if not found.
+    /** Load the weatherman i18n bundle from etc/i18n/{locale}/weatherman.yaml.
      * @private
-     * @returns {Record<string, unknown>|null}
-     */
+     * @returns {Record<string, unknown>|null} */
     #loadWeathermanBundle() {
         const localeDir = I18nLoader.getLocale()
         const filePath = path.join(I18N_ROOT, localeDir, 'weatherman.yaml')
@@ -641,21 +437,17 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
     }
 
-    /**
-     * Resolve a dotted i18n key against the loaded weatherman bundle.
-     * Example: 'weatherman.warning_apocalypse' -> bundle['warning_apocalypse']
-     * The first segment ('weatherman') is stripped as the namespace prefix.
+    /** Resolve a dotted i18n key against the loaded weatherman bundle.
      * @private
      * @param {string} key - Dot-separated key (e.g., "weatherman.base")
      * @param {*} fallback - Default value if key not found
-     * @returns {*|null}
-     */
+     * @returns {*|null} */
     #resolveI18n(key, fallback) {
         if (!this.#bundle || !key) return fallback
-        // Strip the namespace prefix (first segment before dot)
+        //  Strip the namespace prefix (first segment before dot)
         const parts = key.split('.')
         if (parts.length < 2) return this.#bundle[key] ?? fallback
-        // Skip first part (namespace), resolve rest
+        //  Skip first part (namespace), resolve rest.
         let current = this.#bundle
         for (let i = 1; i < parts.length; i++) {
             if (current == null || typeof current !== 'object') return fallback
@@ -664,26 +456,17 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return current !== undefined ? current : fallback
     }
 
-    /**
-     * Replace {{ DeviceName.property }} placeholders with live sensor data,
-     * and {% keyword %} placeholders with locale-aware values (e.g., {% time %},
-     * or {% next_interval %} when a pre-resolved value is supplied via specialValues).
-     * If device or property not found, replaces with INTERPOLATION_MISSING.
+    /** Replace {{ DeviceName.property }} placeholders with live sensor data.
      * @private
      * @param {string} text - Template string with placeholders
      * @param {Object} [_context] - Unused context param (kept for signature compat)
      * @param {Record<string, string>} [specialValues] - Pre-resolved values for extra
-     *   {% keyword %} placeholders; keywords without an entry pass through unchanged
-     * @returns {string} Text with all placeholders resolved
-     */
+     * @returns {string} Text with all placeholders resolved */
     #interpolate(text, _context, specialValues = {}) {
-        // First resolve special-function placeholders like {% time %} through the shared
-        // token resolver (src/lib/string.js) -- the very same `{% keyword %}` syntax the
-        // AI system prompt uses for its {% name %} token. `time` is always supplied from
-        // the locale clock; keywords with no entry pass through unchanged.
+        //  First resolve special-function placeholders like {% time %} through the shared.
         let result = interpolateTokens(text, { ...specialValues, time: I18nLoader.formatTime() })
 
-        // Then resolve device-property placeholders
+        //  Then resolve device-property placeholders.
         return result.replace(INTERPOLATION_REGEX, (_match, deviceName, property) => {
             try {
                 const trimmedName = deviceName.trim()
@@ -698,7 +481,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
                     this.log(`Interpolation: property "${trimmedProp}" missing on "${trimmedName}"`, 'debug')
                     return INTERPOLATION_MISSING
                 }
-                // Format numbers using I18nLoader's locale-aware formatter with rounding
+                //  Format numbers using I18nLoader's locale-aware formatter with rounding.
                 if (typeof state[trimmedProp] === 'number') {
                     return I18nLoader.formatNumber(round(state[trimmedProp]))
                 }
@@ -710,14 +493,10 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         })
     }
 
-    /**
-     * Send the built message to TTS, optionally routing through AI first. Delegates the
-     * pipeline decision to {@link routeReport}; see it for the use_ai / availability rules.
+    /** Send the built message to TTS, optionally routing through AI first.
      * @private
      * @param {string} message - Final interpolated speech text
-     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position computed by {@link computeDayPosition}
-     */
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta] */
     async #speak(message, meta = {}) {
         const trimmedMessage = message.trim()
         if (!trimmedMessage) {
@@ -727,28 +506,15 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
         this.log(`Sending weather update (${trimmedMessage.length} chars)`, 'info')
 
-        // Optional per-utterance TTS server params from tts_options; {} keeps every
-        // emission byte-identical to the plain-text shape when nothing is configured.
+        //  Optional per-utterance TTS server params from tts_options.
         const ttsOptions = this.resolveTtsOptions()
         await this.routeReport(trimmedMessage, meta, ttsOptions)
     }
 
-    /**
-     * Pipeline decision for a fully-built report: rewrite via AI before TTS when `use_ai`
-     * allows AND the assistant is available, otherwise speak directly. The flag defaults
-     * ON -- an explicit `use_ai: false` in the config forces direct TTS even with a healthy
-     * AI engine (greeter keeps its own copy of the flag at false).
-     *
-     * When the AI handles it, day-position markers frame the core content via
-     * buildAiPrompt(); on the direct-TTS fallback they come from buildDirectTtsText() so
-     * listeners get the same framing either way. Configured tts_options extras travel along
-     * in every 'tts:speak' payload -- both paths. Exposed as a stable seam (like
-     * routeThroughAi) so tests can drive the degradation logic without MQTT/devices/LLM.
+    /** Pipeline decision for a fully-built report: rewrite via AI before TTS when `use_ai`
      * @param {string} trimmedMessage - Plain core speech text
      * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position computed by {@link computeDayPosition}
-     * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
-     */
+     * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options */
     async routeReport(trimmedMessage, meta = {}, ttsOptions = {}) {
         const aiEnabled = this.config?.use_ai !== false
         const useAi = aiEnabled && AiAssistant.isAvailable()
@@ -759,17 +525,12 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             this.log('AI assistant unavailable -- speaking directly', 'debug')
         }
 
-        // The text shown in Window 3 must match what is actually heard. On the AI leg that
-        // is the full prompt (creative prefix + day-position markers, which go into the
-        // model); on the direct-TTS fallback it is the spoken text (markers, but no
-        // creative prefix, which is an instruction to the model rather than something to
-        // read aloud).
+        //  The text shown in Window 3 must match what is actually heard. On the AI leg.
         const spokenText = useAi
             ? this.buildAiPrompt(trimmedMessage, meta)
             : this.buildDirectTtsText(trimmedMessage, meta)
 
-        // Emit system input to UI with the exact text that will be heard.
-        // Guard against --no-ui runs where no subscribers exist.
+        //  Emit system input to UI with the exact text that will be heard.
         if (EventBus.hasSubscribers('ai:systemMessage')) {
             EventBus.emit('ai:systemMessage', { text: spokenText })
         }
@@ -777,32 +538,17 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         if (useAi) {
             await this.routeThroughAi(spokenText, trimmedMessage, ttsOptions, meta)
         } else {
-            // Direct TTS when AI is off/unavailable: speak every day-position marker minus
-            // the creative ai_prefix, which is an instruction to the model rather than
-            // something to read aloud.
+            //  Direct TTS when AI is off/unavailable: speak every day-position marker minus.
             EventBus.emit('tts:speak', { text: spokenText, ...ttsOptions })
             this.log('Weather update sent via direct TTS', 'debug')
         }
     }
 
-    /**
-     * Send one built weather report through the AI -> TTS pipeline with graceful
-     * degradation. A non-empty model reply is surfaced in the chat window as a periodic
-     * response (the audio itself was already fired by AiAssistant for that reply). An
-     * empty reply or any provider failure falls back to speaking the message directly
-     * (with the same day-position markers the AI-unavailable path uses) and posts a
-     * visible <system> notice explaining why no rewritten report appears -- so a
-     * slow/dead LLM never leaves Window 3 looking dead while audio plays from nowhere.
-     *
-     * Exposed without the # prefix so unit tests can pin fallback behaviour against a
-     * stubbed AiAssistant without MQTT, devices, or a live LLM; #speak() is the sole
-     * production caller.
+    /** Send one built weather report through the AI -> TTS pipeline with graceful.
      * @param {string} aiPrompt - Full prompt sent to the model (prefix/markers included)
      * @param {string} trimmedMessage - Plain core text used for the direct-TTS fallback
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
-     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position, forwarded to the fallback so it speaks the same markers
-     */
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta] */
     async routeThroughAi(aiPrompt, trimmedMessage, ttsOptions, meta = {}) {
         let spoken = ''
         try {
@@ -817,56 +563,40 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         }
 
         if (!spoken) {
-            // Model answered with nothing usable -- nothing was spoken yet; degrade loudly.
+            //  Model answered with nothing usable -- nothing was spoken yet; degrade loudly.
             this.log('AI reply was empty -- falling back to direct TTS', 'warn')
             return this.#degradeToRawTts(trimmedMessage, ttsOptions, 'empty reply from model', meta)
         }
 
-        // Emit the AI's response back to UI for rendering with <AI> prefix.
-        // Guard against --no-ui runs where no subscribers exist.
+        //  Emit the AI's response back to UI for rendering with <AI> prefix.
         if (EventBus.hasSubscribers('ai:periodicResponse')) {
             EventBus.emit('ai:periodicResponse', { text: spoken })
         }
         this.log(`Weather update sent via AI -> TTS pipeline (${spoken.length} chars)`, 'debug')
     }
 
-    /**
-     * Fallback leg of routeThroughAi(): post a visible <system> notice explaining that the
-     * assistant did not deliver (localized via the weatherman bundle key
-     * `weatherman.ai_fallback_notice`), then speak the message directly (with the same
-     * day-position markers the AI-unavailable path uses) so the report is never lost.
-     * Jingle params still apply on the fallback path.
+    /** Fallback leg of routeThroughAi(): post a visible <system> notice explaining.
      * @private
      * @param {string} trimmedMessage - Plain core text to speak
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Jingle passthrough options
      * @param {string} reason - Failure description kept in the log trail
-     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta]
-     *   Day position, so the fallback speaks the same markers as the direct-TTS path
-     */
+     * @param {{isFirst?: boolean, isLast?: boolean, nextIntervalMs?: number|null}} [meta] */
     #degradeToRawTts(trimmedMessage, ttsOptions, reason, meta = {}) {
         const notice = this.#resolveI18n('weatherman.ai_fallback_notice', '') ||
             'The assistant did not answer in time -- reading the plain report instead.'
         if (EventBus.hasSubscribers('ai:systemMessage')) {
             EventBus.emit('ai:systemMessage', { text: notice })
         }
-        // Fallback to direct TTS on AI failure -- speak the same day-position markers the
-        // AI-unavailable path uses (minus the creative prefix), so a flaky AI never drops
-        // them. Jingle params still apply on the fallback path.
+        //  Fallback to direct TTS on AI failure -- speak the same day-position markers.
         EventBus.emit('tts:speak', { text: this.buildDirectTtsText(trimmedMessage, meta), ...ttsOptions })
         this.log(`Weather update fell back to direct TTS (${reason})`, 'debug')
     }
 
-    /**
-     * Epoch ms of the most recent past occurrence of the silence-window END boundary --
-     * i.e., the moment the current announcement session began ("wake-up"). For a normal
-     * window like "0230-1030" at 15:00 this is today's 10:30; at 01:45 it is yesterday's.
-     * Note: local-midnight arithmetic assumes a 24 h day (DST transitions shift results
-     * by an hour for runs near midnight on those days -- acceptable for speech markers).
+    /** Epoch ms of the most recent past occurrence of the silence-window END boundary --
      * @private
      * @param {{startMin: number, endMin: number}} win - Parsed silence window
      * @param {Date} now - Reference moment (assumed outside the silent window)
-     * @returns {number} Epoch milliseconds
-     */
+     * @returns {number} Epoch milliseconds */
     #sessionBeganAt(win, now) {
         const DAY_MS = 86_400_000
         let epoch = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + win.endMin * 60_000
@@ -874,16 +604,11 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         return epoch
     }
 
-    /**
-     * Epoch ms of the next upcoming occurrence of the silence-window START boundary --
-     * i.e., the moment the current announcement session will end ("sleep"). For a normal
-     * window like "0230-1030" this is tonight's/tomorrow's 02:30 depending on the clock.
-     * Same DST caveat as {@link #sessionBeganAt}.
+    /** Epoch ms of the next upcoming occurrence of the silence-window START boundary --
      * @private
      * @param {{startMin: number, endMin: number}} win - Parsed silence window
      * @param {Date} now - Reference moment (assumed outside the silent window)
-     * @returns {number} Epoch milliseconds
-     */
+     * @returns {number} Epoch milliseconds */
     #sessionEndsAt(win, now) {
         const DAY_MS = 86_400_000
         let epoch = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + win.startMin * 60_000

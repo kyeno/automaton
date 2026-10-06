@@ -1,16 +1,8 @@
 /**
  * UI Layout Manager.
- *
  * Partitions the terminal into three fixed slots:
- * 1. main - The primary content area (top).
- * 2. status - A 2-line status area (middle-bottom).
- * 3. input - A 1-line command input area (bottom).
- *
- * Dependencies: receives `term` via constructor.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -22,36 +14,26 @@ import { visibleLen } from '../../lib/terminal.js'
 /** Default minimum usable slot width below which rendering is suppressed. */
 const DEFAULT_MIN_SLOT_WIDTH = 50
 
-// ---------------------------------------------------------------------------
-// UiLayoutManager
-// ---------------------------------------------------------------------------
+//  UiLayoutManager.
 
-/**
- * Partitions the terminal into three fixed slots (main, status, input)
- * and provides methods to position the cursor, clear areas, and handle
- * resize events for IRC-style terminal UI rendering.
- */
+/** Partitions the terminal into three fixed slots (main, status, input) */
 class UiLayoutManager {
     #term
     #slots = {}
     #minSlotWidth = DEFAULT_MIN_SLOT_WIDTH
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Create a new layout manager and calculate initial slot dimensions.
-     * @param {*} term - The terminal-kit instance
-     */
+    /** Create a new layout manager and calculate initial slot dimensions.
+     * @param {*} term - The terminal-kit instance */
     constructor(term) {
         this.#term = term
         this.updateSlots()
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Recalculate slot dimensions based on current terminal size.
-     */
+    /** Recalculate slot dimensions based on current terminal size. */
     updateSlots() {
         const t = this.#term
         if (!t) return
@@ -59,10 +41,7 @@ class UiLayoutManager {
         const cols = t.width || 80
         const rows = t.height || 24
 
-        // IRC-style layout:
-        // Input = 1 line
-        // Status = 2 lines
-        // Main = everything else
+        //  IRC-style layout:
         this.#slots = {
             main: {
                 x: 0,
@@ -85,35 +64,29 @@ class UiLayoutManager {
         }
     }
 
-    /**
-     * Get the dimensions and position of a specific slot.
+    /** Get the dimensions and position of a specific slot.
      * @param {string} slotName - 'main' | 'status' | 'input'
-     * @returns {{x: number, y: number, width: number, height: number}|null}
-     */
+     * @returns {{x: number, y: number, width: number, height: number}|null} */
     getSlot(slotName) {
         return this.#slots[slotName] || null
     }
 
-    /**
-     * Move cursor to the top-left corner of a named slot.
-     * @param {string} slotName - 'main' | 'status' | 'input'
-     */
+    /** Move cursor to the top-left corner of a named slot.
+     * @param {string} slotName - 'main' | 'status' | 'input' */
     moveToSlot(slotName) {
         const slot = this.#slots[slotName]
         if (!slot || !this.#term) return
-        // terminal-kit uses 1-based coordinates
+        //  terminal-kit uses 1-based coordinates.
         this.#term.moveTo(slot.x + 1, slot.y + 1)
     }
 
-    /**
-     * Clear all content within a named slot.
-     * @param {string} slotName - 'main' | 'status' | 'input'
-     */
+    /** Clear all content within a named slot.
+     * @param {string} slotName - 'main' | 'status' | 'input' */
     clearSlot(slotName) {
         const slot = this.#slots[slotName]
         if (!slot || !this.#term) return
 
-        // terminal-kit uses 1-based coordinates
+        //  terminal-kit uses 1-based coordinates.
         this.#term.moveTo(slot.x + 1, slot.y + 1)
         for (let i = 0; i < slot.height; i++) {
             this.#term.eraseLine()
@@ -124,13 +97,8 @@ class UiLayoutManager {
         this.moveToSlot(slotName)
     }
 
-    /**
-     * Override the minimum terminal width at which the UI renders normally.
-     * Below this width the "terminal too narrow" warning replaces content,
-     * guarding against OOM from excessive text wrapping on resize.
-     * Invalid values are ignored (the default floor stays in effect).
-     * @param {number} value - Minimum usable slot/terminal width in columns (>0)
-     */
+    /** Override the minimum terminal width at which the UI renders normally.
+     * @param {number} value - Minimum usable slot/terminal width in columns (>0) */
     setMinWidth(value) {
         if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
             this.#minSlotWidth = Math.floor(value)
@@ -142,27 +110,19 @@ class UiLayoutManager {
         return this.#minSlotWidth
     }
 
-    /**
-     * Check if any slot is too narrow for safe rendering.
-     * Returns true when the main slot width is below the configured minimum
-     * width, indicating renderers should bail out and show a warning instead.
-     * @returns {boolean}
-     */
+    /** Check if any slot is too narrow for safe rendering.
+     * @returns {boolean} */
     isTooNarrow() {
         const slot = this.#slots['main']
         return !slot || slot.width < this.#minSlotWidth
     }
 
-    /**
-     * Render a "terminal too narrow" warning centered in the given slot.
-     * Clears the slot first, then displays a red warning message.
-     * @param {string} slotName - 'main' | 'status'
-     */
+    /** Render a "terminal too narrow" warning centered in the given slot.
+     * @param {string} slotName - 'main' | 'status' */
     renderTooNarrowWarning(slotName) {
         const slot = this.#slots[slotName]
         if (!slot || !this.#term) return
 
-        // Clear the slot
         this.clearSlot(slotName)
 
         const msg = `${AnsiColors.red}${AnsiColors.bold} [!] TERMINAL TOO NARROW -- PLEASE RESIZE ${AnsiColors.reset}`
@@ -177,14 +137,12 @@ class UiLayoutManager {
             this.#term(msg)
         }
 
-        // Move cursor back to start of slot
+        //  Move cursor back to start of slot.
         this.moveToSlot(slotName)
     }
 
-    /**
-     * Return the underlying terminal-kit instance.
-     * @returns {*} The terminal instance
-     */
+    /** Return the underlying terminal-kit instance.
+     * @returns {*} The terminal instance */
     getTerm() {
         return this.#term
     }

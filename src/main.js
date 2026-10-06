@@ -1,14 +1,9 @@
 #!/usr/bin/env node
-/**
- * AUTOMATON - Pure JavaScript Zigbee2MQTT home automation.
- * Entry point that initializes all core services and handles graceful shutdown.
- * 
+/** AUTOMATON - Pure JavaScript Zigbee2MQTT home automation.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
- * @license AGPL-3.0-only
- */
+ * @license AGPL-3.0-only */
 'use strict'
 
 import process from 'node:process'
@@ -38,12 +33,10 @@ import AiAssistant     from './ai/aiAssistant.js'
 import TtsService      from './service/ttsService.js'
 import Ui              from './ui/ui.js'
 
-// UI instance reference for cleanup
+//  UI instance reference for cleanup.
 let uiInstance = null
 
-// ---------------------------------------------------------------------------
-// CLI argument parsing -- --no-* flags disable optional services, --help shows usage
-// ---------------------------------------------------------------------------
+//  CLI argument parsing -- --no-* flags disable optional services, --help shows usage.
 
 const HELP_TEXT = `
 Usage: node src/main.js [options]
@@ -75,10 +68,8 @@ Behavior settings are in etc/automaton.yaml (locale.language, locale.time_format
 AI model settings are in etc/ai.yaml (model, max_tokens, temperature, etc.).
 `
 
-/**
- * Print CLI usage help text and exit.
- * @param {string} [msg] - Optional error message printed to stderr before help
- */
+/** Print CLI usage help text and exit.
+ * @param {string} [msg] - Optional error message printed to stderr before help */
 function printHelp(msg) {
     if (msg) process.stderr.write(`${msg}\n`)
     process.stdout.write(HELP_TEXT)
@@ -101,7 +92,7 @@ try {
         strict: true,
     })
 } catch (e) {
-    // parseArgs throws on unknown flags -- show a friendly hint + usage
+    //  parseArgs throws on unknown flags -- show a friendly hint + usage.
     printHelp(e.message)
 }
 
@@ -109,10 +100,7 @@ if (parsed.values.help) {
     printHelp(null)
 }
 
-// --no-ai / --no-tts make each feature behave exactly as if its .env vars were
-// never set. Strip them before any service initializes so every consumer that
-// reads the environment directly (AI provider, TTS service, UI windows) sees
-// an unconfigured state.
+//  --no-ai / --no-tts make each feature behave exactly as if its .env vars were.
 if (parsed.values['no-ai']) {
     delete process.env.AI_API_URL
     delete process.env.AI_API_KEY
@@ -123,16 +111,8 @@ if (parsed.values['no-tts']) {
     delete process.env.TTS_TCP_ENDPOINT
 }
 
-// ---------------------------------------------------------------------------
-// Bootstrap -- dependency-aware initialization order
-// ---------------------------------------------------------------------------
-// Order matters: ConfigService validates env vars and YAML schema first.
-// LoggerService sets up transports next so all subsequent startup logs
-// appear correctly. Only after these two succeed do we initialize the UI
-// (which captures the tty), followed by the remaining services.
-// ---------------------------------------------------------------------------
+//  Bootstrap -- dependency-aware initialization order.
 
-// Initialize lifecycle state in StateService
 StateService.set('lifecycle.initializedServices', new Set())
 StateService.set('lifecycle.shuttingDown', false)
 StateService.set('lifecycle.lastError', null)
@@ -143,10 +123,7 @@ StateService.set('cli.noAi', parsed.values['no-ai'])
 StateService.set('cli.noTts', parsed.values['no-tts'])
 StateService.set('cli.configOverrides', parsed.values['config-override'] ?? [])
 
-// Phase 1 -- Configuration & Logging (must succeed before anything else).
-// Guarded explicitly: no service is up yet at this point, so a failure prints a
-// CRITICAL ERROR block straight to stderr and exits(1) instead of surfacing as an
-// unhandled rejection (code review item D9).
+//  Phase 1 -- Configuration & Logging (must succeed before anything else).
 try {
     await ConfigService.init(parsed.values['config-override'] ?? [])
     LoggerService.init()
@@ -182,32 +159,18 @@ if ((parsed.values['config-override'] ?? []).length > 0) {
 }
 
 
-// ---------------------------------------------------------------------------
-// Graceful shutdown -- checks each service before cleanup
-// ---------------------------------------------------------------------------
+//  Graceful shutdown -- checks each service before cleanup.
 
-/**
- * Perform a sequential, dependency-aware graceful shutdown.
- *
- * Order matters: high-level consumers are torn down first so they stop
- * triggering work, then their dependencies (devices unsubscribe from MQTT
- * while the broker is still reachable), and finally the infrastructure
- * services (Redis, MQTT) are disconnected.
- *
+/** Perform a sequential, dependency-aware graceful shutdown.
  * @param {string} reason - Human-readable reason for shutdown
- * @param {number} errorLevel - Exit code passed to process.exit()
- */
+ * @param {number} errorLevel - Exit code passed to process.exit() */
 async function gracefulDeath(reason, errorLevel = 0) {
     if (StateService.get('lifecycle.shuttingDown')) return
     StateService.set('lifecycle.shuttingDown', true)
     LoggerService.info(`Process terminated (${reason})`, 'Main')
 
     try {
-        // ---------------------------------------------------------------
-        // Phase 1 -- Stop high-level logic (interactions -> automations)
-        // These may reference devices and each-other; halt them first so
-        // no new device commands or automation rules fire during teardown.
-        // ---------------------------------------------------------------
+        //  Phase 1 -- Stop high-level logic (interactions -> automations)
         const initialized = StateService.get('lifecycle.initializedServices')
 
         if (initialized.has('InteractionContainer')) {
@@ -220,10 +183,7 @@ async function gracefulDeath(reason, errorLevel = 0) {
             await Promise.resolve(AutomationContainer.cleanupAutomations())
         }
 
-        // ---------------------------------------------------------------
-        // Phase 1b -- Stop network monitors (presence + video players) so
-        // no further EventBus events fire during teardown.
-        // ---------------------------------------------------------------
+        //  Phase 1b -- Stop network monitors (presence + video players)
         if (initialized.has('NetworkPresence')) {
             LoggerService.debug('Stopping NetworkPresence...', 'Main')
             NetworkPresence.stop()
@@ -249,36 +209,25 @@ async function gracefulDeath(reason, errorLevel = 0) {
             AiBridgeMonitor.stop()
         }
 
-        // ---------------------------------------------------------------
-        // Phase 2 -- Unsubscribe devices from MQTT topics.
-        // MUST happen while MqttService is still connected so the broker
-        // receives proper UNSUBSCRIBE packets before we disconnect.
-        // ---------------------------------------------------------------
+        //  Phase 2 -- Unsubscribe devices from MQTT topics.
         if (initialized.has('DeviceContainer')) {
             LoggerService.debug('Cleaning up devices...', 'Main')
             await DeviceContainer.cleanupDevices()
         }
 
-        // ---------------------------------------------------------------
-        // Phase 3 -- Stop optional services (TTS unsubscribes from EventBus).
-        // ---------------------------------------------------------------
+        //  Phase 3 -- Stop optional services (TTS unsubscribes from EventBus).
         if (initialized.has('TtsService')) {
             LoggerService.debug('Cleaning up TtsService...', 'Main')
             TtsService.cleanup()
         }
 
-        // ---------------------------------------------------------------
-        // Phase 4 -- Tear down the UI so terminal-kit releases the tty.
-        // ---------------------------------------------------------------
+        //  Phase 4 -- Tear down the UI so terminal-kit releases the tty.
         if (initialized.has('Ui') && uiInstance) {
             LoggerService.debug('Destroying UI...', 'Main')
             await Promise.resolve(uiInstance.destroy?.())
         }
 
-        // ---------------------------------------------------------------
-        // Phase 5 -- Disconnect infrastructure services.
-        // Redis first, then MQTT last (devices already unsubscribed).
-        // ---------------------------------------------------------------
+        //  Phase 5 -- Disconnect infrastructure services.
         if (initialized.has('CacheService')) {
             LoggerService.debug('Disconnecting CacheService...', 'Main')
             await CacheService.disconnect()
@@ -305,13 +254,11 @@ process.on('SIGINT', () => { gracefulDeath('CTRL+C') })
 process.on('SIGQUIT', () => { gracefulDeath('keyboard quit') })
 process.on('SIGTERM', () => { gracefulDeath('killed') })
 
-// ---------------------------------------------------------------------------
-// Crash recovery -- print last error to stderr even if UI cleared the screen
-// ---------------------------------------------------------------------------
+//  Crash recovery -- print last error to stderr even if UI cleared the screen.
 
 process.on('uncaughtException', (err) => {
     StateService.set('lifecycle.lastError', err)
-    // Write directly to stderr (fd 2) -- bypasses any terminal clearing
+    //  Write directly to stderr (fd 2) -- bypasses any terminal clearing.
     process.stderr.write(
         `
 ${AnsiColors.bold}${AnsiColors.red}=== AUTOMATON CRASHED ===${AnsiColors.reset}
@@ -335,18 +282,12 @@ process.on('unhandledRejection', (reason, promise) => {
     LoggerService.error(`Unhandled rejection at ${promise}: ${msg}`, 'Main')
 })
 
-// ---------------------------------------------------------------------------
-// Service initialization -- all failures route through gracefulDeath
-// ---------------------------------------------------------------------------
+//  Service initialization -- all failures route through gracefulDeath.
 
-/**
- * Initialize a single service, track its success/failure.
- * On failure, trigger gracefulDeath immediately with the failing service name.
- *
+/** Initialize a single service, track its success/failure.
  * @param {string} name - Human-readable service name
  * @param {Function} initFn - Async function to call for initialization
- * @param {boolean} optional - If true, log warning instead of crashing on failure
- */
+ * @param {boolean} optional - If true, log warning instead of crashing on failure */
 async function initService(name, initFn, optional = false) {
     try {
         await initFn()
@@ -358,7 +299,7 @@ async function initService(name, initFn, optional = false) {
         } else {
             const errMsg = `Failed to initialize ${name}: ${e.message}`
             LoggerService.error(errMsg, 'Main')
-            // Ensure critical init failures are printed to stderr regardless of UI state
+            //  Ensure critical init failures are printed to stderr regardless of UI state.
             process.stderr.write(`
 ${AnsiColors.bold}${AnsiColors.red}CRITICAL ERROR${AnsiColors.reset}: ${errMsg}
 ${e.stack || ''}
@@ -369,17 +310,11 @@ ${e.stack || ''}
     }
 }
 
-/**
- * Bootstrap all application services in dependency-aware order.
- * Initializes UI (optional), core infrastructure (Cache, MQTT), device container,
- * automation container, interaction container, network presence, i18n, AI and TTS.
- */
+/** Bootstrap all application services in dependency-aware order. */
 async function bootstrap() {
-    // Initialize UI early so all subsequent startup logs appear in the log window
+    //  Initialize UI early so all subsequent startup logs appear in the log window.
     if (!parsed.values['no-ui']) {
-        // Import terminal-kit and create a Terminal instance
-        // terminal-kit exports: default.terminal (ESM wrapper) or terminal (CJS)
-        // It's a FACTORY function that must be called to produce a Terminal instance.
+        //  Import terminal-kit and create a Terminal instance.
         const terminalKit = await import('terminal-kit');
         const factory = terminalKit.default?.terminal || terminalKit.terminal || terminalKit.default
         const term = typeof factory === 'function' ? factory() : factory
@@ -387,22 +322,17 @@ async function bootstrap() {
         uiInstance = new Ui()
         await initService('Ui', () => uiInstance.init(term))
 
-        // UI captured the tty -- remove console transport so logs go to UI only
+        //  UI captured the tty -- remove console transport so logs go to UI only.
         LoggerService.switchToUiMode()
     }
 
-    // Core services (required -- any failure crashes)
+    //  Core services (required -- any failure crashes)
     await initService('CacheService', () => CacheService.init())
-    // Durable state-transition history (local SQLite via node:sqlite). Marked optional so a
-    // storage hiccup never blocks startup; monitors fail open to in-memory behaviour when the
-    // store cannot be opened. init() resolves without throwing even on failure.
+    // Durable state-transition history (local SQLite via node:sqlite)
     await initService('DatabaseService', () => DatabaseService.init(), true)
     await initService('MqttService', () => MqttService.init())
 
-    // I18n Loader must initialize BEFORE the automation/interaction containers so that
-    // locale-dependent automations (e.g., TTS weatherman) resolve their bundles against
-    // the configured locale rather than the built-in default. Reads etc/automaton.yaml
-    // (locale.language + locale.time_format) and loads the active AI language bundle.
+    //  I18n Loader must initialize BEFORE the automation/interaction containers.
     await initService('I18nLoader', () => I18nLoader.init(), true)
 
     await initService('DeviceContainer', () => DeviceContainer.init())
@@ -410,30 +340,25 @@ async function bootstrap() {
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('NetworkPresence', () => NetworkPresence.init())
     await initService('VideoPlayerMonitor', () => VideoPlayerMonitor.init())
-    // Spoken warnings for devices leaving the Zigbee mesh and for mission-critical
-    // network hosts going offline (both config-gated per event). Initialized after
-    // NetworkPresence so their startup sweep sees a running presence monitor.
+    //  Spoken warnings for devices leaving the Zigbee mesh and for mission-critical.
     await initService('NetworkDeviceOfflineMonitor', () => NetworkDeviceOfflineMonitor.init(), true)
     await initService('ZigbeeDeviceOfflineMonitor', () => ZigbeeDeviceOfflineMonitor.init(), true)
 
-    // AI Assistant -- optional; skipped entirely when unconfigured so startup logs
-    // reflect reality instead of claiming a disabled service initialized.
+    //  AI Assistant -- optional; skipped entirely when unconfigured so startup logs.
     if (AiAssistant.isConfigured()) {
         await initService('AiAssistant', () => AiAssistant.init(), true)
     } else {
         LoggerService.info('AI assistant disabled at startup -- provider not configured', 'Main')
     }
 
-    // TTS Service -- same treatment as the AI assistant above
+    //  TTS Service -- same treatment as the AI assistant above.
     if (TtsService.isConfigured()) {
         await initService('TtsService', () => TtsService.init(), true)
     } else {
         LoggerService.info('TTS service disabled at startup -- not configured', 'Main')
     }
 
-    // AI Bridge -- optional MQTT channel feeding external prompts (web UI / STT backends)
-    // into the shared AI conversation. Config-gated (ai_bridge.*); prompts arriving while
-    // the AI is unavailable are dropped per-request, so no restart is needed later.
+    //  AI Bridge -- optional MQTT channel feeding external prompts (web UI / STT backends)
     await initService('AiBridgeMonitor', () => AiBridgeMonitor.init(), true)
 
     const services = []

@@ -1,21 +1,8 @@
 /**
  * AI Tool Builder & Executor.
- *
- * Provides a minimal, static set of generic tools to ensure 100% Prompt Cache
- * matching across LLM requests. Exposes three function schemas
- * (`set_device_state`, `get_device_state`, `get_time`) and resolves device names back to
- * live DeviceContainer instances at call time.
- *
- * Also handles all tool execution logic: resolving devices, dispatching
- * commands, reading state, and parsing JSON-based synthetic tool calls
- * from models that don't support native function calling.
- *
- * Tool descriptions are loaded from the active i18n bundle so they match
- * the language configured for AI communication.
- *
+ * Provides a minimal, static set of generic tools to ensure 100% Prompt Cache.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -30,76 +17,49 @@ import temporal from '../lib/date.js'
 import { normalizeChannelRef, positionalNameFor, resolveChannelAlias, POSITIONAL_NAMES } from '../lib/channelAliases.js'
 import DeviceCommandSource from '../enum/deviceCommandSource.js'
 
-// ---------------------------------------------------------------------------
-// Type Definitions
-// ---------------------------------------------------------------------------
+//  Type Definitions.
 
-/**
- * A tool call object returned by the LLM assistant message.
- * Contains the function name and JSON-encoded arguments string.
- *
+/** A tool call object returned by the LLM assistant message.
  * @typedef {Object} ToolCall
  * @property {string} id - Unique identifier for this tool call
  * @property {string} type - Always "function"
  * @property {Object} function - Function call details
  * @property {string} function.name - Name of the function to call
- * @property {string} function.arguments - JSON-encoded argument string
- */
+ * @property {string} function.arguments - JSON-encoded argument string */
 
-/**
- * Parsed intent extracted from a model's text-based JSON response.
- * Used when the model doesn't support native function calling but outputs
- * structured JSON in its text content instead.
- *
+/** Parsed intent extracted from a model's text-based JSON response.
  * @typedef {Object} Intent
  * @property {string} device - Device name to operate on
  * @property {'ON'|'OFF'|'OPEN'|'CLOSE'|'STOP'} [action] - Optional action
- * @property {number} [position] - Optional position (0-100) for shutters
- */
+ * @property {number} [position] - Optional position (0-100) for shutters */
 
-// ---------------------------------------------------------------------------
-// SToolBuilder (singleton)
-// ---------------------------------------------------------------------------
+//  SToolBuilder (singleton)
 
-/**
- * Builds and caches the static AI function-schema tool definitions,
- * and executes tool calls returned by the LLM.
- */
+/** Builds and caches the static AI function-schema tool definitions. */
 class SToolBuilder {
 
     instance
     /** @type {Array<Object>|null} */ #tools = null
 
-    // -- Singleton --------------------------------------------------------
 
-    /**
-     * Synchronous singleton constructor.
-     * @returns {this}
-     */
+    /** Synchronous singleton constructor.
+     * @returns {this} */
     constructor() {
         if (!SToolBuilder.instance) SToolBuilder.instance = this
         return SToolBuilder.instance
     }
 
-    // -- Public API: Schema Building --------------------------------------
+    //  -- Public API: Schema Building --------------------------------------
 
-    /**
-     * Build (and cache) the generic tool definitions.
-     *
-     * Subsequent calls without `force=true` return the cached array,
-     * guaranteeing byte-identical payloads for prompt-cache efficiency.
-     * Tool descriptions are loaded from the active i18n bundle.
-     *
+    /** Build (and cache) the generic tool definitions.
      * @param {boolean} [force=false] - If true, rebuild tools from scratch.
-     *   Currently ignored since schemas are fully static.
-     * @returns {Array<Object>} Array of OpenAI function-schema tool objects.
-     */
+     * @returns {Array<Object>} Array of OpenAI function-schema tool objects. */
     build(force = false) {
         if (!force && this.#tools !== null) {
             return this.#tools
         }
 
-        // Load translations from i18n bundle with English fallbacks
+        //  Load translations from i18n bundle with English fallbacks.
         const setDesc = I18nLoader.t('tools.set_device_state.description',
             'Change the state or position of an executive device (light, socket, switch, roller shutter).')
         const setDeviceNameDesc = I18nLoader.t('tools.set_device_state.parameters.device_name',
@@ -193,28 +153,17 @@ class SToolBuilder {
         return this.#tools
     }
 
-    /**
-     * Return the number of cached tool definitions.
-     * Always 3 in the generic version (`set_device_state`, `get_device_state`, `get_time`).
-     * @returns {number}
-     */
+    /** Return the number of cached tool definitions.
+     * @returns {number} */
     getToolCount() {
         return this.#tools?.length ?? 0
     }
 
-    // -- Public API: Tool Execution ---------------------------------------
+    //  -- Public API: Tool Execution ---------------------------------------
 
-    /**
-     * Resolve a tool call back to its live device instance.
-     *
-     * Matches `args.device_name` against registered devices using
-     * normalized (diacritic-stripped, underscore-joined) names so that
-     * LLM-supplied identifiers like `"kitchen_lamp"` match friendly names
-     * such as `"Kitchen Lamp"`. Both sides are sanitized identically.
-     *
+    /** Resolve a tool call back to its live device instance.
      * @param {Object} args - Parsed arguments from the LLM tool call.
-     * @returns {DeviceBase|null} The resolved device, or null.
-     */
+     * @returns {DeviceBase|null} The resolved device, or null. */
     resolveDevice(args = {}) {
         const targetName = args.device_name
         if (!targetName) return null
@@ -229,16 +178,9 @@ class SToolBuilder {
         return null
     }
 
-    /**
-     * Execute a single tool call requested by the LLM.
-     *
-     * Resolves the target device, logs the interaction, emits an event
-     * via EventBus for UI consumption, then dispatches to the appropriate
-     * handler (state read, position set, or standard command).
-     *
+    /** Execute a single tool call requested by the LLM.
      * @param {ToolCall} toolCall - The tool call object from the assistant message.
-     * @returns {Promise<string>} JSON-stringified result for the model.
-     */
+     * @returns {Promise<string>} JSON-stringified result for the model. */
     async execute(toolCall) {
         const funcName = toolCall.function?.name
 
@@ -251,23 +193,20 @@ class SToolBuilder {
             })
         }
 
-        // Time queries need no device -- answer directly from lib/date before any lookup.
+        //  Time queries need no device -- answer directly from lib/date before any lookup.
         if (funcName === 'get_time') {
             return this.#executeGetTime()
         }
 
         const action = args.action != null ? String(args.action).toUpperCase() : null
 
-        // Resolve device via args.device_name
+        //  Resolve device via args.device_name.
         const device = this.resolveDevice(args)
 
         if (!device) {
-            // Distinguish a configured device that has dropped off the Zigbee network
-            // ("offline") from a name we have never seen ("unknown") so the model can tell
-            // the user "that light is offline" rather than guessing at a similar-sounding one.
+            //  Distinguish a configured device that has dropped off the Zigbee network.
             const status = this.#classifyMissingDevice(args.device_name)
-            // Surface the failed attempt in chat as well -- otherwise a small model's slightly-off
-            // name vanishes from the UI and only shows up in logs.
+            //  Surface the failed attempt in chat as well -- otherwise a small model's slightly-off.
             EventBus.emit('ai:deviceInteraction', {
                 device: args.device_name || 'unknown',
                 action,
@@ -291,9 +230,7 @@ class SToolBuilder {
             'AiAssistant'
         )
 
-        // Delegate to the shared dispatcher. readState mirrors the original
-        // condition so get_device_state always returns state even with an action.
-        // Note: inside #dispatchToDevice an explicit position still wins over readState.
+        //  Delegate to the shared dispatcher. readState mirrors the original.
         const readState = funcName === 'get_device_state' || action === 'STATE'
         return this.#dispatchToDevice(device, deviceName, {
             action,
@@ -306,14 +243,9 @@ class SToolBuilder {
         })
     }
 
-    /**
-     * Execute the get_time tool: returns the current time of day from lib/date
-     * (morning/noon/afternoon/evening/night) plus the localized weekday string,
-     * the locale-formatted clock time, and the raw hour/minutes so small models can
-     * answer "what time is it" without doing any date math themselves.
+    /** Execute the get_time tool: returns the current time of day from lib/date.
      * @returns {string} JSON-stringified result for the model.
-     * @private
-     */
+     * @private */
     #executeGetTime() {
         const now = new Date()
         LoggerService.info(`AI tool call: get_time({}) -> ${now.toISOString()}`, 'AiAssistant')
@@ -326,23 +258,13 @@ class SToolBuilder {
         })
     }
 
-    /**
-     * Attempt to extract JSON tool-call intents from an assistant's text response.
-     * Small models often don't support native function calling but output structured
-     * JSON in their text instead. This method detects and parses those patterns.
-     *
-     * Handles multiple formats:
-     * - Single JSON object with top-level keys: {"device": "...", "action": "..."}
-     * - Nested parameters format: {"name": "set_device_state", "parameters": {"device_name": "..."}}
-     * - Multiple space-separated JSON objects (multi-device responses)
-     * - Markdown code fences around any of the above
+    /** Attempt to extract JSON tool-call intents from an assistant's text response.
      * @param {string|null} [content] - Assistant message content
-     * @returns {Array<Intent>|null} Array of parsed intents, or null if no valid intents found
-     */
+     * @returns {Array<Intent>|null} Array of parsed intents, or null if no valid intents found */
     parseJsonIntent(content) {
         if (!content || typeof content !== 'string') return null
 
-        // Strip optional markdown code fence: ```json ... ```
+        //  Strip optional markdown code fence: ```json ... ```
         let stripped = content.trim()
         const fencedMatch = stripped.match(/^\s*\`\`\`(?:json)?\s*\n([\s\S]*?)\n\s*\`\`\`\s*$/)
         if (fencedMatch) {

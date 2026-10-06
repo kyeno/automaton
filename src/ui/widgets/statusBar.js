@@ -1,15 +1,8 @@
 /**
  * Status Bar Widget.
- *
  * Renders a configurable multi-line status bar within its own grid region.
- * Supports left-aligned widgets and right-aligned bracket groups per line.
- * Updates only the status bar rows -- never touches content or input areas.
- *
- * Dependencies: receives `term` and `layout` via constructor.
- * 
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -27,9 +20,6 @@ import renderTemp, { subscribe as subscribeTemp, unsubscribe as unsubscribeTemp 
 import renderTime from './slotWidgets/timeWidget.js'
 import renderTimeOfDay from './slotWidgets/timeOfDayWidget.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 const RENDERERS = {
     separator: renderSeparator,
@@ -39,15 +29,8 @@ const RENDERERS = {
     time_of_day: renderTimeOfDay,
 }
 
-// ---------------------------------------------------------------------------
-// StatusBar
-// ---------------------------------------------------------------------------
 
-/**
- * Renders a two-line status bar at the bottom of the terminal above the input slot.
- * Displays dynamic widgets (time, date, network status, activity indicators)
- * and handles backscroll and narrow-terminal warnings.
- */
+/** Renders a two-line status bar at the bottom of the terminal above the input slot. */
 class StatusBar {
 
     #term
@@ -67,18 +50,16 @@ class StatusBar {
     /** Cached parsed status-bar line structure -- config is static after startup. */
     #cachedLines = null
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Create a new StatusBar instance.
+    /** Create a new StatusBar instance.
      * @param {*} term - The terminal-kit instance
-     * @param {*} layout - UiLayoutManager instance
-     */
+     * @param {*} layout - UiLayoutManager instance */
     constructor(term, layout) {
         this.#term = term
         this.#layout = layout
 
-        // Subscribe to window activity events - immediately refresh so indicator appears
+        //  Subscribe to window activity events - immediately refresh so indicator appears.
         this.#unsubscribeActivity = EventBus.subscribe('window:activity', (windowId) => {
             if (windowId !== this.#activeWindowId) {
                 this.#pendingActivity.add(windowId)
@@ -87,15 +68,11 @@ class StatusBar {
         })
     }
 
-    /**
-     * Initialize the status bar -- wire up event-driven subscriptions.
-     * No fixed interval; each widget type subscribes to its own data sources
-     * and triggers refresh reactively.
-     */
+    /** Initialize the status bar -- wire up event-driven subscriptions. */
     init() {
         const { lines } = this.#loadConfig()
 
-        // Collect all widgets across every line (left + right sections)
+        //  Collect all widgets across every line (left + right sections)
         const tempWidgets = []
         const stateWidgets = []
 
@@ -108,38 +85,31 @@ class StatusBar {
             }
         }
 
-        // Wire per-widget subscriptions that trigger statusBar.refresh()
+        //  Wire per-widget subscriptions that trigger statusBar.refresh()
         const self = this
         subscribeTemp(tempWidgets, () => self.refresh())
         subscribeState(stateWidgets, () => self.refresh())
 
-        // Initial render
+        //  Initial render.
         this.refresh()
     }
 
-    /**
-     * Notify the status bar which window is currently focused so that
-     * activity for that window is no longer considered "pending".
-     * Called by Ui.switchWindow().
-     * @param {number} windowId - The numeric window ID (1, 2, 3)
-     */
+    /** Notify the status bar which window is currently focused so that
+     * @param {number} windowId - The numeric window ID (1, 2, 3) */
     notifyActiveWindow(windowId) {
         this.#activeWindowId = windowId
         this.#pendingActivity.delete(windowId)
-        // Look up the channel name for this window id
+        //  Look up the channel name for this window id.
         const ch = channels.getByShortcut(windowId)
         this.#activeChannelName = ch ? ch.channel : ''
-        // Reset backscroll state on window switch
+        //  Reset backscroll state on window switch.
         this.#backscrolled = false
-        // Refresh immediately so indicator appears
+        //  Refresh immediately so indicator appears.
         this.refresh()
     }
 
-    /**
-     * Update the backscroll state of the active window.
-     * When true, shows "-- more --" in the status bar between channel and [Act:].
-     * @param {boolean} scrolled - Whether the active window is backscrolled
-     */
+    /** Update the backscroll state of the active window.
+     * @param {boolean} scrolled - Whether the active window is backscrolled */
     notifyBackscrolled(scrolled) {
         if (this.#backscrolled !== !!scrolled) {
             this.#backscrolled = !!scrolled
@@ -147,14 +117,9 @@ class StatusBar {
         }
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Refresh all status bar lines using BitchX-style Dark Blue Theme rendering.
-     * Coalesces rapid successive calls into a single deferred repaint so bursts
-     * of window:activity events (e.g., one per log line while another window is
-     * focused) do not redraw both rows once per event within the same tick.
-     */
+    /** Refresh all status bar lines using BitchX-style Dark Blue Theme rendering. */
     refresh() {
         if (!this.#term || this.#paintPending) return
         this.#paintPending = true
@@ -165,19 +130,15 @@ class StatusBar {
         }, 0)
     }
 
-    /**
-     * Paint both status bar rows immediately. The row drawing runs inside a
-     * try/finally so styles and the saved cursor are always restored even when
-     * a widget renderer throws mid-paint.
-     * @private
-     */
+    /** Paint both status bar rows immediately. The row drawing runs inside a
+     * @private */
     #paint() {
         if (!this.#term) return
 
         const r = this.#layout.getSlot('status')
         if (!r) return
 
-        // Use centralized narrow check -- skip rendering widget details when terminal is too small
+        //  Use centralized narrow check -- skip rendering widget details when terminal is too small.
         if (this.#layout.isTooNarrow()) {
             if (!this.#wasNarrow) {
                 this.#wasNarrow = true
@@ -188,30 +149,26 @@ class StatusBar {
             return
         }
 
-        // Auto-recover: was narrow but now wide enough again
+        //  Auto-recover: was narrow but now wide enough again.
         if (this.#wasNarrow) {
             this.#wasNarrow = false
         }
 
-        // Save cursor position to prevent it from jumping during input typing
+        //  Save cursor position to prevent it from jumping during input typing.
         this.#term.saveCursor()
 
         try {
             this.#paintLines(r)
         } finally {
-            // Always reset styles and restore the saved cursor back to the input
-            // prompt, even when a renderer threw partway through the paint.
+            //  Always reset styles and restore the saved cursor back to the input.
             this.#term.styleReset()
             this.#term.restoreCursor()
         }
     }
 
-    /**
-     * Draw every configured status line row-by-row within the given slot.
-     * Split out of #paint so its whole body can run inside a try/finally.
+    /** Draw every configured status line row-by-row within the given slot.
      * @param {{x: number, y: number, width: number, height: number}} r - Status layout slot
-     * @private
-     */
+     * @private */
     #paintLines(r) {
         const { lines } = this.#loadConfig()
         const terminalWidth = r.width
@@ -223,21 +180,18 @@ class StatusBar {
 
             const currentRow = r.y + i + 1 // 1-based row number
 
-            // --- Paint full blue background for this line --------------------
-            // Fill the entire terminalWidth with spaces over a blue background so
-            // there are no gaps between left and right sections, and stale content
-            // from longer previous frames is overwritten.
+            //  --- Paint full blue background for this line --------------------
             this.#term.moveTo(1, currentRow)
             this.#term.bgBlue()
             this.#term(' '.repeat(terminalWidth))
 
-            // --- Render left section on top of blue background ---------------
+            //  --- Render left section on top of blue background ---------------
             this.#term.moveTo(1, currentRow)
 
-            // Classic BitchX-style status line opening bracket
+            //  Classic BitchX-style status line opening bracket.
             this.#term.bold.cyan('[')
 
-            // Stream left widgets with intelligent color styling
+            //  Stream left widgets with intelligent color styling.
             leftWidgets.forEach((widget) => {
                 const renderer = RENDERERS[widget.type]
                 if (!renderer) return
@@ -245,25 +199,25 @@ class StatusBar {
                 const rawText = renderer(widget)
 
                 if (widget.type === 'separator') {
-                    // Delimiters (e.g., | or :): bold cyan
+                    //  Delimiters (e.g., | or :): bold cyan.
                     this.#term.bold.cyan(rawText)
                 }
                 else if (widget.type === 'time') {
-                    // Clock: bright yellow or white
+                    //  Clock: bright yellow or white.
                     this.#term.bold.yellow(rawText)
                 }
                 else if (widget.type === 'time_of_day') {
-                    // Time-of-day period: same bright yellow as clock
+                    //  Time-of-day period: same bright yellow as clock.
                     this.#term.bold.yellow(rawText)
                 }
                 else if (widget.type === 'temp') {
-                    // Temperature -- label in plain white, value in bold white
+                    //  Temperature -- label in plain white, value in bold white.
                     const tempData = typeof rawText === 'object' ? rawText : { label: '', value: String(rawText) }
                     this.#term.white(tempData.label)
                     this.#term.bold.white(tempData.value)
                 }
                 else if (widget.type === 'state') {
-                    // Service state -- color only the icon, label is always white
+                    //  Service state -- color only the icon, label is always white.
                     const { icon, label } = rawText
                     const svcConnected = StateService.get(widget.key)
 
@@ -286,8 +240,7 @@ class StatusBar {
 
             this.#term.bold.cyan(']')
 
-            // Channel name bracket (BitchX-style): separate brackets, line 0 only
-            // e.g.: [time|tod] [#automaton] -- more -- [Act: 2]
+            //  Channel name bracket (BitchX-style): separate brackets, line 0 only.
             if (i === 0 && this.#activeChannelName) {
                 this.#term.bgBlue()
                 this.#term(' ')
@@ -296,7 +249,7 @@ class StatusBar {
                 this.#term.bold.cyan(']')
             }
 
-            // Backscroll indicator: "-- more --" in cyan between channel and [Act:]
+            //  Backscroll indicator: "-- more --" in cyan between channel and [Act:]
             if (i === 0 && this.#backscrolled) {
                 this.#term.bgBlue()
                 this.#term(' ')
@@ -305,12 +258,12 @@ class StatusBar {
                 this.#term(' ')
             }
 
-            // Append activity bracket group on line 0 when there is pending activity
+            //  Append activity bracket group on line 0 when there is pending activity.
             if (i === 0 && this.#pendingActivity.size > 0) {
                 const activeIds = [...this.#pendingActivity].sort((a, b) => a - b)
                 const idsStr = activeIds.join(',')
 
-                // Space before activity bracket for separation
+                //  Space before activity bracket for separation.
                 this.#term.bgBlue()
                 this.#term(' ')
                 this.#term.bold.cyan('[')
@@ -318,14 +271,12 @@ class StatusBar {
                 this.#term.bold.white(idsStr)
                 this.#term.bold.cyan(']')
             }
-            // --- Render right-aligned section as single bracket group --------
-            // Merges all right groups into one [item | item | item] bracket,
-            // e.g.: [[o]MQTT | [o]Redis]
+            //  --- Render right-aligned section as single bracket group --------
             if (rightGroups.length > 0) {
                 const mergedWidgets = rightGroups.flat()
                 const rightLineLen = this.#measureRightLineWidth(mergedWidgets)
 
-                // Position so the closing ] lands exactly at column terminalWidth
+                //  Position so the closing ] lands exactly at column terminalWidth.
                 const startCol = terminalWidth - rightLineLen + 1
 
                 this.#term.moveTo(startCol, currentRow)
@@ -333,20 +284,15 @@ class StatusBar {
                 this.#renderMergedRightBrackets(mergedWidgets)
             }
 
-            // Clean up any trailing stale content after whatever we just rendered.
-            // Cursor is positioned at the end of our content, so eraseLineAfter
-            // only clears the tail -- not our widgets.
+            //  Clean up any trailing stale content after whatever we just rendered.
             this.#term.bgBlue()
             this.#term.eraseLineAfter()
         }
     }
 
-    /**
-     * Render all right groups merged into a single bracket with pipe separators.
-     * Format: [[o]MQTT | [o]Redis]
+    /** Render all right groups merged into a single bracket with pipe separators.
      * @private
-     * @param {Array} widgets - Flat array of widget configs from all groups
-     */
+     * @param {Array} widgets - Flat array of widget configs from all groups */
     #renderMergedRightBrackets(widgets) {
         this.#term.bold.cyan('[')
 
@@ -355,7 +301,7 @@ class StatusBar {
             const renderer = RENDERERS[widget.type]
             if (!renderer) continue
 
-            // Pipe separator between items from different original groups
+            //  Pipe separator between items from different original groups.
             if (i > 0) {
                 this.#term.bold.cyan(' | ')
             }
@@ -375,7 +321,7 @@ class StatusBar {
                     iconColor = 'white'
                 }
 
-                // Compact format inside brackets: no leading space, just "icon" + "label"
+                //  Compact format inside brackets: no leading space, just "icon" + "label"
                 this.#term.bold[iconColor](icon)
                 if (label) {
                     this.#term.white(label)
@@ -389,13 +335,10 @@ class StatusBar {
         this.#term.bold.cyan(']')
     }
 
-    /**
-     * Measure the character width of a merged right bracket line.
-     * Format: [icon_label | icon_label | ...]
+    /** Measure the character width of a merged right bracket line.
      * @private
      * @param {Array} widgets - Flat array of widget configs
-     * @returns {number} Total character width including brackets and separators
-     */
+     * @returns {number} Total character width including brackets and separators */
     #measureRightLineWidth(widgets) {
         let width = 2 // Opening [ and closing ]
 
@@ -404,7 +347,7 @@ class StatusBar {
             const renderer = RENDERERS[widget.type]
             if (!renderer) continue
 
-            // Pipe separator between items
+            //  Pipe separator between items.
             if (i > 0) {
                 width += 3 // " | "
             }
@@ -426,11 +369,7 @@ class StatusBar {
         return width
     }
 
-    /**
-     * Hide the status bar -- clear its rendered lines.
-     * Erased rows are clamped to the slot height so extra configured lines can
-     * never cause erasure past the status region into the input row.
-     */
+    /** Hide the status bar -- clear its rendered lines. */
     hide() {
         if (!this.#term) return
 
@@ -438,7 +377,7 @@ class StatusBar {
         if (!r) return
 
         const { lines } = this.#loadConfig()
-        // Clamp to the actual slot height -- config may define more lines than the layout allocates
+        //  Clamp to the actual slot height -- config may define more lines than the layout allocates.
         const rows = Math.min(lines.length, r.height)
 
         this.#layout.moveToSlot('status')
@@ -450,12 +389,9 @@ class StatusBar {
         }
     }
 
-    /**
-     * Destroy this component: unsubscribe from all widget events and window activity.
-     */
+    /** Destroy this component: unsubscribe from all widget events and window activity. */
     destroy() {
-        // Drop any coalesced repaint that has not fired yet so it cannot paint
-        // onto a destroyed terminal.
+        //  Drop any coalesced repaint that has not fired yet so it cannot paint.
         if (this.#paintTimer) {
             clearTimeout(this.#paintTimer)
             this.#paintTimer = null
@@ -469,17 +405,11 @@ class StatusBar {
         }
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Load the status bar configuration from ConfigService.
-     * Supports both new structure (lines[].left / lines[].right) and old flat widgets.
-     * The parsed line structure is cached after the first call because the config
-     * does not change at runtime -- high-frequency refreshes must not re-resolve
-     * and copy it on every paint.
+    /** Load the status bar configuration from ConfigService.
      * @private
-     * @returns {{lines: Array}} Parsed configuration with normalized line structure
-     */
+     * @returns {{lines: Array}} Parsed configuration with normalized line structure */
     #loadConfig() {
         if (this.#cachedLines) {
             return { lines: this.#cachedLines }
@@ -489,11 +419,11 @@ class StatusBar {
         try {
             const cfg = ConfigService.getSection('ui.status_bar')
             if (cfg) {
-                // New structure: lines[] with left/right sections
+                //  New structure: lines[] with left/right sections.
                 if (cfg.lines && Array.isArray(cfg.lines)) {
                     lines = cfg.lines
                 } else {
-                    // Fallback for old flat slots structure
+                    //  Fallback for old flat slots structure.
                     lines = [
                         { left: cfg.slots || [], right: [] },
                         { left: [], right: [] }

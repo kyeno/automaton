@@ -1,14 +1,8 @@
 /**
  * Pub/sub event bus for inter-component communication.
- *
  * Decouples producers (device state changes, network presence transitions)
- * from consumers (automations, interactions). Events carry no payload --
- * subscribers read fresh state from CacheService or DeviceContainer themselves,
- * avoiding stale data propagation.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -16,35 +10,19 @@
 
 import LoggerService from './loggerService.js'
 
-// ---------------------------------------------------------------------------
-// EventBus (module-level singleton)
-// ---------------------------------------------------------------------------
+//  EventBus (module-level singleton)
 
-/**
- * Pub/sub event bus for inter-component communication.
- *
- * Channels map to a set of callback functions. Publishers trigger all
- * registered callbacks on a channel; subscribers return an unsubscribe
- * function for clean teardown. Individual subscriber errors are caught
- * so one bad callback never silences the rest.
- * ES module caching guarantees single instantiation.
- */
+/** Pub/sub event bus for inter-component communication. */
 class SEventBus {
 
-    /**
-     * Channel -> Set of callback functions.
-     * @type {Map<string, Set<Function>>}
-     */
+    /** Channel -> Set of callback functions.
+     * @type {Map<string, Set<Function>>} */
     #subscribers = new Map()
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Publish an event on a channel. No payload is passed;
-     * subscribers react by reading fresh state themselves.
-     *
-     * @param {string} channel - The event channel name (e.g., "zigbee:Outdoor Luminance")
-     */
+    /** Publish an event on a channel. No payload is passed;
+     * @param {string} channel - The event channel name (e.g., "zigbee:Outdoor Luminance") */
     publish(channel) {
         const callbacks = this.#subscribers.get(channel)
         if (!callbacks) {
@@ -55,21 +33,16 @@ class SEventBus {
             try {
                 callback()
             } catch (error) {
-                // Prevent one bad subscriber from breaking others
+                //  Prevent one bad subscriber from breaking others.
                 this.#reportSubscriberError(channel, error)
             }
         }
     }
 
-    /**
-     * Report a failing subscriber without letting its exception escape
-     * publish()/emit(). Routed through LoggerService so UI mode keeps raw
-     * stderr writes away from the TUI layout; falls back to plain stderr when
-     * the logger is not initialized yet (early bootstrap / standalone scripts).
+    /** Report a failing subscriber without letting its exception.
      * @param {string} channel - Event channel whose subscriber threw
      * @param {*} error - The caught error value
-     * @private
-     */
+     * @private */
     #reportSubscriberError(channel, error) {
         const detail = error?.message ?? String(error)
         try {
@@ -79,14 +52,9 @@ class SEventBus {
         }
     }
 
-    /**
-     * Emit an event on a channel WITH a payload. Unlike publish(),
-     * this forwards arguments to subscribers so consumers can react
-     * to dynamic data (e.g., window activity IDs).
-     *
+    /** Emit an event on a channel WITH a payload.
      * @param {string} channel - The event channel name
-     * @param {...any} args - Arguments to pass to each subscriber
-     */
+     * @param {...any} args - Arguments to pass to each subscriber */
     emit(channel, ...args) {
         const callbacks = this.#subscribers.get(channel);
         if (!callbacks) return;
@@ -100,25 +68,18 @@ class SEventBus {
         }
     }
 
-    /**
-     * Check whether any subscribers exist for a channel.
-     * Used to guard UI-specific emits during --no-ui service runs.
-     *
+    /** Check whether any subscribers exist for a channel.
      * @param {string} channel - The event channel name
-     * @returns {boolean} true if at least one subscriber is registered
-     */
+     * @returns {boolean} true if at least one subscriber is registered */
     hasSubscribers(channel) {
         const callbacks = this.#subscribers.get(channel)
         return callbacks && callbacks.size > 0
     }
 
-    /**
-     * Subscribe to a channel. Returns an unsubscribe function.
-     *
+    /** Subscribe to a channel. Returns an unsubscribe function.
      * @param {string} channel - The event channel name
      * @param {Function} callback - The callback to invoke when the channel publishes
-     * @returns {Function} Unsubscribe function
-     */
+     * @returns {Function} Unsubscribe function */
     subscribe(channel, callback) {
         if (!this.#subscribers.has(channel)) {
             this.#subscribers.set(channel, new Set())
@@ -137,6 +98,6 @@ class SEventBus {
     }
 }
 
-// Module-level singleton -- ES module caching guarantees single instantiation.
+//  Module-level singleton -- ES module caching guarantees single instantiation.
 const EventBus = Object.freeze(new SEventBus())
 export default EventBus

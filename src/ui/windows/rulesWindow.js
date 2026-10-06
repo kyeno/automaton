@@ -1,26 +1,8 @@
 /**
  * Rules Window -- Window 5.
- *
- * Shows the most recent automation rule matches: which automation evaluated, which of
- * its rules matched, what triggered the run, and whether the match actually produced an
- * action. Rule matching is the part of the engine that is hardest to observe from the
- * logs ("Rule matched: X" scrolls past dozens of automations), so this window keeps a
- * live tail of it in one table.
- *
- * Matches arrive on the EventBus channels published by RuleBasedAutomationBase
- * ('automation:ruleMatched' when conditions match, 'automation:ruleActed' when the run's
- * dispatch produced a device command, a human-interaction deferral or an invoked
- * automation). The table is seeded from every automation's getRecentRuleMatches() when
- * the window is first shown, so opening it mid-day still shows what already fired.
- *
- * Read-only: no input handling, refreshed on events and on a slow timer so the elapsed
- * times stay honest.
- *
- * Dependencies: receives `term` and `layout` via constructor.
- *
+ * Shows the most recent automation rule matches: which automation evaluated.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -32,9 +14,7 @@ import { padVisible, colCell, formatTime } from '../../lib/terminal.js'
 import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
-// ---------------------------------------------------------------------------
-// Column widths (fixed-width alignment, no tabs)
-// ---------------------------------------------------------------------------
+//  Column widths (fixed-width alignment, no tabs)
 
 const TIME_W = 9
 const AUTO_W = 24
@@ -42,9 +22,6 @@ const RULE_W = 28
 const TRIGGER_W = 14
 const OUTCOME_W = 7
 
-// ---------------------------------------------------------------------------
-// Limits
-// ---------------------------------------------------------------------------
 
 /** Total match rows the window keeps; oldest rows fall off the top. */
 const MAX_TRACKED_MATCHES = 60
@@ -52,18 +29,9 @@ const MAX_TRACKED_MATCHES = 60
 /** Refresh interval (ms) -- repaints elapsed times without waiting for a new match. */
 const REFRESH_INTERVAL_MS = 5000
 
-// ---------------------------------------------------------------------------
-// RulesWindow
-// ---------------------------------------------------------------------------
+//  RulesWindow.
 
-/**
- * Recent rule-match table displayed in the terminal UI.
- *
- * Renders the newest match at the bottom of the buffer -- the tail BaseWindow keeps
- * on screen -- so the row that just fired is the one the user sees: time, automation,
- * rule, trigger source and outcome (acted in green when the match led to an action,
- * matched in grey when it did not).
- */
+/** Recent rule-match table displayed in the terminal UI. */
 class RulesWindow extends BaseWindow {
 
     /** Newest-first match rows, capped at MAX_TRACKED_MATCHES. */
@@ -77,14 +45,12 @@ class RulesWindow extends BaseWindow {
     /** Shortcut used for the window:activity status-bar ping. */
     #channelShortcut
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Create a new RulesWindow instance.
+    /** Create a new RulesWindow instance.
      * @param {*} term - The terminal-kit instance
      * @param {*} layout - UiLayoutManager instance
-     * @param {number} channelShortcut - Numeric shortcut from channel config
-     */
+     * @param {number} channelShortcut - Numeric shortcut from channel config */
     constructor(term, layout, channelShortcut = 5) {
         super('Rules', term, layout, channelShortcut)
         this.#channelShortcut = channelShortcut
@@ -97,12 +63,9 @@ class RulesWindow extends BaseWindow {
         }))
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Show this window, seed the table from the automations' own histories, and start
-     * the periodic repaint so elapsed times stay current.
-     */
+    /** Show this window, seed the table from the automations' own histories. */
     show() {
         super.show()
         if (this.#matches.length === 0) this.#seedFromAutomations()
@@ -110,17 +73,13 @@ class RulesWindow extends BaseWindow {
         this.#startRefreshTimer()
     }
 
-    /**
-     * Hide this window and stop the periodic repaint timer.
-     */
+    /** Hide this window and stop the periodic repaint timer. */
     hide() {
         this.#stopRefreshTimer()
         super.hide()
     }
 
-    /**
-     * Destroy this window: unsubscribe from events, hide, and clear the buffer.
-     */
+    /** Destroy this window: unsubscribe from events, hide, and clear the buffer. */
     destroy() {
         this.#unsubscribes.forEach((unsub) => {
             if (typeof unsub === 'function') unsub()
@@ -131,12 +90,7 @@ class RulesWindow extends BaseWindow {
         this.hide()
     }
 
-    /**
-     * Rebuild the table from the tracked matches and push it to the buffer.
-     *
-     * Skips the redraw entirely when the rendered content is identical to the previous
-     * frame, so the periodic timer does not cause flicker.
-     */
+    /** Rebuild the table from the tracked matches and push it to the buffer. */
     refresh() {
         const lines = []
 
@@ -171,13 +125,11 @@ class RulesWindow extends BaseWindow {
         lines.forEach((line) => this.print(line))
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Record one incoming match row (newest first, capped).
+    /** Record one incoming match row (newest first, capped).
      * @param {Object} record - Match record from the EventBus
-     * @private
-     */
+     * @private */
     #recordMatch(record) {
         const row = this.#normalize(record)
         if (row === null) return
@@ -191,15 +143,9 @@ class RulesWindow extends BaseWindow {
         EventBus.emit('window:activity', this.#channelShortcut)
     }
 
-    /**
-     * Flip the 'acted' flag on the row an 'automation:ruleActed' event refers to.
-     *
-     * The outcome event carries the same automation/rule/timestamp identity as the
-     * match event it belongs to; when that row already rolled out of the history the
-     * event is simply dropped.
+    /** Flip the 'acted' flag on the row an 'automation:ruleActed' event refers to.
      * @param {Object} record - Match record from the EventBus
-     * @private
-     */
+     * @private */
     #markActed(record) {
         const row = this.#normalize(record)
         if (row === null) return
@@ -214,12 +160,10 @@ class RulesWindow extends BaseWindow {
         EventBus.emit('window:activity', this.#channelShortcut)
     }
 
-    /**
-     * Validate and copy an incoming EventBus record.
+    /** Validate and copy an incoming EventBus record.
      * @param {Object} record - Raw record ({automation, rule, at, trigger, forced, acted})
      * @returns {Object|null} A detached row, or null when the record is unusable
-     * @private
-     */
+     * @private */
     #normalize(record) {
         if (!record || typeof record !== 'object') return null
         const automation = String(record.automation ?? '').trim()
@@ -237,17 +181,11 @@ class RulesWindow extends BaseWindow {
         }
     }
 
-    /**
-     * Seed the table from every automation's own recent-match history.
-     *
-     * Automations keep their own bounded history, so a window opened after the fact
-     * still shows the day's matches. Merged newest-first and capped.
-     * @private
-     */
+    /** Seed the table from every automation's own recent-match history.
+     * @private */
     #seedFromAutomations() {
         const all = AutomationContainer.getAll() ?? {}
-        // The container exposes a Map; plain-object shape accepted too so a stubbed
-        // container in tests works unchanged.
+        //  The container exposes a Map; plain-object shape accepted too so a stubbed.
         const instances = (typeof all?.values === 'function') ? [...all.values()] : Object.values(all)
         const seeded = []
 
@@ -263,12 +201,10 @@ class RulesWindow extends BaseWindow {
         this.#matches = seeded.slice(0, MAX_TRACKED_MATCHES)
     }
 
-    /**
-     * Render one match row as a fixed-width line.
+    /** Render one match row as a fixed-width line.
      * @param {Object} match - Normalized match row
      * @returns {string} The rendered line
-     * @private
-     */
+     * @private */
     #renderRow(match) {
         const trigger = match.forced ? match.trigger + '!' : match.trigger
 
@@ -284,26 +220,21 @@ class RulesWindow extends BaseWindow {
             )
     }
 
-    /**
-     * Clip a value to the column width so the table stays aligned.
+    /** Clip a value to the column width so the table stays aligned.
      * @param {string} value - Plain text to fit
      * @param {number} width - Column width
      * @returns {string} Text no wider than width
-     * @private
-     */
+     * @private */
     #clip(value, width) {
         const text = String(value ?? '')
         return text.length > width ? text.slice(0, Math.max(0, width - 1)) + '~' : text
     }
 
-    /**
-     * Compare two rendered line arrays element-wise for strict equality so an
-     * unchanged frame can skip its redraw entirely.
+    /** Compare two rendered line arrays element-wise for strict equality.
      * @param {string[]|null} previous - Lines from the last painted frame
      * @param {string[]} next - Newly built lines
      * @returns {boolean} true when both frames are identical
-     * @private
-     */
+     * @private */
     #sameLines(previous, next) {
         if (!previous || previous.length !== next.length) return false
         for (let i = 0; i < next.length; i++) {
@@ -312,19 +243,15 @@ class RulesWindow extends BaseWindow {
         return true
     }
 
-    /**
-     * Start the periodic repaint timer.
-     * @private
-     */
+    /** Start the periodic repaint timer.
+     * @private */
     #startRefreshTimer() {
         this.#stopRefreshTimer()
         this.#refreshInterval = setInterval(() => this.refresh(), REFRESH_INTERVAL_MS)
     }
 
-    /**
-     * Stop the periodic repaint timer.
-     * @private
-     */
+    /** Stop the periodic repaint timer.
+     * @private */
     #stopRefreshTimer() {
         if (this.#refreshInterval) {
             clearInterval(this.#refreshInterval)

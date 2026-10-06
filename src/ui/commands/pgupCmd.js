@@ -1,9 +1,7 @@
 /**
  * Page Up Command -- scrolls the active window up one page.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -16,10 +14,8 @@ class PgUpCmd extends CommandBase {
     static description = 'Scroll page up'
     static takesArgs = false
 
-    /**
-     * Scroll the active window up one page via ctx.scrollPageUp().
-     * @param {string} args - Raw argument string after the verb (unused)
-     */
+    /** Scroll the active window up one page via ctx.scrollPageUp().
+     * @param {string} args - Raw argument string after the verb (unused) */
     async execute(args) {
         this.ctx.scrollPageUp?.()
     }

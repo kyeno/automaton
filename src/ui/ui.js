@@ -1,15 +1,8 @@
 /**
  * Ui -- Composition Root / DI Container for the UI.
- *
  * Creates all child instances (layout manager, windows, status bar, input)
- * and wires them together. No singletons -- everything is instantiated here
- * and dependencies are injected via constructors.
- *
- * Dependencies: receives `term` in init().
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -23,46 +16,34 @@ import LoggerService from '../service/loggerService.js'
 import TtsService from '../service/ttsService.js'
 import AiAssistant from '../ai/aiAssistant.js'
 
-// Layout
 import UiLayoutManager from './layout/uiLayoutManager.js'
 
-// Channels
 import channels from './channels.js'
 
-// Commands
 import CommandContainer from './commands/container/commandContainer.js'
 
-// Automations
+//  Automations.
 import AutomationContainer from '../automation/container/automationContainer.js'
 
-// Interactions
+//  Interactions.
 import InteractionContainer from '../interaction/container/interactionContainer.js'
 
-// Devices & network presence (consumed by the /device command via ctx)
+//  Devices & network presence (consumed by the /device command via ctx)
 import DeviceContainer from '../device/container/deviceContainer.js'
 import NetworkPresence from '../monitor/networkPresence.js'
 
-// Windows
 import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
 import AiWindow from './windows/aiWindow.js'
 import TtsWindow from './windows/ttsWindow.js'
 import RulesWindow from './windows/rulesWindow.js'
 
-// Widgets
 import StatusBar from './widgets/statusBar.js'
 import InputComponent from './widgets/inputComponent.js'
 import CommandCompleter from './completion/commandCompleter.js'
 
-// ---------------------------------------------------------------------------
-// Ui
-// ---------------------------------------------------------------------------
 
-/**
- * Composition root and DI container for the terminal UI.
- * Creates all child instances (layout manager, windows, status bar, input),
- * wires them together, and manages window switching via keyboard shortcuts.
- */
+/** Composition root and DI container for the terminal UI. */
 class Ui {
 
     /** Debounce window (ms) that coalesces terminal resize bursts into one render pass. */
@@ -78,12 +59,10 @@ class Ui {
     /** Pending debounce handle for the deferred post-resize render pass. */
     #resizeTimer = null
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Initialize the UI application. Called after all services are ready.
-     * @param {*} term - The terminal-kit terminal instance
-     */
+    /** Initialize the UI application. Called after all services are ready.
+     * @param {*} term - The terminal-kit terminal instance */
     async init(term) {
         this.#term = term
 
@@ -93,17 +72,17 @@ class Ui {
 
         LoggerService.debug(`UI Resolved term object: ${term.constructor?.name}`, 'UI')
 
-        // Enable raw input mode -- required for key events and InlineInput to work over SSH
+        //  Enable raw input mode -- required for key events and InlineInput to work over SSH.
         try {
             this.#term.grabInput()
         } catch (e) {
             LoggerService.warn(`grabInput failed: ${e.message}`, 'UI')
         }
 
-        // Create layout manager
+        //  Create layout manager.
         this.#layout = new UiLayoutManager(this.#term)
 
-        // Load channel definitions from config and create windows dynamically
+        //  Load channel definitions from config and create windows dynamically.
         const allChannels = channels.getAll()
         const windowConstructors = {
             logs: LogWindow,
@@ -113,8 +92,7 @@ class Ui {
             rules: RulesWindow,
         }
 
-        // Windows backed by optional services are only created when that service is
-        // actually configured; otherwise they would accept input but never do anything.
+        //  Windows backed by optional services are only created when that service.
         const optionalWindowGates = {
             ai:  () => AiAssistant.isConfigured(),
             tts: () => TtsService.isConfigured(),
@@ -133,7 +111,7 @@ class Ui {
 
             firstChannelId = firstChannelId || ch.id
 
-            // AiWindow and TtsWindow need the channel name too
+            //  AiWindow and TtsWindow need the channel name too.
             const instance = (ch.id === 'ai' || ch.id === 'tts')
                 ? new Ctor(this.#term, this.#layout, ch.shortcut, ch.channel)
                 : new Ctor(this.#term, this.#layout, ch.shortcut)
@@ -146,25 +124,23 @@ class Ui {
             }
         }
 
-        // Set default active window to the first defined in config
+        //  Set default active window to the first defined in config.
         this.#activeWindow = firstChannelId || 'logs'
 
-        // Apply UI config (buffer limits, etc.) to all windows
+        //  Apply UI config (buffer limits, etc.) to all windows.
         this.#applyUiConfig()
 
-        // Create status bar
+        //  Create status bar.
         this.#statusBar = new StatusBar(this.#term, this.#layout)
         this.#statusBar.init()
 
-        // KEY ORDER MATTERS: Register key bindings BEFORE input component so that
-        // Ui's handler fires first and can mark keys as consumed synchronously.
-        // terminal-kit emits to listeners in registration order.
+        //  KEY ORDER MATTERS: Register key bindings BEFORE input component.
         this.#input = new InputComponent(this.#term, this.#layout)
         this.#input.onCommand((cmd) => this.#handleCommand(cmd))
         this.#setupKeyBindings()  // Must run before this.#input.init()
         this.#input.init()
 
-        // Build context object injected into all pluggable commands
+        //  Build context object injected into all pluggable commands.
         const self = this  // capture Ui reference for closure
         /** Resolve the currently active window instance (null when none). */
         const getActiveInstance = () => self.#windows?.[self.#activeWindow]?.instance ?? null
@@ -181,8 +157,7 @@ class Ui {
                 if (win && typeof win.printPreformatted === 'function') win.printPreformatted(args.join(' '))
             },
             switchWindow: self.switchWindow.bind(self),
-            // Clear buffer contents of specific windows (only those that exist and expose clear()).
-            // Used by /config reload to drop stale rendered output from AI/TTS windows after a swap.
+            //  Clear buffer contents of specific windows (only those that exist and expose clear()).
             clearWindows(ids) {
                 const cleared = []
                 for (const id of Array.isArray(ids) ? ids : []) {
@@ -208,9 +183,7 @@ class Ui {
 
         await CommandContainer.init(ctx)
 
-        // Tab-completion: wire the single active editor to slash-command candidates. Lines starting
-        // with '/' always complete against the command grammar; bare text completes only when the
-        // active window is not a free-form chat surface so AI/TTS message windows stay untouched.
+        // Tab-completion: wire the single active editor to slash-command candidates.
         try {
             const completer = new CommandCompleter()
             this.#input.setCompletionProvider((buffer, cursorPos) => {
@@ -225,13 +198,7 @@ class Ui {
             LoggerService.warn(`Tab completion unavailable: ${e.message}`, 'UI')
         }
 
-        // Terminal resize handling. Slot geometry is refreshed immediately on
-        // every event (cheap pure math), but the expensive work -- full
-        // re-wrapping and redrawing of buffered lines plus a status-bar repaint
-        // -- is debounced so that bursts of resizes (typical when detaching a
-        // screen session in one size and reattaching in another, which emits
-        // several SIGWINCHes back-to-back) collapse into a single render pass
-        // instead of N consecutive heavy synchronous redraws.
+        //  Terminal resize handling. Slot geometry is refreshed immediately.
         try {
             this.#term.on('resize', () => {
                 try {
@@ -252,26 +219,24 @@ class Ui {
 
         LoggerService.info(`UI initialized with ${Object.keys(this.#windows).length} channel(s)`, 'UI')
 
-        // Show default window
+        //  Show default window.
         this.switchWindow(this.#activeWindow)
 
-        // Attach Winston transport to log window
+        //  Attach Winston transport to log window.
         const logWin = this.#windows['logs']?.instance
         if (logWin) {
             LoggerService.addTransport(logWin.getTransport())
         }
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Switch to a named window by ID or numeric shortcut.
-     * @param {string|number} idOrShortcut - Window ID ('logs', 'device', 'ai') or shortcut number
-     */
+    /** Switch to a named window by ID or numeric shortcut.
+     * @param {string|number} idOrShortcut - Window ID ('logs', 'device', 'ai') or shortcut number */
     switchWindow(idOrShortcut) {
         let targetId = String(idOrShortcut)
 
-        // Resolve numeric shortcut to internal ID via the channel manager
+        //  Resolve numeric shortcut to internal ID via the channel manager.
         const byShortcut = channels.getByShortcut(targetId)
         if (byShortcut) {
             targetId = byShortcut.id
@@ -279,33 +244,29 @@ class Ui {
 
         if (!this.#windows[targetId]) return
 
-        // Hide current window
+        //  Hide current window.
         const prev = this.#activeWindow
         if (prev && this.#windows[prev]) {
             this.#windows[prev].instance.hide()
         }
 
-        // Show new window
         this.#activeWindow = targetId
         this.#windows[targetId].instance.show()
 
-        // Notify status bar of active window for activity indicator
+        //  Notify status bar of active window for activity indicator.
         this.#statusBar.notifyActiveWindow?.(channels.getById(targetId)?.shortcut)
         
-        // Update backscroll indicator in status bar
+        //  Update backscroll indicator in status bar.
         const win = this.#windows[targetId]?.instance
         if (win && this.#statusBar.notifyBackscrolled) {
             this.#statusBar.notifyBackscrolled(win.isBackscrolled?.())
         }
 
-        // Update input prompt with channel name
+        //  Update input prompt with channel name.
         this.#input.setChannel?.(channels.getChannelName(targetId))
     }
 
-    /**
-     * Scroll the active window one page up through its history buffer.
-     * Also updates the status bar backscroll indicator ("-- more --").
-     */
+    /** Scroll the active window one page up through its history buffer. */
     scrollActivePageUp() {
         if (!this.#activeWindow || !this.#windows[this.#activeWindow]) return
         const win = this.#windows[this.#activeWindow].instance
@@ -315,10 +276,7 @@ class Ui {
         }
     }
 
-    /**
-     * Scroll the active window one page down toward live tail.
-     * Also updates the status bar backscroll indicator ("-- more --").
-     */
+    /** Scroll the active window one page down toward live tail. */
     scrollActivePageDown() {
         if (!this.#activeWindow || !this.#windows[this.#activeWindow]) return
         const win = this.#windows[this.#activeWindow].instance
@@ -328,21 +286,14 @@ class Ui {
         }
     }
 
-    /**
-     * Return the Winston transport for the log window so external code
-     * (e.g., main.js) can attach it early before full init completes.
-     * @returns {winston.Transport|null}
-     */
+    /** Return the Winston transport for the log window so external code
+     * @returns {winston.Transport|null} */
     getLogTransport() {
         const logWin = this.#windows?.logs?.instance
         return logWin?.getTransport?.() ?? null
     }
 
-    /**
-     * Clean up all UI resources without exiting the process.
-     * Called by main.js during its sequential graceful shutdown sequence.
-     * Does NOT call process.exit() -- that is the responsibility of main.js.
-     */
+    /** Clean up all UI resources without exiting the process. */
     cleanup() {
         if (!this.#running) return
         this.#running = false
@@ -350,33 +301,30 @@ class Ui {
         LoggerService.info('UI cleaning up...', 'UI')
         StateService.set('ui.active', false)
 
-        // Drop any debounced resize re-render that has not fired yet
+        //  Drop any debounced resize re-render that has not fired.
         if (this.#resizeTimer) {
             clearTimeout(this.#resizeTimer)
             this.#resizeTimer = null
         }
 
-        // Destroy all windows first
         for (const win of Object.values(this.#windows)) {
             win.instance.destroy?.()
         }
 
-        // Hide and destroy status bar
         this.#statusBar.hide?.()
         this.#statusBar.destroy?.()
 
-        // Destroy input component
+        //  Destroy input component.
         this.#input.destroy?.()
 
-        // Release raw input mode & reset terminal
+        //  Release raw input mode & reset terminal.
         if (this.#term) {
             try {
                 this.#term.grabInput(false)
             } catch { /* ignore */ }
             this.#term.styleReset()
             
-            // Clear the input slot row so the channel prompt ([!log], etc.) 
-            // doesn't remain visible in the terminal after exit.
+            //  Clear the input slot row so the channel prompt ([!log], etc.)
             this.#layout.moveToSlot('input')
             this.#term.eraseLine()
             this.#layout.moveToSlot('input')
@@ -385,27 +333,18 @@ class Ui {
         }
     }
 
-    /**
-     * External destroy hook called by main.js gracefulDeath.
-     */
+    /** External destroy hook called by main.js gracefulDeath. */
     destroy() {
         this.cleanup()
     }
 
-    // -- Callbacks --------------------------------------------------------
+    //  -- Callbacks --------------------------------------------------------
 
-    /**
-      * Handle commands typed at the bottom prompt.
-      * Slash-prefixed input always routes through CommandContainer first,
-      * regardless of the active window's inputMode. Non-slash text then
-      * follows normal routing based on inputMode:
-      *   - 'chat'    -> send directly to AI (no log)
-      *   - 'command' -> log + delegate entirely to CommandContainer
-      * @private
-      * @param {string} cmd - Raw command string from the input component
-      */
+    /** Handle commands typed at the bottom prompt.
+     * @private
+     * @param {string} cmd - Raw command string from the input component */
     #handleCommand(cmd) {
-        // -- Slash commands take priority over inputMode ---------------------
+        //  -- Slash commands take priority over inputMode ---------------------
         if (cmd.startsWith('/')) {
             LoggerService.info(`UI Received Command: "${cmd}"`, 'UI')
             const rawInput = cmd.slice(1)
@@ -416,7 +355,7 @@ class Ui {
         const activeWin = this.#windows[this.#activeWindow]?.instance
         const mode = activeWin?.constructor?.inputMode || 'command'
 
-        // -- Chat mode: send directly to the active window ------------------
+        //  -- Chat mode: send directly to the active window ------------------
         if (mode === 'chat') {
             const win = this.#activeWindow && this.#windows[this.#activeWindow]
                 ? this.#windows[this.#activeWindow].instance : null
@@ -425,30 +364,25 @@ class Ui {
             })
         }
 
-        // -- Command mode: log + delegate to pluggable command container ---
+        //  -- Command mode: log + delegate to pluggable command container ---
         LoggerService.info(`UI Received Command: "${cmd}"`, 'UI')
 
-        // Strip leading slash and pass raw verb+args to two-phase dispatcher
+        //  Strip leading slash and pass raw verb+args to two-phase dispatcher.
         const rawInput2 = cmd.startsWith('/') ? cmd.slice(1) : cmd
         CommandContainer.handle(rawInput2).catch(() => {})
     }
 
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Apply the deferred post-resize work once per debounced burst: skip
-     * rendering during extreme states, force a full re-render of the active
-     * window since wrapping changed with width, and refresh the status bar.
-     * @private
-     */
+    /** Apply the deferred post-resize work once per debounced burst: skip
+     * @private */
     #applyResize() {
         const r = this.#layout.getSlot('main')
-        // Skip render during extreme resize states (height < 5 means
-        // there's barely any room for content + status bar + input).
+        // Skip render during extreme resize states.
         if (!r || r.height < 5 || r.width < 10) return
 
-        // Force full re-render of active window on resize (wrapping changes)
+        //  Force full re-render of active window on resize (wrapping changes)
         if (this.#activeWindow && this.#windows[this.#activeWindow]) {
             this.#windows[this.#activeWindow].instance.forceFullRender()
             this.#windows[this.#activeWindow].instance.render()
@@ -456,10 +390,8 @@ class Ui {
         this.#statusBar.refresh?.()
     }
 
-    /**
-     * Load automaton.yaml configuration and apply it to window instances.
-     * @private
-     */
+    /** Load automaton.yaml configuration and apply it to window instances.
+     * @private */
     #applyUiConfig() {
         try {
             const maxBufferLines = ConfigService.get('ui.window_settings.max_buffer_lines')
@@ -480,15 +412,8 @@ class Ui {
         }
     }
 
-    /**
-     * Set up Alt+number keyboard bindings based on channel shortcuts from config.
-     * Also handles PgUp/PgDown for scroll navigation.
-     *
-     * Over SSH xterm-256color, Alt+N arrives as TWO key events:
-     *   ESCAPE  then  "N"
-     * We detect ESCAPE and wait for the next key within a short timeout.
-     * @private
-     */
+    /** Set up Alt+number keyboard bindings based on channel shortcuts from config.
+     * @private */
     #setupKeyBindings() {
         if (!this.#term) return
 
@@ -497,10 +422,10 @@ class Ui {
 
         try {
             this.#term.on('key', (name, data) => {
-                // Normalize -- terminal-kit sends UPPERCASE over SSH xterm-256color
+                //  Normalize -- terminal-kit sends UPPERCASE over SSH xterm-256color.
                 const n = name.toLowerCase()
 
-                // --- PgUp / PgDown for scroll navigation --------------------
+                //  --- PgUp / PgDown for scroll navigation --------------------
                 if (n === 'page_up' || n === 'pageup' || n === 'pgup') {
                     this.#input.markConsumed([n, name])
                     this.scrollActivePageUp()
@@ -512,18 +437,18 @@ class Ui {
                     return
                 }
 
-                // --- Detect ESCAPE prefix for Alt+ shortcuts ----------------
+                //  --- Detect ESCAPE prefix for Alt+ shortcuts ----------------
                 if (n === 'escape') {
                     expectingEscapeKey = true
                     clearTimeout(escapeTimer)
-                    // If no follow-up key within 100ms, treat as standalone Escape
+                    //  If no follow-up key within 100ms, treat as standalone Escape.
                     escapeTimer = setTimeout(() => {
                         expectingEscapeKey = false
                     }, 100)
                     return
                 }
 
-                // --- After ESCAPE, check for digit to switch windows --------
+                //  --- After ESCAPE, check for digit to switch windows --------
                 if (expectingEscapeKey) {
                     expectingEscapeKey = false
                     clearTimeout(escapeTimer)
@@ -534,12 +459,12 @@ class Ui {
                         this.switchWindow(targetCh.id)
                         return
                     }
-                    // Not a recognized shortcut -- clear consumed and let InputComponent handle it
+                    //  Not a recognized shortcut -- clear consumed and let InputComponent handle.
                     this.#input.clearConsumed()
                     return
                 }
 
-                // Ctrl+C shutdown -- normalize to handle both CTRL_C and ctrl_c
+                //  Ctrl+C shutdown -- normalize to handle both CTRL_C and ctrl_c.
                 if (n === 'ctrl_c' || n === 'ctrlc') {
                     LoggerService.info('UI Shutdown requested via CTRL_C', 'UI')
                     this.shutdown()
@@ -550,11 +475,7 @@ class Ui {
         }
     }
 
-    /**
-     * Graceful shutdown: clean up UI then exit the process.
-     * Called only when the user directly requests quit from within the UI
-     * (e.g., /quit command or Ctrl+C).
-     */
+    /** Graceful shutdown: clean up UI then exit the process. */
     shutdown() {
         this.cleanup()
         LoggerService.info('UI shutting down...', 'UI')

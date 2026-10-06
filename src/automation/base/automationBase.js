@@ -1,12 +1,8 @@
 /**
  * Abstract base class for all automations.
- *
- * Manages lifecycle (init, cleanup), EventBus trigger subscriptions, periodic
- * timers, and human-interaction cooldown checks. Subclasses implement {@link execute}.
- *
+ * Manages lifecycle (init, cleanup), EventBus trigger subscriptions, periodic.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -20,9 +16,6 @@ import LoggerService from '../../service/loggerService.js'
 import { slugify } from '../../lib/string.js'
 import DeviceStateOrigin from '../../enum/deviceStateOrigin.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Default cooldown after human interaction before automation resumes (ms). */
 const DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS = 15 * 60 * 1_000
@@ -36,24 +29,13 @@ const MAX_SETTABLE_INTERVAL_MS = 0x7FFFFFFF
 /** Quiescence window (ms) for coalescing near-simultaneous EventBus trigger events into a single run. */
 const TRIGGER_COALESCE_MS = 250
 
-// ---------------------------------------------------------------------------
-// AutomationBase (abstract)
-// ---------------------------------------------------------------------------
+//  AutomationBase (abstract)
 
-/**
- * Abstract base class for all automations.
- *
- * Manages lifecycle (init, cleanup), EventBus trigger subscriptions, periodic
- * timers, and human-interaction cooldown checks. Subclasses implement {@link execute}.
- */
+/** Abstract base class for all automations. */
 export default class AutomationBase {
 
-    /**
-     * When true, this automation bypasses the human-interaction cooldown check
-     * for all of its target devices. Default is false (cooldowns always apply).
-     * Set via the `override_human_interaction` config key or the setter.
-     * @type {boolean}
-     */
+    /** When true, this automation bypasses the human-interaction cooldown check
+     * @type {boolean} */
     #overrideHumanInteraction = false
 
     /** EventBus topics awaiting a consolidated {@link execute} run (trigger coalescing). */
@@ -65,15 +47,12 @@ export default class AutomationBase {
     /** True while a consolidated event-triggered {@link execute} is in flight. */
     #flushing = false
 
-    // -- Constructor --------------------------------------------------------
+    //  -- Constructor --------------------------------------------------------
 
-    /**
-     * Construct an automation instance.
-     *
+    /** Construct an automation instance.
      * @param {object} options - Constructor options
      * @param {string} options.name - Display name of the automation (used in log context)
-     * @param {Record<string, unknown>} [options.config] - Parsed YAML configuration or inline config object
-     */
+     * @param {Record<string, unknown>} [options.config] - Parsed YAML configuration or inline config object */
     constructor({ name, config = {} }) {
         this.name = name
         this.config = config
@@ -83,38 +62,24 @@ export default class AutomationBase {
         this.#overrideHumanInteraction = Boolean(config?.override_human_interaction)
     }
 
-    /**
-     * Set whether this automation overrides the human-interaction cooldown.
-     * When enabled, the automation's commands are dispatched even if a target
-     * device has a recent human-interaction cooldown active.
-     *
-     * @param {boolean} value - true to bypass cooldowns, false to respect them
-     */
+    /** Set whether this automation overrides the human-interaction cooldown.
+     * @param {boolean} value - true to bypass cooldowns, false to respect them */
     setOverrideHumanInteraction(value) {
         this.#overrideHumanInteraction = Boolean(value)
     }
 
-    /**
-     * Whether this automation overrides the human-interaction cooldown.
-     * @returns {boolean} true if cooldowns are bypassed for this automation's targets
-     */
+    /** Whether this automation overrides the human-interaction cooldown.
+     * @returns {boolean} true if cooldowns are bypassed for this automation's targets */
     getOverrideHumanInteraction() {
         return this.#overrideHumanInteraction
     }
 
-    // -- Lifecycle ----------------------------------------------------------
+    //  -- Lifecycle ----------------------------------------------------------
 
-    /**
-     * Initialize the automation: subscribe to EventBus triggers and start timer.
-     *
-     * Called once during system startup. Uses a guard flag to prevent duplicate
-     * subscriptions if called multiple times. Subclasses may override but should
-     * call `await super.init()` first.
-     *
-     * @async
-     */
+    /** Initialize the automation: subscribe to EventBus triggers and start timer.
+     * @async */
     async init() {
-        // Guard against double initialization -- prevents duplicate subscriptions + timers.
+        //  Guard against double initialization -- prevents duplicate subscriptions + timers.
         if (this._initialized) {
             LoggerService.warn(
                 `${this.name}.init() called more than once, subsequent call ignored`,
@@ -124,13 +89,12 @@ export default class AutomationBase {
         }
         this._initialized = true
 
-        // Subscribe to EventBus triggers.
+        //  Subscribe to EventBus triggers.
         const triggers = this.getTriggerTopics()
         if (triggers && triggers.length > 0) {
             for (const topic of triggers) {
                 const unsub = EventBus.subscribe(topic, () => {
-                    // Route through the coalescing queue so several hosts changing state at once
-                    // collapse into a single rule evaluation instead of one execution per event.
+                    //  Route through the coalescing queue so several hosts changing state at once.
                     this.#enqueueTrigger(topic)
                 })
                 if (unsub) {
@@ -140,22 +104,17 @@ export default class AutomationBase {
             LoggerService.info(`${this.name} subscribed to triggers: [${triggers.join(', ')}]`, `Auto:${this.name}`)
         }
 
-        // Start periodic timer if configured.
+        //  Start periodic timer if configured.
         const intervalMs = this.getTimerIntervalMs()
         if (intervalMs != null && intervalMs > 0) {
             this.startTimer(intervalMs)
         }
     }
 
-    // -- Public API ---------------------------------------------------------
+    //  -- Public API ---------------------------------------------------------
 
-    /**
-     * Return a list of EventBus topics this automation wants to react to.
-     * Reads `triggers_zigbee`, `triggers_network`, and `triggers_video` arrays
-     * from config. Subclasses with custom trigger logic can override.
-     *
-     * @return {string[]} Array of topic strings to subscribe to
-     */
+    /** Return a list of EventBus topics this automation wants to react to.
+     * @return {string[]} Array of topic strings to subscribe to */
     getTriggerTopics() {
         const topics = []
 
@@ -180,17 +139,8 @@ export default class AutomationBase {
         return topics
     }
 
-    /**
-     * Return the interval in milliseconds for the periodic timer.
-     * Prefers the human-readable `timer_interval` string ("90s", "3m 45s", "1h")
-     * parsed via temporal.humanToMs(); falls back to legacy numeric
-     * `timer_interval_ms`, then DEFAULT_TIMER_INTERVAL_MS. Invalid or oversized
-     * values log a warning and disable the timer (fail-open, consistent with
-     * silence_between handling).
-     * Return null or 0 to disable the timer (event-driven only).
-     *
-     * @return {number|null} Interval in milliseconds, or null/0 to disable
-     */
+    /** Return the interval in milliseconds for the periodic timer.
+     * @return {number|null} Interval in milliseconds, or null/0 to disable */
     getTimerIntervalMs() {
         const human = this.config?.timer_interval
         if (typeof human === 'string') {
@@ -217,41 +167,25 @@ export default class AutomationBase {
         return legacy
     }
 
-    /**
-     * This automation's most recent rule matches, newest first.
-     *
-     * Plain automations have no rule engine, so the default answer is an empty
-     * history; RuleBasedAutomationBase overrides it with its real match log. The
-     * UI rules window seeds its table from every registered automation through
-     * this one call, so a subclass without rules simply contributes no rows.
-     *
-     * @returns {Array<Object>} Recent matches (always empty for non-rule automations)
-     */
+    /** This automation's most recent rule matches, newest first.
+     * @returns {Array<Object>} Recent matches (always empty for non-rule automations) */
     getRecentRuleMatches() {
         return []
     }
 
-    // -- Abstract method ----------------------------------------------------
+    //  -- Abstract method ----------------------------------------------------
 
-    /**
-     * Main execution logic -- pure virtual; must be overridden by subclasses.
-     *
-     * Invoked either by an EventBus trigger or by the periodic timer.
-     *
+    /** Main execution logic -- pure virtual; must be overridden by subclasses.
      * @param {{trigger: string}|null} [triggerData] - Trigger metadata (e.g., `{trigger: 'zigbee:Living Room Light'}`)
-     * @throws {Error} If not overridden
-     */
+     * @throws {Error} If not overridden */
     execute(triggerData = null) {
         throw new Error('Method "execute()" must be implemented in subclasses.')
     }
 
-    // -- Timer management ---------------------------------------------------
+    //  -- Timer management ---------------------------------------------------
 
-    /**
-     * Start a periodic timer that calls {@link execute} at fixed intervals.
-     *
-     * @param {number} intervalMs - Interval in milliseconds
-     */
+    /** Start a periodic timer that calls {@link execute} at fixed intervals.
+     * @param {number} intervalMs - Interval in milliseconds */
     startTimer(intervalMs) {
         const _tick = () => {
             try {
@@ -261,8 +195,7 @@ export default class AutomationBase {
             }
         }
 
-        // Defensive re-entry guard: never leak a previous handle -- two live intervals for one
-        // automation would overlap its ticks forever (stopTimer() is the normal path).
+        //  Defensive re-entry guard: never leak a previous handle -- two live intervals for one.
         if (this._timer != null) clearInterval(this._timer)
 
         this._timer = setInterval(_tick, intervalMs)
@@ -272,9 +205,7 @@ export default class AutomationBase {
         )
     }
 
-    /**
-     * Stop the periodic timer.
-     */
+    /** Stop the periodic timer. */
     stopTimer() {
         if (this._timer) {
             clearInterval(this._timer)
@@ -283,25 +214,17 @@ export default class AutomationBase {
         }
     }
 
-    /**
-     * Enqueue an EventBus-triggered run. Near-simultaneous trigger events are coalesced into a
-     * single {@link execute} call so that several hosts changing state together (e.g., all going
-     * offline at boot) do not each re-run the whole rule set and re-invoke shared downstream
-     * automations. Manual runs, timer ticks and `invoke_automation` calls bypass this path and stay immediate.
-     *
+    /** Enqueue an EventBus-triggered run. Near-simultaneous trigger events are coalesced.
      * @private
-     * @param {string} topic - The triggering EventBus topic
-     */
+     * @param {string} topic - The triggering EventBus topic */
     #enqueueTrigger(topic) {
         this.#triggerQueue.push(topic)
         if (this.#flushTimer != null || this.#flushing) return   // already scheduled / draining
         this.#scheduleTriggerFlush()
     }
 
-    /**
-     * Schedule a trailing-edge flush of queued triggers after a short quiescence window.
-     * @private
-     */
+    /** Schedule a trailing-edge flush of queued triggers after a short quiescence window.
+     * @private */
     #scheduleTriggerFlush() {
         this.#flushTimer = setTimeout(() => {
             this.#flushTimer = null
@@ -310,11 +233,8 @@ export default class AutomationBase {
         if (typeof this.#flushTimer.unref === 'function') this.#flushTimer.unref()
     }
 
-    /**
-     * Drain the trigger queue: run one consolidated {@link execute} per batch, picking up any topics
-     * that arrive while an execution is in flight so nothing is dropped.
-     * @private
-     */
+    /** Drain the trigger queue: run one consolidated {@link execute} per batch, picking up any topics
+     * @private */
     async #runQueuedTriggers() {
         this.#flushing = true
         try {
@@ -327,15 +247,13 @@ export default class AutomationBase {
             LoggerService.error(`Error executing coalesced event trigger(s) for ${this.name}: ${error.message}`, `Auto:${this.name}`)
         } finally {
             this.#flushing = false
-            // Topics may have arrived during the drain; schedule another pass if needed.
+            //  Topics may have arrived during the drain; schedule another pass if needed.
             if (this.#triggerQueue.length > 0 && this.#flushTimer == null) this.#scheduleTriggerFlush()
         }
     }
 
-    /**
-     * Reset trigger-coalescing state (used on cleanup / re-init).
-     * @private
-     */
+    /** Reset trigger-coalescing state (used on cleanup / re-init).
+     * @private */
     #resetTriggerCoalescing() {
         if (this.#flushTimer != null) {
             clearTimeout(this.#flushTimer)
@@ -345,12 +263,9 @@ export default class AutomationBase {
         this.#flushing = false
     }
 
-    // -- Cleanup ------------------------------------------------------------
+    //  -- Cleanup ------------------------------------------------------------
 
-    /**
-     * Clean up all event subscriptions and timers.
-     * Called during graceful shutdown.
-     */
+    /** Clean up all event subscriptions and timers. */
     cleanup() {
         this.stopTimer()
         this.#resetTriggerCoalescing()
@@ -365,15 +280,8 @@ export default class AutomationBase {
         this._initialized = false  // allow re-init after cleanup
     }
 
-    /**
-     * Return the human-interaction cooldown in milliseconds.
-     * Reads `automation.human_interaction_cooldown_ms` from ConfigService -- either legacy plain
-     * milliseconds or a human-readable duration ("25m", "1h"). Missing values silently
-     * default to DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS (15 minutes); present but
-     * invalid values log a warning and fall back to that same default (fail-open).
-     * A value of 0 disables the cooldown.
-     * @returns {number} Cooldown in milliseconds (>= 0)
-     */
+    /** Return the human-interaction cooldown in milliseconds.
+     * @returns {number} Cooldown in milliseconds (>= 0) */
     getHumanInteractionCooldownMs() {
         const raw = ConfigService.get('automation.human_interaction_cooldown_ms')
         if (raw == null) return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
@@ -388,20 +296,13 @@ export default class AutomationBase {
         return ms
     }
 
-    /**
-     * Parse the configured `silence_between` window ("HHmm-HHmm") into minutes-of-day bounds.
-     * Returns null when unset, malformed, or degenerate (start === end -- treated as a
-     * no-op), logging a warning for malformed values so existing automations are
-     * unaffected (fail-open). Shared by isInSilentPeriod()/isInSilentPeriodAt() and by
-     * subclasses that need raw session boundaries (e.g., weatherman day-position markers).
-     *
-     * @returns {{startMin: number, endMin: number}|null} Window bounds in minutes from midnight
-     */
+    /** Parse the configured `silence_between` window ("HHmm-HHmm") into minutes-of-day bounds.
+     * @returns {{startMin: number, endMin: number}|null} Window bounds in minutes from midnight */
     parseSilenceWindow() {
         const silenceConfig = this.config?.silence_between
         if (!silenceConfig || typeof silenceConfig !== 'string') return null
 
-        // Parse "HHmm-HHmm" -- e.g. "0500-0900", "2300-0600"
+        //  Parse "HHmm-HHmm" -- e.g. "0500-0900", "2300-0600"
         const match = String(silenceConfig).match(/^(\d{4})-(\d{4})$/)
         if (!match) {
             LoggerService.warn(
@@ -415,64 +316,37 @@ export default class AutomationBase {
         const startMin = toMinutes(match[1])
         const endMin   = toMinutes(match[2])
 
-        // start === end means the window covers either all or no time -- treat as no-op.
+        //  start === end means the window covers either all or no time -- treat as no-op.
         if (startMin === endMin) return null
         return { startMin, endMin }
     }
 
-    /**
-     * Check whether a specific moment falls within the configured silent period.
-     * Generalizes isInSilentPeriod() for arbitrary dates -- used by automations that need
-     * to predict upcoming suppressed ticks (e.g., weatherman day-position markers).
-     * Overnight wrap-around windows ("2300-0600") are supported; malformed configs fail open.
-     *
+    /** Check whether a specific moment falls within the configured silent period.
      * @param {Date} [date=new Date()] - Moment to check
-     * @returns {boolean} true if the given moment is inside the silent window
-     */
+     * @returns {boolean} true if the given moment is inside the silent window */
     isInSilentPeriodAt(date = new Date()) {
         const win = this.parseSilenceWindow()
         if (!win) return false
 
         const minutes = date.getHours() * 60 + date.getMinutes()
         if (win.startMin < win.endMin) {
-            // Normal range: e.g., 0500-0900 -> between 5 AM and 9 AM
+            //  Normal range: e.g., 0500-0900 -> between 5 AM and 9 AM.
             return minutes >= win.startMin && minutes < win.endMin
         }
-        // Overnight wrap: e.g., 2300-0600 -> from 11 PM to 6 AM next day
+        //  Overnight wrap: e.g., 2300-0600 -> from 11 PM to 6 AM next day.
         return minutes >= win.startMin || minutes < win.endMin
     }
 
-    /**
-     * Check whether the current local time falls within the configured silent period.
-     * The config key is `silence_between` with format `"HHmm-HHmm"` (e.g., "0500-0900"
-     * or overnight "2300-0600"). Returns false when no config is set so that existing
-     * automations are unaffected. Invalid formats produce a warning and fall through
-     * to normal behaviour (fail-open).
-     *
-     * @returns {boolean} true if execution should be suppressed right now
-     */
+    /** Check whether the current local time falls within the configured silent period.
+     * @returns {boolean} true if execution should be suppressed right now */
     isInSilentPeriod() {
         return this.isInSilentPeriodAt(new Date())
     }
 
-    /**
-     * Check whether a device is under a human-interaction cooldown using Redis TTL.
-     * The cooldown key (`cooldown:<slug>`) is set by DeviceBase when it detects
-     * a genuine human-initiated state change or dispatches a human-directed command.
-     * It auto-expires after the configured cooldown duration (stored as epoch in JSON
-     * payload), so automations simply check remaining time and skip if still active.
-     *
-     * Defense in depth: even when Redis is unavailable, a fresh HUMAN origin on the
-     * live device itself means someone just touched it -- bounded by the same
-     * cooldown window so a stale origin from long ago never blocks automation forever.
-     * This prevents silently failing open when Redis is down.
-     *
+    /** Check whether a device is under a human-interaction cooldown using Redis TTL.
      * @param {object} device - Device instance with getName() method
      * @param {{bypassCooldown?: boolean}} [options] - When bypassCooldown is true (forced manual
-     *   runs), the check short-circuits to "not in cooldown" so an explicit operator poke wins
-     *   over a recent touch; natural and delegated runs always perform the full check
-     * @returns {Promise<boolean>} true if the device should be skipped due to recent human interaction
-     */
+     * @returns {Promise<boolean>} true if the device should be skipped due to recent human interaction */
     async checkAndLogHumanInteraction(device, { bypassCooldown = false } = {}) {
         if (bypassCooldown) {
             this.log(`Human-interaction cooldown bypassed for ${device.getName()} (forced run)`, 'debug')
@@ -492,16 +366,14 @@ export default class AutomationBase {
                 return true
             }
         } catch (error) {
-            // Redis unavailable -- fall through to the local origin check below instead
-            // of silently allowing automation to fight the user.
+            //  Redis unavailable -- fall through to the local origin check below instead.
             LoggerService.warn(
                 `Redis cooldown lookup failed for "${device.getName()}": ${error.message} -- falling back to live device origin`,
                 `Auto:${this.name}`
             )
         }
 
-        // Local fallback: a fresh HUMAN origin on the device means someone just
-        // interacted, even without a Redis key. Recency-bounded by the same window.
+        //  Local fallback: a fresh HUMAN origin on the device means someone just.
         if (typeof device.getStateOrigin === 'function' && typeof device.getStateLastAt === 'function') {
             if (device.getStateOrigin() === DeviceStateOrigin.HUMAN) {
                 const lastAtMs = Date.parse(device.getStateLastAt() ?? '')
@@ -516,12 +388,9 @@ export default class AutomationBase {
         return false
     }
 
-    /**
-     * Helper method to log messages associated with this automation.
-     *
+    /** Helper method to log messages associated with this automation.
      * @param {string} message - The message to log
-     * @param {string} level - Log level ('info', 'debug', 'warn', 'error')
-     */
+     * @param {string} level - Log level ('info', 'debug', 'warn', 'error') */
     log(message, level = 'info') {
         const context = `Auto:${this.name}`
         switch (level.toLowerCase()) {

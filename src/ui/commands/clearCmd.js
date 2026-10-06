@@ -1,9 +1,7 @@
 /**
  * Clear Command -- clears the active window buffer.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -16,11 +14,8 @@ class ClearCmd extends CommandBase {
     static description = 'Clear current window buffer'
     static takesArgs = false
 
-    /**
-     * Clear the active window buffer so its scrollback starts fresh again.
-     * No-op when there is no active window or it lacks a clear() implementation.
-     * @param {string} args - Raw argument string after the verb (unused)
-     */
+    /** Clear the active window buffer so its scrollback starts fresh again.
+     * @param {string} args - Raw argument string after the verb (unused) */
     async execute(args) {
         const win = this.ctx.activeWindow
         if (win && typeof win.clear === 'function') {

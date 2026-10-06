@@ -1,35 +1,8 @@
 /**
  * Automation Command -- lists, inspects, and manually triggers loaded automations.
- *
  * Subcommands:
- *   /automation               Show GNU-style usage help with available subcommands
- *   /automation list         List all loaded automations in a tree-like format
- *                             (name, status, type, timer interval, triggers, rules)
- *   /automation debug <n>    Render one automation like list, plus silence window,
- *                             per-rule condition summaries, or config keys
- *   /automation coverage <n> Static timing-gap analysis: sweeps every hour x sensor/presence
- *                             scenario of that automation's rules and reports which rules can
- *                             fire at each hour, unmatched gap cells, overlaps and winners
- *   /automation coverage <n> legacy
- *                             Also diffs against the pre-c1e8c6f sun-derived day periods so
- *                             you can see how each shifted hour's behavior changed
- *   /automation run <n>      One-shot evaluation: walks the rules exactly once and executes
- *                             whatever matches right now ("Triggered by: manual" in the log).
- *                             The periodic timer is not involved -- it keeps running on its own
- *                             schedule, untouched by the poke
- *   /automation force <n>    Same one-shot run, but goes past the obvious gates: the silent
- *                             period, already-consumed once-per-day rule markers (without
- *                             consuming or refreshing them) and per-device human-interaction
- *                             cooldowns -- an explicit operator poke wins over a recent touch
- *   /automation force <n> first
- *                             As force, but also forces the first-of-day day-position
- *                             so the dated opening time line renders (debug poke)
- *
- * Uses plain text via ctx.print() so it plays nicely with buffer-based UI windows.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -39,9 +12,6 @@ import CommandBase from './base/commandBase.js'
 import temporal from '../../lib/date.js'
 import * as ruleCoverage from '../../lib/ruleCoverage.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** How many recent rule matches `/automation debug <name>` lists per automation. */
 const DEBUG_RECENT_MATCHES = 8
@@ -49,22 +19,15 @@ const DEBUG_RECENT_MATCHES = 8
 /** Trigger reason passed to execute() for manual runs -- shown as "Triggered by: manual". */
 const MANUAL_TRIGGER_REASON = 'manual'
 
-// ---------------------------------------------------------------------------
-// Command
-// ---------------------------------------------------------------------------
 
 class AutomationCmd extends CommandBase {
     static name = 'automation'
     static description = 'Manage automations: list, inspect, manually trigger'
     static takesArgs = true
 
-    /**
-     * Determine automation type by walking the prototype chain.
-     * Checks each ancestor class name for known base-class patterns.
-     *
+    /** Determine automation type by walking the prototype chain.
      * @param {Object} instance - Automation instance
-     * @returns {string} Type label like "ruleBased" or "base"
-     */
+     * @returns {string} Type label like "ruleBased" or "base" */
     static getType(instance) {
         let proto = Object.getPrototypeOf(instance)
         while (proto && proto !== Object.prototype) {
@@ -75,15 +38,9 @@ class AutomationCmd extends CommandBase {
         return 'base'
     }
 
-    /**
-     * Format a rule's conditions object into a compact human-readable summary.
-     * Numeric range objects become operator expressions (gte -> >=), arrays are
-     * joined with "|", and anything else falls back to JSON. Returns an empty
-     * string when there are no conditions at all.
-     *
+    /** Format a rule's conditions object into a compact human-readable summary.
      * @param {Object|null|undefined} conditions - Conditions object from a YAML rule
-     * @returns {string} Compact summary, e.g. "time_of_day=morning | illuminance>=400"
-     */
+     * @returns {string} Compact summary, e.g. "time_of_day=morning | illuminance>=400" */
     static formatConditionSummary(conditions) {
         if (!conditions || typeof conditions !== 'object') return ''
 
@@ -94,7 +51,7 @@ class AutomationCmd extends CommandBase {
             if (Array.isArray(value)) {
                 parts.push(`${key}=[${value.join('|')}]`)
             } else if (typeof value === 'object') {
-                // Numeric-range constraint: lt/lte/gt/gte bounds on the sensor reading
+                //  Numeric-range constraint: lt/lte/gt/gte bounds on the sensor reading.
                 const ops = { lt: '<', lte: '<=', gt: '>', gte: '>=' }
                 const boundParts = []
                 let allBounds = true
@@ -117,13 +74,8 @@ class AutomationCmd extends CommandBase {
         return parts.join(' | ')
     }
 
-    /**
-     * Dispatch to a subcommand based on the raw argument string. Bare invocation
-     * renders GNU-style usage help; "list" keeps the original tree listing so the
-     * previous behaviour is preserved one word deeper.
-     *
-     * @param {string} args - Raw argument string after the command verb
-     */
+    /** Dispatch to a subcommand based on the raw argument string. Bare invocation
+     * @param {string} args - Raw argument string after the command verb */
     async execute(args) {
         const container = this.ctx.automationContainer
         if (!container || typeof container.getAll !== 'function') {
@@ -137,8 +89,7 @@ class AutomationCmd extends CommandBase {
             return
         }
 
-        // First token is the subcommand, everything after it is kept intact as the
-        // payload so multi-word automation names keep working.
+        //  First token is the subcommand.
         const spaceIdx = trimmed.indexOf(' ')
         const sub = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase()
         const rest = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1).trim()
@@ -165,13 +116,10 @@ class AutomationCmd extends CommandBase {
         }
     }
 
-    // -- Subcommands ----------------------------------------------------------
 
-    /**
-     * Print GNU-style usage help with all subcommands and the registered automations.
+    /** Print GNU-style usage help with all subcommands and the registered automations.
      * @private
-     * @param {Object} container - AutomationContainer instance
-     */
+     * @param {Object} container - AutomationContainer instance */
     #printUsage(container) {
         const lines = [
             'Usage: /automation <subcommand> [args]',
@@ -199,13 +147,9 @@ class AutomationCmd extends CommandBase {
         this.ctx.print(lines.join('\n'))
     }
 
-    /**
-     * Render all loaded automations in a tree-like format (the "list" view).
-     * Shows name, status (loaded/not), type (ruleBased etc.), triggers,
-     * timer interval for timer-based ones, and rule count per automation.
+    /** Render all loaded automations in a tree-like format (the "list" view).
      * @private
-     * @param {Object} container - AutomationContainer instance
-     */
+     * @param {Object} container - AutomationContainer instance */
     #renderList(container) {
         const map = container.getAll()
         if (map.size === 0) {
@@ -213,7 +157,7 @@ class AutomationCmd extends CommandBase {
             return
         }
 
-        // Collect automation info into an array so we know which is last
+        //  Collect automation info into an array so we know which is last.
         const entries = []
         for (const [key, instance] of map.entries()) {
             entries.push({ name: key, props: this.#baseProps(instance) })
@@ -221,14 +165,10 @@ class AutomationCmd extends CommandBase {
         this.printTree(entries)
     }
 
-    /**
-     * Render one automation like the list view but with extra detail: silence
-     * window when configured, per-rule condition summaries, or top-level config
-     * keys for automations that carry no rules at all.
+    /** Render one automation like the list view but with extra detail: silence.
      * @private
      * @param {Object} container - AutomationContainer instance
-     * @param {string} rawName - Name argument after "debug" (may be empty)
-     */
+     * @param {string} rawName - Name argument after "debug" (may be empty) */
     #handleDebug(container, rawName) {
         const automation = this.#findAutomation(container, rawName)
         if (!automation) {
@@ -239,13 +179,13 @@ class AutomationCmd extends CommandBase {
 
         const props = this.#baseProps(automation)
 
-        // Silence window -- insert before the rule rows when configured
+        //  Silence window -- insert before the rule rows when configured.
         if (typeof automation.config?.silence_between === 'string') {
             const idx = props.findIndex(([label]) => label === 'rules')
             props.splice(idx, 0, ['silence', automation.config.silence_between])
         }
 
-        // Per-rule breakdown with compact condition summaries
+        //  Per-rule breakdown with compact condition summaries.
         const rules = Array.isArray(automation.config?.rules) ? automation.config.rules : []
         for (let i = 0; i < rules.length; i++) {
             const rule = rules[i] ?? {}
@@ -257,15 +197,14 @@ class AutomationCmd extends CommandBase {
             props.push([`rule ${i + 1}`, detail])
         }
 
-        // Non-rule-based automations: surface top-level config keys instead of rules
+        //  Non-rule-based automations: surface top-level config keys instead of rules.
         const hasConfigKeys = automation.config && typeof automation.config === 'object'
             && Object.keys(automation.config).length > 0
         if (rules.length === 0 && hasConfigKeys) {
             props.push(['config keys', Object.keys(automation.config).join(', ')])
         }
 
-        // Recent rule matches this automation recorded -- the same history the UI rules
-        // window renders, scoped to the automation being inspected.
+        //  Recent rule matches this automation recorded -- the same history the UI rules.
         if (typeof automation.getRecentRuleMatches === 'function') {
             const recent = automation.getRecentRuleMatches().slice(0, DEBUG_RECENT_MATCHES)
             if (recent.length === 0) {
@@ -284,18 +223,12 @@ class AutomationCmd extends CommandBase {
         this.printTree([{ name: automation.name ?? rawName, props }])
     }
 
-    /**
-     * Manually trigger an automation's execute() method. The run still goes through
-     * the normal guards (silent period, once-per-day markers, human-interaction
-     * cooldowns); execution details are logged under the Auto:<name> context.
+    /** Manually trigger an automation's execute() method. The run still goes through.
      * @private
      * @param {Object} container - AutomationContainer instance
      * @param {string} rawName - Name argument after "run" or "force" (may be empty)
      * @param {boolean} [force=false] - When true, dispatch carries force:true so automations
-     *   bypass their silent-period, once-per-day and human-interaction-cooldown guards
-     * @param {boolean} [forceFirst=false] - When true, dispatch carries forceFirst:true so
-     *   automations force the first-of-day day-position (dated opening time line)
-     */
+     * @param {boolean} [forceFirst=false] - When true, dispatch carries forceFirst:true so */
     async #handleRun(container, rawName, force = false, forceFirst = false) {
         const automation = this.#findAutomation(container, rawName)
         if (!automation) {
@@ -319,34 +252,19 @@ class AutomationCmd extends CommandBase {
         this.ctx.print(`Done -- see log window for "Auto:${name}" details.`)
     }
 
-    /**
-     * Force-run an automation: identical to run except the dispatch carries force:true,
-     * which lets automations go past the obvious gates -- skipping both checking and writing
-     * of their silent-period suppression and per-rule once-per-day markers (a forced/delegated
-     * run consumes no daily budget) as well as per-device human-interaction cooldowns, since
-     * an explicit operator poke wins over a recent touch. An optional trailing "first"
-     * token (e.g. "force <name> first") additionally carries forceFirst:true so the
-     * automation forces its first-of-day day-position -- a debug poke for the dated
-     * opening time line.
+    /** Force-run an automation: identical to run except the dispatch carries force:true.
      * @private
      * @param {Object} container - AutomationContainer instance
-     * @param {string} rawName - Name argument after "force" (may be empty; a trailing
-     *   "first" token is parsed as the forceFirst modifier, not part of the name)
-     */
+     * @param {string} rawName - Name argument after "force" (may be empty; a trailing */
     async #handleForce(container, rawName) {
         const { name, forceFirst } = this.#parseForceArgs(rawName)
         await this.#handleRun(container, name, true, forceFirst)
     }
 
-    /**
-     * Split a force subcommand payload into the automation name and the optional
-     * trailing "first" modifier. The name may be multi-word; only a final token that
-     * is exactly "first" (case-insensitive) is treated as the modifier, so names that
-     * merely contain the word elsewhere are preserved intact.
+    /** Split a force subcommand payload into the automation name and the optional.
      * @private
      * @param {string} rawName - Raw payload after "force" (may be empty)
-     * @returns {{name: string, forceFirst: boolean}}
-     */
+     * @returns {{name: string, forceFirst: boolean}} */
     #parseForceArgs(rawName) {
         const tokens = rawName.trim().split(/\s+/).filter(Boolean)
         if (tokens.length > 0 && tokens[tokens.length - 1].toLowerCase() === 'first') {
@@ -355,13 +273,10 @@ class AutomationCmd extends CommandBase {
         return { name: rawName.trim(), forceFirst: false }
     }
 
-    /**
-     * Parse a coverage payload into { name, legacy } -- a trailing "legacy" token is treated as
-     * the diff modifier rather than part of the automation name, mirroring the force/first pattern.
+    /** Parse a coverage payload into { name, legacy } -- a trailing "legacy" token is treated.
      * @private
      * @param {string} rawName - Raw argument string after the "coverage" verb.
-     * @returns {{name: string, legacy: boolean}} Resolved automation name and whether legacy diffing was requested.
-     */
+     * @returns {{name: string, legacy: boolean}} Resolved automation name and whether legacy diffing was requested. */
     #parseCoverageArgs(rawName) {
         const tokens = rawName.trim().split(/\s+/).filter(Boolean)
         if (tokens.length > 0 && tokens[tokens.length - 1].toLowerCase() === 'legacy') {
@@ -370,14 +285,10 @@ class AutomationCmd extends CommandBase {
         return { name: rawName.trim(), legacy: false }
     }
 
-    /**
-     * Dispatch the static timing-gap analysis for one automation and print the report through the
-     * preformatted path so aligned columns survive terminal wrapping. Purely read-only: no rule is
-     * executed and no device state is touched; live-state conditions are noted in the header.
+    /** Dispatch the static timing-gap analysis for one automation and print the report through.
      * @private
      * @param {Object|null} container - AutomationContainer from context (may be null when absent).
-     * @param {string} rawName - Raw argument string after the "coverage" verb.
-     */
+     * @param {string} rawName - Raw argument string after the "coverage" verb. */
     #handleCoverage(container, rawName) {
         const { name, legacy } = this.#parseCoverageArgs(rawName)
         const automation = this.#findAutomation(container, name)
@@ -403,22 +314,15 @@ class AutomationCmd extends CommandBase {
         this.printPreformatted(lines.join('\n'))
     }
 
-    // -- Tab completion -----------------------------------------------------
 
-    /**
-     * Tab-completion candidates for /automation arguments. The first token offers the known
-     * subcommands; once "run", "debug", "coverage" or "force" has been typed, registered automation
-     * names are offered so "/automation run TtsWea<Tab>" completes without consulting the list view
-     * first. For "force"/"coverage", once a name token is present the next token offers the optional
-     * trailing modifier ("first" / "legacy").
+    /** Tab-completion candidates for /automation arguments. The first token offers.
      * @param {Array<string>} typedTokens - Fully-typed tokens after the verb (partial excluded)
-     * @returns {Array<string>|null} Candidates for the next token, or null when none apply
-     */
+     * @returns {Array<string>|null} Candidates for the next token, or null when none apply */
     completeNextToken(typedTokens) {
         if (!typedTokens || typedTokens.length === 0) return ['list', 'debug', 'coverage', 'run', 'force']
         const sub = String(typedTokens[0]).toLowerCase()
         if (sub !== 'run' && sub !== 'debug' && sub !== 'coverage' && sub !== 'force') return null
-        // "<verb> <name> <Tab>" -> the name is already typed; only verbs with a trailing modifier offer one.
+        //  "<verb> <name> <Tab>" -> the name is already typed; only verbs with a trailing modifier offer one.
         if (typedTokens.length >= 2) {
             if (sub === 'force') return ['first']
             if (sub === 'coverage') return ['legacy']
@@ -429,13 +333,10 @@ class AutomationCmd extends CommandBase {
         return null
     }
 
-    /**
-     * Map a rule's display name to its "R#" reference in the printed index list so timeline and
-     * diff rows stay compact while remaining unambiguous.
+    /** Map a rule's display name to its "R#" reference in the printed index list so timeline.
      * @private
      * @param {Array<object>} rules - Rules under analysis (index order).
-     * @returns {Map<string, string>} Rule name to R-reference label.
-     */
+     * @returns {Map<string, string>} Rule name to R-reference label. */
     #ruleRefs(rules) {
         const map = new Map()
         rules.forEach((r, i) => {
@@ -445,12 +346,10 @@ class AutomationCmd extends CommandBase {
         return map
     }
 
-    /**
-     * Render flags worth surfacing next to a rule name: once-per-day budget, invoke-only mode, priority.
+    /** Render flags worth surfacing next to a rule name: once-per-day budget, invoke-only mode, priority.
      * @private
      * @param {object} rule - A single YAML rule object.
-     * @returns {string} Space-joined flag labels or empty string when none apply.
-     */
+     * @returns {string} Space-joined flag labels or empty string when none apply. */
     #ruleFlags(rule) {
         const parts = []
         if (rule?.once === true) parts.push('[once/day]')
@@ -459,16 +358,13 @@ class AutomationCmd extends CommandBase {
         return parts.join(' ')
     }
 
-    /**
-     * Build the main coverage report lines: header with sweep dimensions, the R-indexed rule list,
-     * an hour timeline grouped by identical match/gap profile, then gap cells and overlap examples.
+    /** Build the main coverage report lines: header with sweep dimensions, the R-indexed rule list.
      * @private
      * @param {Object} automation - Resolved automation instance (for its display name).
      * @param {Array<object>} rules - Rules under analysis.
      * @param {{meta: Object}} built - buildScenarios() result providing grid metadata.
      * @param {Object} report - analyzeRules() result for the current period map.
-     * @returns {string[]} Report lines ready to join and print.
-     */
+     * @returns {string[]} Report lines ready to join and print. */
     #renderCoverageReport(automation, rules, built, report) {
         const L = []
         const sensorDesc = built.meta.sensorKeys.length > 0
@@ -479,7 +375,7 @@ class AutomationCmd extends CommandBase {
         L.push(`${report.meta.ruleCount} rules · sensors: ${sensorDesc}${presenceDesc} · ${report.meta.scenarioCount} scenario(s)/hour${built.meta.truncated ? ' [grid truncated]' : ''}`)
         L.push(report.meta.note)
 
-        // Rule index list with behavioral flags so timeline references stay short but unambiguous.
+        //  Rule index list with behavioral flags so timeline references stay short but unambiguous.
         const refs = this.#ruleRefs(rules)
         L.push('rules:')
         rules.forEach((r, i) => {
@@ -488,7 +384,7 @@ class AutomationCmd extends CommandBase {
             L.push(`  R${i + 1} "${n}"${flags ? ' ' + flags : ''}`)
         })
 
-        // Timeline -- group consecutive hours sharing the same match/gap profile for compactness.
+        //  Timeline -- group consecutive hours sharing the same match/gap profile for compactness.
         L.push('timeline (union of rules able to fire at each hour; G k/N = gap in k scenarios):')
         const groups = []
         for (const h of report.hours) {
@@ -509,7 +405,7 @@ class AutomationCmd extends CommandBase {
             L.push(`  ${range}  ${periods.padEnd(16)}${ruleList}${gapNote}`)
         }
 
-        // Gap cells -- the actionable part: hour/scenario combinations no rule can serve.
+        //  Gap cells -- the actionable part: hour/scenario combinations no rule can serve.
         if (report.summary.gapCells > 0) {
             L.push(`GAPS -- ${report.summary.gapCells} of ${report.summary.totalCells} cells unmatched:`)
             for (const g of report.gaps.slice(0, 12)) {
@@ -520,7 +416,7 @@ class AutomationCmd extends CommandBase {
             L.push('GAPS -- none: every hour/scenario combination matches at least one rule')
         }
 
-        // Overlaps -- where several rules compete; note who wins by priority so intent is explicit.
+        //  Overlaps -- where several rules compete; note who wins by priority so intent is explicit.
         if (report.overlaps.count > 0) {
             L.push(`OVERLAPS -- ${report.overlaps.count} cells with multiple matching rules (winner by priority):`)
             for (const ex of report.overlaps.examples.slice(0, 4)) {
@@ -534,17 +430,13 @@ class AutomationCmd extends CommandBase {
         return L
     }
 
-    /**
-     * Render the legacy-diff section: for January (winter worst case) and June (summer), list each
-     * shifted hour whose set of matchable rules changed versus today's fixed partition, naming what
-     * was lost and gained. This surfaces exactly how c1e8c6f moved behavior on existing rules.
+    /** Render the legacy-diff section: for January (winter worst case) and June (summer)
      * @private
      * @param {Array<object>} rules - Rules under analysis.
      * @param {{scenarios: Array<Object>}} built - Shared scenario grid so both maps are swept identically.
      * @param {Object} currentReport - analyzeRules() result for the current period map.
      * @param {Array<string>} currentMap - Current hour-to-period mapping.
-     * @returns {string[]} Diff lines ready to join and print.
-     */
+     * @returns {string[]} Diff lines ready to join and print. */
     #renderLegacyDiff(rules, built, currentReport, currentMap) {
         const L = ['-- Legacy diff vs pre-c1e8c6f sun-derived periods --']
         const refs = this.#ruleRefs(rules)
@@ -569,14 +461,12 @@ class AutomationCmd extends CommandBase {
         return L
     }
 
-    // -- Shared helpers -------------------------------------------------------
+    //  -- Shared helpers -------------------------------------------------------
 
-    /**
-     * Build the standard property rows shown for every automation in list and debug views.
+    /** Build the standard property rows shown for every automation in list and debug views.
      * @private
      * @param {Object} instance - Automation instance
-     * @returns {Array<[string, string]>} Rows of [label, value] pairs
-     */
+     * @returns {Array<[string, string]>} Rows of [label, value] pairs */
     #baseProps(instance) {
         const triggers = instance.getTriggerTopics?.() ?? []
         const rulesCount = Array.isArray(instance.config?.rules) ? instance.config.rules.length : 0
@@ -589,14 +479,11 @@ class AutomationCmd extends CommandBase {
         ]
     }
 
-    /**
-     * Resolve an automation instance from a user-supplied name. Tries exact match first,
-     * then falls back to case-insensitive comparison so mistyped casing still works.
+    /** Resolve an automation instance from a user-supplied name.
      * @private
      * @param {Object} container - AutomationContainer instance
      * @param {string} rawName - Name typed by the user (may be empty)
-     * @returns {Object|null} Automation instance or null when not found
-     */
+     * @returns {Object|null} Automation instance or null when not found */
     #findAutomation(container, rawName) {
         if (!rawName) return null
         const exact = typeof container.getAutomation === 'function' ? container.getAutomation(rawName) : null
@@ -608,21 +495,17 @@ class AutomationCmd extends CommandBase {
         return null
     }
 
-    /**
-     * Collect all registered automation names in sorted order.
+    /** Collect all registered automation names in sorted order.
      * @private
      * @param {Object} container - AutomationContainer instance
-     * @returns {string[]} Sorted list of automation names
-     */
+     * @returns {string[]} Sorted list of automation names */
     #availableNames(container) {
         return [...container.getAll().keys()].sort()
     }
 
-    /**
-     * Print a one-line listing of all registered automation names (or a note when none).
+    /** Print a one-line listing of all registered automation names (or a note when none).
      * @private
-     * @param {Object} container - AutomationContainer instance
-     */
+     * @param {Object} container - AutomationContainer instance */
     #printAvailableNames(container) {
         const names = this.#availableNames(container)
         if (names.length === 0) {

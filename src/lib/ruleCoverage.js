@@ -1,31 +1,8 @@
 /**
  * Rule Coverage Analyzer.
- *
- * Statically sweeps a rule-based automation's YAML rules across every hour of the day and a
- * derived grid of sensor/presence/video_player scenarios to find timing gaps (hours where no
- * rule can match), overlaps (several rules matching at once) and which rule wins by priority --
- * without touching live devices, MQTT or Redis. It mirrors the condition semantics of
- * {@link ../automation/base/ruleBasedAutomationBase.js conditionsMatch()} for every statically
- * evaluable condition type: `time_of_day` period membership, actual wall-clock hour bounds (`hour:`), season, numeric range bounds
- * (`lt`/`lte`/`gt`/`gte`) on arbitrary sensor keys, network presence maps, video_player
- * status lists (no recorded state enumerates to the `offline` status), and `any_of`/`all_of`
- * composite groups over nested condition sets (recursed into when sweeping scenario dimensions). Conditions that require live state
- * (`state_changed_ago_minutes`) or a location/date-dependent sun event (`after_latest_of`,
- * `after_earliest_of`) are treated as satisfied and noted in the report meta.
- *
- * The hour-to-period mapping is injected per analysis so callers can evaluate against the
- * current fixed partition ({@link lib/date getHourToPeriodMap()}) or against an alternative
- * map -- e.g., {@link legacyHourToPeriod}, which reproduces the pre-c1e8c6f sun-derived
- * boundaries from Central-Europe sunrise/sunset averages. Diffing the two directly shows how
- * each hour's behavior shifted when day periods became clock-based.
- *
- * Pure data in / pure data out: no services, no I/O, deterministic given its inputs. Used by
- * the `/automation coverage <name>` UI command; see doc/architecture/time-of-day-periods.md
- * for what the results mean when designing rules.
- *
+ * Statically sweeps a rule-based automation's YAML rules across every hour of the day.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -34,9 +11,6 @@
 
 import temporal from './date.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Condition keys handled specially before the generic numeric-range loop (mirrors conditionsMatch()). */
 const RESERVED_CONDITION_KEYS = new Set([
@@ -46,12 +20,10 @@ const RESERVED_CONDITION_KEYS = new Set([
     'presence',
     'video_player',
     'state_changed_ago_minutes',
-    // Sun/clock merged gates resolve against real dawn/dusk instants + geo -- not part of the
-    // static hour/sensor grid, so they are treated as satisfied (like state_changed_ago_minutes).
+    //  Sun/clock merged gates resolve against real dawn/dusk instants + geo.
     'after_latest_of',
     'after_earliest_of',
-    // Composite condition groups -- lists of nested condition sets combined with OR / AND gates;
-    // their list values must never be mistaken for sensor bounds by the dynamic range loop.
+    //  Composite condition groups -- lists of nested condition sets combined with OR / AND gates;
     'any_of',
     'all_of',
 ])
@@ -87,29 +59,18 @@ const MAX_POINTS_PER_SENSOR = 8
 /** Hard cap on total scenarios per analysis; beyond it the grid is truncated and flagged in meta. */
 const MAX_SCENARIOS = 512
 
-// ---------------------------------------------------------------------------
-// Period maps (current + legacy)
-// ---------------------------------------------------------------------------
+//  Period maps (current + legacy)
 
-/**
- * Hour-to-period lookup for the current fixed partition ({@link lib/date DAY_PERIODS}).
- * Delegates to {@link lib/date getHourToPeriodMap()} so the table stays defined in exactly one place.
- * @returns {Array<string>} 24-element array; index = hour (0-23), value = period name.
- */
+/** Hour-to-period lookup for the current fixed partition ({@link lib/date DAY_PERIODS}).
+ * @returns {Array<string>} 24-element array; index = hour (0-23), value = period name. */
 export function currentHourToPeriod() {
     return temporal.getHourToPeriodMap()
 }
 
-/**
- * Derive which of the five day periods a clock hour fell into under the pre-c1e8c6f
- * sun-derived scheme: daylight split into four equal quarters, evening extended two hours
- * past sunset, night spanning until next sunrise -- using Central-Europe monthly averages.
- * Kept here solely for before/after diffing of rule behavior after the switch to fixed zones.
- *
+/** Derive which of the five day periods a clock hour fell into under the pre-c1e8c6f.
  * @param {number} hour - Clock hour (0-23).
  * @param {number} monthIndex - Zero-based month (0=January .. 11=December); wraps modulo 12.
- * @returns {'morning'|'noon'|'afternoon'|'evening'|'night'} The legacy period active at that hour.
- */
+ * @returns {'morning'|'noon'|'afternoon'|'evening'|'night'} The legacy period active at that hour. */
 export function legacyHourToPeriod(hour, monthIndex) {
     const [sunrise, sunset] = LEGACY_SUN_TIMES[((monthIndex % 12) + 12) % 12]
     const q = (sunset - sunrise) / 4
@@ -123,7 +84,7 @@ export function legacyHourToPeriod(hour, monthIndex) {
         noon:      [morningEnd + 1, noonEnd],
         afternoon: [noonEnd + 1, afternoonEnd],
         evening:   [afternoonEnd + 1, nightStart - 1],
-        // Wraps midnight; handled by the wrap-aware range check below.
+        //  Wraps midnight; handled by the wrap-aware range check below.
         night:     [nightStart, sunrise - 1],
     }
     for (const [name, [from, to]] of Object.entries(ranges)) {
@@ -132,21 +93,17 @@ export function legacyHourToPeriod(hour, monthIndex) {
     return 'night' // unreachable -- the five ranges always partition all 24 hours
 }
 
-/**
- * Build a full 24-entry legacy period map for one month, mirroring {@link currentHourToPeriod}'s shape.
+/** Build a full 24-entry legacy period map for one month, mirroring {@link currentHourToPeriod}'s shape.
  * @param {number} monthIndex - Zero-based month (0=January .. 11=December).
- * @returns {Array<string>} 24-element array; index = hour (0-23), value = legacy period name.
- */
+ * @returns {Array<string>} 24-element array; index = hour (0-23), value = legacy period name. */
 export function buildLegacyHourMap(monthIndex) {
     return Array.from({ length: 24 }, (_, h) => legacyHourToPeriod(h, monthIndex))
 }
 
-/**
- * List the clock hours whose period assignment differs between two maps.
+/** List the clock hours whose period assignment differs between two maps.
  * @param {Array<string>} currentMap - Current hour-to-period mapping (24 entries).
  * @param {Array<string>} otherMap - Mapping to compare against (e.g., a legacy month map).
- * @returns {Array<{hour: number, from: string, to: string}>} Changed hours in ascending order.
- */
+ * @returns {Array<{hour: number, from: string, to: string}>} Changed hours in ascending order. */
 export function changedHours(currentMap, otherMap) {
     const out = []
     for (let h = 0; h < 24; h++) {
@@ -157,17 +114,12 @@ export function changedHours(currentMap, otherMap) {
     return out
 }
 
-// ---------------------------------------------------------------------------
-// Condition evaluation (mirrors RuleBasedAutomationBase.conditionsMatch semantics)
-// ---------------------------------------------------------------------------
+//  Condition evaluation (mirrors RuleBasedAutomationBase.conditionsMatch semantics)
 
-/**
- * Check a value against lt/lte/gt/gte bounds exactly like the base class' #matchesNumericRange():
- * null/undefined never satisfies any bound; absent operators impose no constraint.
+/** Check a value against lt/lte/gt/gte bounds exactly like the base class' #matchesNumericRange():
  * @param {number|null|undefined} value - Sensor reading under test.
  * @param {{lt?: number, lte?: number, gt?: number, gte?: number}} constraints - Bound object from YAML.
- * @returns {boolean} True when every present bound holds.
- */
+ * @returns {boolean} True when every present bound holds. */
 export function matchesNumericRange(value, constraints) {
     if (value === null || value === undefined) return false
     if (constraints.lt !== undefined && !(value < constraints.lt)) return false
@@ -177,13 +129,9 @@ export function matchesNumericRange(value, constraints) {
     return true
 }
 
-/**
- * Normalize a presence condition to `{ host: boolean }` pairs, mirroring the base class'
- * #normalizePresenceCondition() -- string means "online", array means all listed online,
- * objects pass through with explicit per-host expectations.
+/** Normalize a presence condition to `{ host: boolean }` pairs, mirroring the base class'
  * @param {string|string[]|Record<string, boolean>} presence - Raw condition value from YAML.
- * @returns {Record<string, boolean>} Host name to expected-online flag.
- */
+ * @returns {Record<string, boolean>} Host name to expected-online flag. */
 export function normalizePresenceCondition(presence) {
     if (typeof presence === 'string') return { [presence]: true }
     if (Array.isArray(presence)) {
@@ -194,11 +142,9 @@ export function normalizePresenceCondition(presence) {
     return presence ?? {}
 }
 
-/**
- * Normalize a video_player condition to `{ host: string[] }`, mirroring #normalizeVideoPlayerCondition().
+/** Normalize a video_player condition to `{ host: string[] }`, mirroring #normalizeVideoPlayerCondition().
  * @param {Record<string, string|string[]>} videoPlayer - Raw condition value from YAML.
- * @returns {Record<string, string[]>} Host name to accepted status list.
- */
+ * @returns {Record<string, string[]>} Host name to accepted status list. */
 export function normalizeVideoPlayerCondition(videoPlayer) {
     const result = {}
     for (const [host, statuses] of Object.entries(videoPlayer ?? {})) {
@@ -207,29 +153,20 @@ export function normalizeVideoPlayerCondition(videoPlayer) {
     return result
 }
 
-/**
- * Evaluate one rule's conditions against a static context snapshot. Supports every statically
- * evaluable condition type; `season` is satisfied when the context carries no season (callers
- * that do not sweep seasons), and unknown extra keys without object bounds pass through -- both
- * matching how conditionsMatch() treats them at runtime. Composite groups are evaluated
- * recursively with the same fail-closed rules as at runtime: `any_of` needs at least one
- * matching sub-group (empty/non-array fails closed), `all_of` needs every sub-group (empty list
- * passes vacuously, non-array fails closed); a subgroup that is not a plain object fails closed.
- *
+/** Evaluate one rule's conditions against a static context snapshot. Supports every statically.
  * @param {Record<string, unknown>|null|undefined} conditions - Conditions object from a YAML rule.
  * @param {{timeOfDay?: string|null, hour?: number|null, season? string|null, presence?: Record<string, boolean>, videoPlayer?: Record<string, string|undefined>}} ctx - Static context: period name, swept clock hour for the hour condition, optional season, per-host online flags, per-host player status (absent key enumerates to `offline`).
  * @param {Record<string, number|null>} [sensorValues={}] - Sensor readings keyed by logical sensor name.
- * @returns {boolean} True when every present condition holds.
- */
+ * @returns {boolean} True when every present condition holds. */
 export function evaluateRule(conditions, ctx, sensorValues = {}) {
     if (!conditions || typeof conditions !== 'object') return true
 
-    // Composite gates -- mirror #evaluateConditionGroup() in the automation base class.
+    //  Composite gates -- mirror #evaluateConditionGroup() in the automation base class.
     if (conditions.any_of !== undefined) {
         if (!Array.isArray(conditions.any_of) || conditions.any_of.length === 0) return false
         let anyMatched = false
         for (const sub of conditions.any_of) {
-            // Subgroup position fails closed on non-objects (unlike the top-level null guard).
+            //  Subgroup position fails closed on non-objects (unlike the top-level null guard).
             if (sub != null && typeof sub === 'object' && !Array.isArray(sub) && evaluateRule(sub, ctx, sensorValues)) {
                 anyMatched = true; break
             }
@@ -243,33 +180,29 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
         }
     }
 
-    // time_of_day check
+    //  time_of_day check.
     if (conditions['time_of_day']) {
         const periods = Array.isArray(conditions['time_of_day']) ? conditions['time_of_day'] : [conditions['time_of_day']]
         if (!periods.includes(ctx.timeOfDay)) return false
     }
 
-    // season check -- satisfied when the analysis does not pin a season
+    //  season check -- satisfied when the analysis does not pin a season.
     if (conditions.season && ctx.season != null) {
         const seasons = Array.isArray(conditions.season) ? conditions.season : [conditions.season]
         if (!seasons.includes(ctx.season)) return false
     }
 
-    // Actual wall-clock hour check -- mirrors conditionsMatch(); analyzeRules() injects the swept hour
-    // as ctx.hour. Absent clock context means a declared bound cannot be satisfied.
+    //  Actual wall-clock hour check -- mirrors conditionsMatch(); analyzeRules() injects the swept hour.
     if (conditions.hour !== undefined) {
         const constraint = conditions.hour
         if (typeof constraint === 'number') {
             if (!Number.isInteger(ctx.hour) || Math.trunc(constraint) !== ctx.hour) return false
         } else if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
             const ops = ['lt', 'lte', 'gt', 'gte']
-            // Sun-event shorthands ('sunrise'/'sunset', ...) depend on real dawn/dusk instants that are not part
-            // of the static clock grid -- treat them as satisfied (like after_latest_of/after_earliest_of).
+            //  Sun-event shorthands ('sunrise'/'sunset', ...) depend on real dawn/dusk instants that are not part.
             const usesSunShorthand = ops.some((op) => SUN_HOUR_SHORTHANDS.has(String(constraint[op] ?? '').trim().toLowerCase()))
             if (!usesSunShorthand) {
-                // NATO-style HHMM bounds (1230 == 12:30) carry minute precision and must be resolved to
-                // fractional hours before comparing: the raw 1230 dwarfs every swept hour, which would make
-                // the bound look always-satisfied and hide the gap it actually creates.
+                //  NATO-style HHMM bounds (1230 == 12:30) carry minute precision and must be resolved.
                 const resolved = {}
                 for (const op of ops) {
                     const bound = constraint[op]
@@ -288,7 +221,7 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
             return false
         }
     }
-    // presence check -- hosts absent from the scenario count as offline (mirrors networkPresence.isOnline())
+    //  presence check -- hosts absent from the scenario count as offline (mirrors networkPresence.isOnline())
     if (conditions.presence !== undefined) {
         for (const [host, shouldBeOnline] of Object.entries(normalizePresenceCondition(conditions.presence))) {
             const isOnline = ctx.presence ? Boolean(ctx.presence[host]) : false
@@ -296,7 +229,7 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
         }
     }
 
-    // video player status check -- no recorded state counts as the enumerated `offline` status
+    //  video player status check -- no recorded state counts as the enumerated `offline` status.
     if (conditions['video_player'] !== undefined) {
         for (const [host, statuses] of Object.entries(normalizeVideoPlayerCondition(conditions['video_player']))) {
             const status = ctx.videoPlayer?.[host] ?? VIDEO_PLAYER_OFFLINE
@@ -304,7 +237,7 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
         }
     }
 
-    // Dynamic: any remaining object-valued condition key -> numeric range check against sensor values.
+    //  Dynamic: any remaining object-valued condition key -> numeric range check against sensor values.
     for (const [key, constraint] of Object.entries(conditions)) {
         if (RESERVED_CONDITION_KEYS.has(key)) continue
         if (constraint && typeof constraint === 'object') {
@@ -315,17 +248,11 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
     return true
 }
 
-// ---------------------------------------------------------------------------
-// Scenario grid construction
-// ---------------------------------------------------------------------------
+//  Scenario grid construction.
 
-/**
- * Depth-first visit over a condition group tree: invokes fn on the group itself and on every
- * subgroup reachable through any_of/all_of lists. Malformed entries are skipped silently -- the
- * walkers only feed static-analysis dimensions, never runtime decisions.
+/** Depth-first visit over a condition group tree: invokes fn on the group itself.
  * @param {Record<string, unknown>|null|undefined} conds - Root condition group from YAML.
- * @param {(group: Record<string, unknown>) => void} fn - Visitor invoked per group.
- */
+ * @param {(group: Record<string, unknown>) => void} fn - Visitor invoked per group. */
 function forEachConditionGroup(conds, fn) {
     if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return
     fn(conds)
@@ -336,12 +263,9 @@ function forEachConditionGroup(conds, fn) {
     }
 }
 
-/**
- * Collect the logical sensor keys that appear as bounded numeric conditions across all rules,
- * including bounds nested inside `any_of`/`all_of` composite groups.
+/** Collect the logical sensor keys that appear as bounded numeric conditions across all rules.
  * @param {Array<Record<string, unknown>>} rules - Rules from an automation config.
- * @returns {string[]} Sorted unique sensor key names.
- */
+ * @returns {string[]} Sorted unique sensor key names. */
 export function collectSensorKeys(rules) {
     const keys = new Set()
     for (const rule of rules ?? []) {
@@ -355,13 +279,9 @@ export function collectSensorKeys(rules) {
     return [...keys].sort()
 }
 
-/**
- * Derive deterministic sample points around every bound a rule declares for one sensor: each
- * bound itself, midpoints between adjacent bounds, zero when all bounds are positive, and a
- * point beyond the highest bound -- guaranteeing both sides of every threshold get tested.
+/** Derive deterministic sample points around every bound a rule declares for one sensor.
  * @param {number[]} bounds - All finite bound values declared for this sensor across the rules.
- * @returns {number[]} Ascending unique sample values (capped at MAX_POINTS_PER_SENSOR).
- */
+ * @returns {number[]} Ascending unique sample values (capped at MAX_POINTS_PER_SENSOR). */
 function samplePoints(bounds) {
     const vals = [...new Set(bounds.filter((v) => Number.isFinite(v)))].sort((a, b) => a - b)
     if (vals.length === 0) return [0]
@@ -375,19 +295,17 @@ function samplePoints(bounds) {
 
     let out = [...pts].sort((a, b) => a - b)
     if (out.length > MAX_POINTS_PER_SENSOR) {
-        // Keep first/last and spread evenly so extreme bands stay represented.
+        //  Keep first/last and spread evenly so extreme bands stay represented.
         const step = Math.ceil(out.length / MAX_POINTS_PER_SENSOR)
         out = out.filter((_, i) => i % step === 0 || i === out.length - 1)
     }
     return out
 }
 
-/**
- * Expand per-host video_player option lists into every combination as `{ host: status|undefined }` maps.
+/** Expand per-host video_player option lists into every combination as `{ host: status|undefined }` maps.
  * @param {Array<Array<string|undefined>>} optionsPerHost - Allowed statuses (plus undefined baseline) per host, in host order.
  * @param {string[]} hosts - Host names aligned with optionsPerHost.
- * @returns {Array<Record<string, string|undefined>>} One map per combination; a single empty map when no hosts exist.
- */
+ * @returns {Array<Record<string, string|undefined>>} One map per combination; a single empty map when no hosts exist. */
 function expandVp(optionsPerHost, hosts) {
     let combos = [{}]
     for (let i = 0; i < hosts.length; i++) {
@@ -400,15 +318,13 @@ function expandVp(optionsPerHost, hosts) {
     return combos
 }
 
-/**
- * Render the compact human label used in gap/overlap listings for one scenario.
+/** Render the compact human label used in gap/overlap listings for one scenario.
  * @param {Record<string, number>} sensors - Sensor key to sampled value.
  * @param {Record<string, boolean>} presenceMap - Host to online flag.
  * @param {string[]} allPresenceHosts - Every known presence host (to render explicit offline states).
  * @param {Record<string, string|undefined>} vpMap - Host to player status.
  * @param {string[]} allVpHosts - Every known video-player host.
- * @returns {string} e.g. "illuminance=300 temperature=20 presence=-" or "... presence=kyeno".
- */
+ * @returns {string} e.g. "illuminance=300 temperature=20 presence=-" or "... presence=kyeno". */
 function scenarioLabel(sensors, presenceMap, allPresenceHosts, vpMap, allVpHosts) {
     const parts = Object.entries(sensors).map(([k, v]) => `${k}=${v}`)
     if (allPresenceHosts.length > 0) {
@@ -421,18 +337,13 @@ function scenarioLabel(sensors, presenceMap, allPresenceHosts, vpMap, allVpHosts
     return parts.join(' ')
 }
 
-/**
- * Build the full scenario grid for an analysis: every combination of sampled sensor values,
- * presence on/off states (all subsets when three hosts or fewer), and video_player statuses
- * observed in the rules plus a no-state baseline. Deterministic ordering keeps reports stable.
- *
+/** Build the full scenario grid for an analysis: every combination of sampled sensor values.
  * @param {Array<Record<string, unknown>>} rules - Rules from an automation config.
- * @returns {{scenarios: Array<{label: string, context: object, sensors: Record<string, number>}>, meta: {sensorKeys: string[], pointsBySensor: Record<string, number[]>, presenceHosts: string[], videoPlayerHosts: string[], truncated: boolean}}} Scenario list plus construction metadata.
- */
+ * @returns {{scenarios: Array<{label: string, context: object, sensors: Record<string, number>}>, meta: {sensorKeys: string[], pointsBySensor: Record<string, number[]>, presenceHosts: string[], videoPlayerHosts: string[], truncated: boolean}}} Scenario list plus construction metadata. */
 export function buildScenarios(rules) {
     const ruleList = Array.isArray(rules) ? rules : []
 
-    // Sensor dimensions -- bounds collected per key across all rules (including nested groups).
+    //  Sensor dimensions -- bounds collected per key across all rules (including nested groups).
     const sensorKeys = collectSensorKeys(ruleList)
     const pointsBySensor = {}
     for (const key of sensorKeys) {
@@ -448,8 +359,7 @@ export function buildScenarios(rules) {
         pointsBySensor[key] = samplePoints(bounds)
     }
 
-    // Presence dimension -- every host any rule references (top-level or inside composite groups);
-    // subsets when small enough to enumerate fully.
+    //  Presence dimension -- every host any rule references (top-level or inside composite groups);
     const presenceHostSet = new Set()
     for (const rule of ruleList) {
         forEachConditionGroup(rule.conditions, (group) => {
@@ -476,8 +386,7 @@ export function buildScenarios(rules) {
         }
     }
 
-    // Video-player dimension -- statuses the rules themselves list per host (top-level or inside
-    // composite groups), plus a no-state baseline.
+    // Video-player dimension -- statuses the rules themselves list per host.
     const vpStatusesByHost = {}
     for (const rule of ruleList) {
         forEachConditionGroup(rule.conditions, (group) => {
@@ -496,7 +405,7 @@ export function buildScenarios(rules) {
     }
     const vpMaps = expandVp(optionsPerHost, vpHosts)
 
-    // Assemble the cartesian product in a stable order.
+    //  Assemble the cartesian product in a stable order.
     let sensorCombos = [[]]
     for (const key of sensorKeys) {
         const next = []
@@ -529,16 +438,10 @@ export function buildScenarios(rules) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Analysis
-// ---------------------------------------------------------------------------
 
-/**
- * Pick the winning rule among matches by priority (higher wins; ties keep config order),
- * mirroring how execute() resolves competing rules at runtime.
+/** Pick the winning rule among matches by priority (higher wins; ties keep config order)
  * @param {Array<{rule: object, index: number}>} matches - Matching rules with their original positions.
- * @returns {{name: string, priority: number}} Winner's display name and effective priority.
- */
+ * @returns {{name: string, priority: number}} Winner's display name and effective priority. */
 export function pickWinner(matches) {
     const sorted = [...matches].sort((a, b) => {
         const pa = typeof a.rule.priority === 'number' ? a.rule.priority : 0
@@ -549,14 +452,9 @@ export function pickWinner(matches) {
     return { name: String(top?.rule.name ?? '(unnamed)'), priority: typeof top?.rule.priority === 'number' ? top.rule.priority : 0 }
 }
 
-/**
- * Run the full sweep: every hour x every scenario through evaluateRule(), collecting per-hour
- * coverage, gap cells, overlap examples and an overall summary. Pure -- same inputs always yield
- * the same report.
- *
+/** Run the full sweep: every hour x every scenario through evaluateRule(), collecting per-hour.
  * @param {{rules?: Array<Record<string, unknown>>, periodMap: Array<string>, scenarios: Array<{label: string, context: object, sensors: Record<string, number>}}, season?: string|null, maxGapCells?: number, maxOverlapExamples?: number}} options - Rules to analyze, the 24-entry hour-to-period mapping in force (current or legacy), prebuilt scenario grid, optional pinned season, output caps.
- * @returns {{meta: object, hours: Array<object>, gaps: Array<object>, overlaps: {count: number, examples: Array<object>}, summary: object}} Structured report ready for rendering.
- */
+ * @returns {{meta: object, hours: Array<object>, gaps: Array<object>, overlaps: {count: number, examples: Array<object>}, summary: object}} Structured report ready for rendering. */
 export function analyzeRules(options) {
     const rules = Array.isArray(options.rules) ? options.rules : []
     const periodMap = options.periodMap
@@ -577,7 +475,7 @@ export function analyzeRules(options) {
         const matchedNames = new Set()
         for (const scenario of scenarios) {
             totalCells++
-            // Inject this hour's period so the same scenario grid works under any period map (current or legacy).
+            //  Inject this hour's period so the same scenario grid works under any period map (current or legacy).
             const evalCtx = { ...scenario.context, timeOfDay: period, hour: h }
             const matches = []
             rules.forEach((rule, index) => {
@@ -635,11 +533,9 @@ export function analyzeRules(options) {
     }
 }
 
-/**
- * Reduce a report to the per-hour union of matching rule names for set-diffing against another map's report.
+/** Reduce a report to the per-hour union of matching rule names for set-diffing against another map's report.
  * @param {{hours?: Array<{hour: number, matchedRules: string[]}>}} report - Report from analyzeRules().
- * @returns {Map<number, Set<string>>} Hour to set of rule names that can fire there.
- */
+ * @returns {Map<number, Set<string>>} Hour to set of rule names that can fire there. */
 export function matchedNamesByHour(report) {
     const out = new Map()
     for (const entry of report.hours ?? []) out.set(entry.hour, new Set(entry.matchedRules))

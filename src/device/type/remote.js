@@ -2,11 +2,8 @@
  * Remote device type.
  *  Extends DeviceBase with action-to-command mapping for multi-button remotes.
  *  Uses DeviceContainer to find target Mechanism devices and call receiveCommand()
- *  instead of publishing directly to MQTT.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -23,147 +20,87 @@ import InteractionContainer from '../../interaction/container/interactionContain
 import DeviceBase from '../base/deviceBase.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Default debounce window in milliseconds.
- * Any action arriving within this window after a previously processed
- * action is silently ignored to prevent flash issues caused by devices
- * re-publishing their own state updates.
- * @type {number}
- */
+/** Default debounce window in milliseconds.
+ * @type {number} */
 const DEFAULT_DEBOUNCE_WINDOW_MS = 800
 
-/**
- * Debounce scope: any action inside the window is ignored.
- * @type {string}
- */
+/** Debounce scope: any action inside the window is ignored.
+ * @type {string} */
 const DEBOUNCE_ANY_ACTION = 'any_action'
 
-/**
- * Debounce scope: only a repeat of the *same* action inside the window is
- * ignored, so a distinct follow-up action (e.g. the `1_double` that follows a
- * `1_single` when a physical double press is reported as two events) still
- * gets through. Opt-in per remote via `debounce_scope` in etc/device/zigbee.yaml.
- * @type {string}
- */
+/** Debounce scope: only a repeat of the *same* action inside the window is
+ * @type {string} */
 const DEBOUNCE_SAME_ACTION = 'same_action'
 
-// ---------------------------------------------------------------------------
-// Remote class
-// ---------------------------------------------------------------------------
 
-/**
- * Remote class that extends DeviceBase.
- *
- * Handles button actions and maps them to device commands via DeviceContainer.
- * Supports both single-target and multi-target action mappings, with built-in
- * debounce protection to prevent rapid duplicate actions.
- *
- * Subclasses may override {@link processAction} to intercept specific actions
- * before the default action-map lookup (e.g., custom single-click logic).
- */
+/** Remote class that extends DeviceBase. */
 export default class Remote extends DeviceBase {
 
-    // -- Private state ----------------------------------------------------
+    //  -- Private state ----------------------------------------------------
 
-    /**
-     * Action mapping: action identifier -> { target, state, extra?, targets? }
-     * @type {Object<string, Object>}
-     */
+    /** Action mapping: action identifier -> { target, state, extra?, targets? }
+     * @type {Object<string, Object>} */
     #actionMap = {}
 
-    /**
-     * Last processed action identifier (for debugging/logging).
-     * @type {string|null}
-     */
+    /** Last processed action identifier (for debugging/logging).
+     * @type {string|null} */
     #lastAction = null
 
-    /**
-     * Timestamp of last processed action in milliseconds since epoch.
-     * @type {number}
-     */
+    /** Timestamp of last processed action in milliseconds since epoch.
+     * @type {number} */
     #lastActionTime = 0
 
-    /**
-     * Debounce window in milliseconds.
-     * @type {number}
-     */
+    /** Debounce window in milliseconds.
+     * @type {number} */
     #debounceWindow = DEFAULT_DEBOUNCE_WINDOW_MS
 
-    /**
-     * Which actions the debounce window applies to: DEBOUNCE_ANY_ACTION
-     * (default, historical behavior) or DEBOUNCE_SAME_ACTION (opt-in).
-     * @type {string}
-     */
+    /** Which actions the debounce window applies to: DEBOUNCE_ANY_ACTION
+     * @type {string} */
     #debounceScope = DEBOUNCE_ANY_ACTION
 
-    // -- Constructor ------------------------------------------------------
+    //  -- Constructor ------------------------------------------------------
 
-    /**
-     * Create Remote object.
-     *
+    /** Create Remote object.
      * @constructor
      * @param {string} name - Device name
      * @param {string} id - Device ID
      * @param {Object} data - Device data
-     * @param {Object<string, Object>} [actionMap={}] - Button action mapping
-     */
+     * @param {Object<string, Object>} [actionMap={}] - Button action mapping */
     constructor(name, id, data, actionMap = {}) {
         super(name, id, data)
         this.#actionMap = actionMap
 
-        // Opt-in, per-device debounce scoping. Declared in etc/device/zigbee.yaml
-        // as an object entry:  - name: 'Salon Pilot Rolety'
-        //                           debounce_scope: 'same_action'
-        // Remotes that omit it keep the historical "ignore anything in the
-        // window" behavior untouched.
+        //  Opt-in, per-device debounce scoping. Declared in etc/device/zigbee.yaml.
         if (data?.debounce_scope === DEBOUNCE_SAME_ACTION) {
             this.#debounceScope = DEBOUNCE_SAME_ACTION
         }
     }
 
-    // -- Accessors --------------------------------------------------------
+    //  -- Accessors --------------------------------------------------------
 
-    /**
-     * Get the current action mapping.
-     *
-     * @returns {Object<string, Object>}
-     */
+    /** Get the current action mapping.
+     * @returns {Object<string, Object>} */
     get actionMap() {
         return this.#actionMap
     }
 
-    /**
-     * Set a new action mapping (replaces the existing one).
-     *
-     * @param {Object<string, Object>} map - Button action mapping
-     */
+    /** Set a new action mapping (replaces the existing one).
+     * @param {Object<string, Object>} map - Button action mapping */
     set actionMap(map) {
         this.#actionMap = map
     }
 
-    // -- Overrides --------------------------------------------------------
+    //  -- Overrides --------------------------------------------------------
 
-    /**
-     * Return the log prefix label for remotes.
-     * @returns {string}
-     */
+    /** Return the log prefix label for remotes.
+     * @returns {string} */
     getLogPrefix() {
         return 'Remote'
     }
 
-    /**
-     * Override handleMqttMessage to conditionally process button actions.
-     *
-     * - IF the message contains an "action" field: process it as a button press
-     *   (delegate to {@link _processAction}, which subclasses may override).
-     * - Always call parent to cache and log the message (default behavior).
-     *
-     * @param {Object} data - Event data containing topic and message
-     */
+    /** Override handleMqttMessage to conditionally process button actions.
+     * @param {Object} data - Event data containing topic and message */
     handleMqttMessage(data) {
         let parsed
         try {
@@ -172,63 +109,43 @@ export default class Remote extends DeviceBase {
             parsed = data.message
         }
 
-        // If there's an action field, delegate to the protected hook.
+        //  If there's an action field, delegate to the protected hook.
         if (parsed && typeof parsed === 'object' && parsed.action) {
             this.processAction(parsed.action, parsed)
         }
 
-        // Always call parent to cache and log the message (default behavior).
+        //  Always call parent to cache and log the message (default behavior).
         super.handleMqttMessage(data)
     }
 
-    // -- Protected hooks --------------------------------------------------
+    //  -- Protected hooks --------------------------------------------------
 
-    /**
-     * Process a button action with debounce protection.
-     *
-     * This is the **protected override point** for subclasses. The default
-     * implementation performs debounce checks, then attempts to route the
-     * action through the InteractionContainer (YAML-driven system). If no
-     * matching interaction is registered, falls back to the legacy
-     * action-map lookup and dispatches commands via DeviceContainer.
-     *
-     * Subclasses may override to intercept specific actions (e.g., "single")
-     * and fall through to `super._processAction(action, data)` for the rest.
-     *
+    /** Process a button action with debounce protection.
      * @param {string} action - Action identifier (e.g., "single", "double")
-     * @param {Object} [data] - Full parsed message data for context
-     */
+     * @param {Object} [data] - Full parsed message data for context */
     processAction(action, data = {}) {
         if (this.#isDebounced(action)) return
 
         this.#lastAction = action
         this.#lastActionTime = Date.now()
 
-        // Try YAML-driven interaction first (by device friendly name).
+        //  Try YAML-driven interaction first (by device friendly name).
         const routed = this.#routeToInteraction(this.getName(), { action })
         if (routed) return
 
-        // Fallback: legacy action-map dispatch.
+        //  Fallback: legacy action-map dispatch.
         this.#executeAction(action, data)
     }
 
-    // -----------------------------------------------------------------------
-    // Private helpers
-    // -----------------------------------------------------------------------
+    //  Private helpers.
 
-    /**
-     * Attempt to route an action through the InteractionContainer using the
-     * device's friendly name (slugified) as the interaction key. Returns true
-     * if a matching interaction was found and executed, false otherwise.
-     *
+    /** Attempt to route an action through the InteractionContainer.
      * @param {string} deviceName - Device friendly name (e.g., "Garage Remote Control")
      * @param {Object} triggerData - Data including at least {action}
      * @returns {boolean} true if routed to an interaction
-     * @private
-     */
+     * @private */
     #routeToInteraction(deviceName, triggerData) {
-        // Interactions are registered with snake_case names from YAML config.
-        // Slugify the device name to match: "Garage Remote Control" -> "garage_remote_control".
+        //  Interactions are registered with snake_case names from YAML config.
         const interactionKey = slugify(deviceName)
         const interaction = InteractionContainer.getInteraction(interactionKey)
         if (!interaction) return false
@@ -237,28 +154,17 @@ export default class Remote extends DeviceBase {
         return true
     }
 
-    /**
-     * Check whether an action falls within the debounce window.
-     * Logs and returns true if debounced.
-     *
-     * With the default DEBOUNCE_ANY_ACTION scope any action inside the window is
-     * dropped. Under the opt-in DEBOUNCE_SAME_ACTION scope only a repeat of the
-     * *same* action is dropped, so a genuinely different follow-up event -- such
-     * as the `1_double` arriving right after the `1_single` of one physical
-     * double press -- is still processed. See DEBOUNCE_SAME_ACTION above.
-     *
+    /** Check whether an action falls within the debounce window.
      * @param {string} action - Action identifier
      * @returns {boolean} true if the action was debounced (ignored)
-     * @private
-     */
+     * @private */
     #isDebounced(action) {
         if (!this.#lastActionTime) return false
 
         const elapsed = Date.now() - this.#lastActionTime
         if (elapsed >= this.#debounceWindow) return false
 
-        // Scoped debounce: a different action is a distinct user intent, not a
-        // device re-publishing its own state, so it passes straight through.
+        //  Scoped debounce: a different action is a distinct user intent.
         if (this.#debounceScope === DEBOUNCE_SAME_ACTION && this.#lastAction !== action) {
             return false
         }
@@ -271,14 +177,10 @@ export default class Remote extends DeviceBase {
         return true
     }
 
-    /**
-     * Look up an action in the internal action-map and dispatch the command(s)
-     * to target Mechanism device(s) via DeviceContainer.
-     *
+    /** Look up an action in the internal action-map and dispatch the command(s)
      * @param {string} action - Action identifier
      * @param {Object} [data] - Full parsed message data for context
-     * @private
-     */
+     * @private */
     #executeAction(action, data = {}) {
         const mapping = this.#actionMap[action]
         if (!mapping) {
@@ -295,16 +197,13 @@ export default class Remote extends DeviceBase {
             `${this.getLogPrefix()}:${this.getName()}`
         )
 
-        // Build the outgoing payload once. Legacy configs may carry extra fields in
-        // `extra`; merge them alongside state so nothing ever lands in the command
-        // provenance slot (the second receiveCommand argument is now an explicit
-        // DeviceCommandSource enum, not a boolean that could be clobbered).
+        //  Build the outgoing payload once. Legacy configs may carry extra fields.
         const cmdPayload = mapping.extra && typeof mapping.extra === 'object'
             ? Object.assign({}, mapping.extra, { state: mapping.state })
             : mapping.state
 
         if (mapping.targets) {
-            // Multiple targets -- find each and call receiveCommand.
+            //  Multiple targets -- find each and call receiveCommand.
             for (const targetName of mapping.targets) {
                 const mechanism = DeviceContainer.findByName(targetName)
                 if (mechanism) {
@@ -314,7 +213,7 @@ export default class Remote extends DeviceBase {
                 }
             }
         } else {
-            // Single target.
+            //  Single target.
             const mechanism = DeviceContainer.findByName(mapping.target)
             if (mechanism) {
                 mechanism.receiveCommand(cmdPayload, DeviceCommandSource.HUMAN)

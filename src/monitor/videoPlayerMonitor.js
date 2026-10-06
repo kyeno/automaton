@@ -1,36 +1,8 @@
 /**
  * Video Player Status Monitor.
- *
  * Singleton that polls a set of network video players (VLC, MPC-HC/BE, ...)
- * over their HTTP APIs and normalizes each into a small status vocabulary:
- * `playing`, `paused`, `stopped`, or `offline`.
- *
- * Design notes:
- *   - Presence-gated: a host is only polled when {@link NetworkPresence}
- *     reports it online. Offline hosts skip polling; an offline host is
- *     treated as "not actively playing", so playback-dependent actions stay
- *     inert while safe/ambient actions still apply -- no flapping.
- *   - Endpoint IPs need no duplication: each player's address resolves from
- *     the same-named `computers` entry; an explicit `host` key overrides, and
- *     a player with neither is skipped with an error log.
- *   - One shared interval timer drives all hosts in parallel; a re-entrancy
- *     guard prevents overlapping sweeps.
- *   - A per-host failure-strike counter (3 strikes) avoids flapping a
- *     transiently failing host to `offline`.
- *   - Single-offline enumeration: "host is offline" and "host is up but the player stopped
- *     answering" stay distinct in debug logs (raw detail) but are both published as the single
- *     `offline` status, so drifting between those raw conditions is NOT a transition
- *     automations re-react to.
- *   - Playback-settle: a title must play continuously for a dwell window before it reports as
- *     actively `playing`; until then it reads as `stopped` so browsing/skipping does not trigger
- *     dark mode or suppression. Watch-session state lives in StateService under `videoPlayer:<host>.*`.
- *   - Status transitions are recorded durably in local SQLite via DatabaseService
- *     (domain 'videoPlayer', subject = host); an EventBus event (`videoPlayer:<host>`)
- *     is published only when a real transition occurs.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -46,182 +18,113 @@ import NetworkPresence from './networkPresence.js'
 import VlcProvider from './providers/vlc.js'
 import MpcProvider from './providers/mpc.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Interval between video-player sweeps in milliseconds (4 seconds).
- * @type {number}
- */
+/** Interval between video-player sweeps in milliseconds (4 seconds).
+ * @type {number} */
 const CHECK_INTERVAL_MS = 4_000
 
-/**
- * Consecutive fetch failures before an online host is declared `offline` (raw detail:
- * "player not answering").
- * @type {number}
- */
+/** Consecutive fetch failures before an online host is declared `offline` (raw detail:
+ * @type {number} */
 const FAILURE_STRIKES = 3
 
-/**
- * Presence label (NetworkPresence.getPresence) meaning the host is known to
- * be offline. Known-offline hosts are not polled at all.
- * @type {string}
- */
+/** Presence label (NetworkPresence.getPresence) meaning the host is known to
+ * @type {string} */
 const PRESENCE_OFFLINE = 'offline'
 
-/**
- * Published status representing "no usable player signal". Two raw conditions enumerate to it:
- * the host is offline (presence offline / no data) or the player stopped answering (failure
- * strikes). The distinction is preserved in debug logs only; automations see one status, so a
- * host drifting between those raw conditions is not a state transition.
- * @type {string}
- */
+/** Published status representing "no usable player signal". Two raw conditions enumerate to it:
+ * @type {string} */
 const STATUS_OFFLINE = 'offline'
 
-/**
- * Human-readable description of a raw offline detail for log lines.
+/** Human-readable description of a raw offline detail for log lines.
  * @param {string|null|undefined} rawStatus - Raw observation ('unreachable', null = presence-offline / no data)
- * @returns {string} Description used in logs
- */
+ * @returns {string} Description used in logs */
 function describeRawDetail(rawStatus) {
     if (rawStatus === 'unreachable') return 'player not answering'
     if (rawStatus == null) return 'host offline / no signal'
     return String(rawStatus)
 }
 
-/**
- * Normalize a status read from durable history onto the current published vocabulary: raw detail
- * labels from before the single-offline enumeration (`unreachable`, `unknown`) become `offline`.
+/** Normalize a status read from durable history onto the current published vocabulary: raw detail.
  * @param {string|null|undefined} value - Stored label
- * @returns {string} Published status
- */
+ * @returns {string} Published status */
 function normalizeStoredStatus(value) {
     if (value == null || value === 'unreachable' || value === 'unknown') return STATUS_OFFLINE
     return value
 }
 
-/**
- * Provider registry mapping a parser name to its provider class.
- * @type {Record<string, Function>}
- */
+/** Provider registry mapping a parser name to its provider class.
+ * @type {Record<string, Function>} */
 const PROVIDERS = {
     vlc: VlcProvider,
     mpc: MpcProvider
 }
 
-/**
- * Default dwell window in milliseconds before a continuously-playing title is treated as an active
- * "watching" session (1 minute). Distinguishes actually watching a movie from choosing/skipping
- * through titles; adjustable at runtime via _setPlaybackSettleMs().
- * @type {number}
- */
+/** Default dwell window in milliseconds before a continuously-playing title is treated as an active
+ * @type {number} */
 const DEFAULT_PLAYBACK_SETTLE_MS = 60_000
 
-/**
- * Active playback-settle threshold in ms. Module-scoped (not a frozen instance field) so tests and
- * config can adjust it without touching the frozen singleton; read on every observation.
- * @type {number}
- */
+/** Active playback-settle threshold in ms. Module-scoped (not a frozen instance field) so tests and
+ * @type {number} */
 let playbackSettleMs = DEFAULT_PLAYBACK_SETTLE_MS
 
-/**
- * Clock source for settle-window math. Defaults to Date.now(); swappable in tests (_setClock) for
- * fully deterministic timing instead of sleeping across the real dwell window.
- * @type {() => number}
- */
+/** Clock source for settle-window math. Defaults to Date.now(); swappable in tests (_setClock) for
+ * @type {() => number} */
 let nowFn = () => Date.now()
 
-// ---------------------------------------------------------------------------
-// SVideoPlayerMonitor (singleton)
-// ---------------------------------------------------------------------------
+//  SVideoPlayerMonitor (singleton)
 
-/**
- * Monitors network video players and publishes normalized status transitions.
- */
+/** Monitors network video players and publishes normalized status transitions. */
 class SVideoPlayerMonitor {
 
     instance
 
-    /**
-     * Parsed network configuration object.
-     * @type {Object}
-     */
+    /** Parsed network configuration object.
+     * @type {Object} */
     #config = {}
 
-    /**
-     * Video-player definitions keyed by host name.
-     * @type {Record<string, {host: string, port: number, path: string, parser: string}>}
-     */
+    /** Video-player definitions keyed by host name.
+     * @type {Record<string, {host: string, port: number, path: string, parser: string}>} */
     #videoPlayers = {}
 
-    /**
-     * Interval timer handle for periodic sweeps.
-     * @type {NodeJS.Timer|null}
-     */
+    /** Interval timer handle for periodic sweeps.
+     * @type {NodeJS.Timer|null} */
     #timer = null
 
-    /**
-     * Re-entrancy guard so overlapping sweeps never run concurrently.
-     * @type {boolean}
-     */
+    /** Re-entrancy guard so overlapping sweeps never run concurrently.
+     * @type {boolean} */
     #checking = false
 
-    /**
-     * Per-host consecutive-failure strike counter.
-     * @type {Map<string, number>}
-     */
+    /** Per-host consecutive-failure strike counter.
+     * @type {Map<string, number>} */
     #failCounts = new Map()
 
-    /**
-     * In-process last-known published status per host. This process is the sole writer while
-     * running, so this map is authoritative for change-detection and reads; SQLite
-     * (DatabaseService) provides the durable cross-restart history on top of it.
-     * Never holds null: every observed state enumerates to a published status.
-     * @type {Map<string, string>}
-     */
+    /** In-process last-known published status per host. This process is the sole writer while
+     * @type {Map<string, string>} */
     #statuses = new Map()
 
-    /**
-     * In-process last-known RAW offline detail per host ('unreachable' = player not answering,
-     * null = host offline / no data). Log-only: keeps the two offline causes distinguishable in
-     * debug output without re-introducing a published status change between them.
-     * @type {Map<string, string|null>}
-     */
+    /** In-process last-known RAW offline detail per host ('unreachable' = player not answering,
+     * @type {Map<string, string|null>} */
     #rawDetails = new Map()
 
-    // -- Singleton --------------------------------------------------------
 
-    /**
-     * Synchronous singleton constructor.
-     * @return {this}
-     */
+    /** Synchronous singleton constructor.
+     * @return {this} */
     constructor() {
         if (!SVideoPlayerMonitor.instance) SVideoPlayerMonitor.instance = this
         return SVideoPlayerMonitor.instance
     }
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Initialize the video-player monitor.
-     *
-     * Reads the `videoPlayers` map from the network config section, resolving
-     * each endpoint IP from the same-named `computers` entry unless an
-     * explicit `host` key overrides it, and starts the periodic sweep. An
-     * optional `configOverride` may be supplied (used by tests) to bypass the
-     * live config section.
-     *
+    /** Initialize the video-player monitor.
      * @param {Object} [configOverride] - Optional network-config object override
-     * @async
-     */
+     * @async */
     async init(configOverride) {
         const networkConfig = ConfigService.section('network')
         const config = configOverride ?? (networkConfig ? networkConfig.toJSON() : {})
         this.#config = config
 
-        // Validate entries up front so a malformed definition warns once here
-        // instead of producing garbage fetch URLs on every sweep.
+        //  Validate entries up front so a malformed definition warns once here.
         this.#videoPlayers = {}
         for (const [host, entry] of Object.entries(config.videoPlayers ?? {})) {
             const problem = this.#validatePlayerEntry(entry)
@@ -230,9 +133,7 @@ class SVideoPlayerMonitor {
                 continue
             }
 
-            // Resolve the endpoint IP: an explicit "host" wins (failsafe
-            // override); otherwise the same-named "computers" entry is the
-            // single source of truth. Unresolvable players are skipped loudly.
+            // Resolve the endpoint IP: an explicit "host" wins.
             const resolvedHost = entry.host ?? config.computers?.[host]
             if (typeof resolvedHost !== 'string' || resolvedHost.trim() === '') {
                 LoggerService.error(
@@ -250,9 +151,7 @@ class SVideoPlayerMonitor {
             return
         }
 
-        // Hosts not listed under any pingable network.yaml category never get a
-        // presence state -- they are polled directly instead of waiting on a
-        // gate that could never pass.
+        //  Hosts not listed under any pingable network.yaml category never get.
         const pingable = new Set(NetworkPresence.getNetworkDevices().map((d) => d.name))
         for (const host of hosts) {
             if (!pingable.has(host)) {
@@ -263,10 +162,7 @@ class SVideoPlayerMonitor {
             }
         }
 
-        // Seed the in-memory cache from durable history so a value that did not change across a
-        // restart does not look like a fresh transition on the very first sweep, and so getStatus()/
-        // log lines reflect the true prior state rather than "unknown". Legacy labels recorded
-        // before the single-offline enumeration are normalized on the way in.
+        //  Seed the in-memory cache from durable history so a value that did not change.
         if (DatabaseService.isAvailable()) {
             await Promise.all(hosts.map(async (host) => {
                 const stored = await DatabaseService.getCurrent('videoPlayer', host)
@@ -278,8 +174,7 @@ class SVideoPlayerMonitor {
             void this.#checkAll()
         }, CHECK_INTERVAL_MS)
 
-        // Kick off an immediate first sweep so status is available without
-        // waiting a full interval.
+        //  Kick off an immediate first sweep so status is available.
         void this.#checkAll()
 
         LoggerService.info(
@@ -288,9 +183,7 @@ class SVideoPlayerMonitor {
         )
     }
 
-    /**
-     * Stop the periodic sweep.
-     */
+    /** Stop the periodic sweep. */
     stop() {
         if (this.#timer) {
             clearInterval(this.#timer)
@@ -299,35 +192,19 @@ class SVideoPlayerMonitor {
         }
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Trigger an immediate sweep of all configured video players.
-     * Safe to call concurrently (guarded by the re-entrancy flag).
-     * @returns {Promise<void>}
-     */
+    /** Trigger an immediate sweep of all configured video players.
+     * @returns {Promise<void>} */
     async checkNow() {
         await this.#checkAll()
     }
 
-    /**
-     * Get the automation-effective status for a host.
-     *
-     * Returns what rules and video-player suppression should act on -- the playback-settle-aware
-     * view of the player. A title playing continuously for at least the settle window reports
-     * `playing`; one still within that window (browsing / skipping) reports `stopped`.
-     * `paused`/`stopped` pass through unchanged; an unresponsive player and an offline host both
-     * report `offline` (their raw distinction is log-only). Null is returned only when nothing at
-     * all is recorded for the host (not configured / never swept); rule conditions treat that as
-     * `offline` too. Reads the in-process cache first (authoritative while running), then falls
-     * back to durable SQLite history.
-     *
+    /** Get the automation-effective status for a host.
      * @param {string} host - Host name as configured in network.yaml
-     * @returns {Promise<string|null>} `playing`/`paused`/`stopped`/`offline`, or null when nothing is recorded
-     */
+     * @returns {Promise<string|null>} `playing`/`paused`/`stopped`/`offline`, or null when nothing is recorded */
     async getStatus(host) {
-        // In-memory map first: while running, this process is the only writer, so it
-        // is always fresher than the store and skips a disk read on every rule eval.
+        //  In-memory map first: while running, this process is the only writer.
         if (this.#statuses.has(host)) {
             return this.#statuses.get(host) ?? null
         }
@@ -335,35 +212,22 @@ class SVideoPlayerMonitor {
         return value == null ? null : normalizeStoredStatus(value)
     }
 
-    /**
-     * The configured video-player definitions keyed by host name.
-     * @returns {Record<string, {host: string, port: number, path: string, parser: string}>}
-     */
+    /** The configured video-player definitions keyed by host name.
+     * @returns {Record<string, {host: string, port: number, path: string, parser: string}>} */
     getVideoPlayers() {
         return this.#videoPlayers
     }
 
-    /**
-     * List of configured host names.
-     * @returns {string[]}
-     */
+    /** List of configured host names.
+     * @returns {string[]} */
     getHostNames() {
         return Object.keys(this.#videoPlayers)
     }
 
-    /**
-     * Directly seed a host's status for testing.
-     *
-     * Writes the value to the in-process cache and records it durably via SQLite so
-     * that {@link getStatus} resolves deterministically across restarts too. This
-     * lets tests drive status without a live player or a running sweep. Unlike
-     * {@link #setStatus} it does not publish an EventBus event and does not consult
-     * the previous value.
-     *
+    /** Directly seed a host's status for testing.
      * @param {string} host - Host name
      * @param {string|null} status - Status; legacy/raw labels (`unreachable`, `unknown`, null) normalize to `offline`
-     * @returns {Promise<void>}
-     */
+     * @returns {Promise<void>} */
     async setTestStatus(host, status) {
         const published = normalizeStoredStatus(status)
         this.#statuses.set(host, published)
@@ -371,44 +235,32 @@ class SVideoPlayerMonitor {
         await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: published })
     }
 
-    /**
-     * Test/config hook: apply a single playback observation through the same settle logic a live
-     * sweep would use, without performing an HTTP fetch. Lets tests drive the watch-session state
-     * machine deterministically together with {@link _setClock} and {@link _setPlaybackSettleMs}.
+    /** Test/config hook: apply a single playback observation through the same settle logic a live.
      * @param {string} host - Host name
      * @param {string|null} status - Raw provider status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
      * @param {string|null} [title] - Media title captured by the provider (or null)
-     * @returns {Promise<void>}
-     */
+     * @returns {Promise<void>} */
     async recordObservation(host, status, title = null) {
         await this.#observe(host, status, title)
     }
 
-    /**
-     * Test/config hook: override the playback-settle dwell window in milliseconds.
-     * @param {number} ms - Settle threshold; must be a finite non-negative number
-     */
+    /** Test/config hook: override the playback-settle dwell window in milliseconds.
+     * @param {number} ms - Settle threshold; must be a finite non-negative number */
     _setPlaybackSettleMs(ms) {
         if (!Number.isFinite(ms) || ms < 0) throw new Error('playback settle ms must be a finite non-negative number')
         playbackSettleMs = ms
     }
 
-    /**
-     * Test/config hook: replace the clock used for settle-window math (e.g., a controllable fake).
-     * Pass null to restore Date.now().
-     * @param {(() => number)|null} fn - Clock function returning epoch-ms, or null to reset
-     */
+    /** Test/config hook: replace the clock used for settle-window math (e.g., a controllable fake).
+     * @param {(() => number)|null} fn - Clock function returning epoch-ms, or null to reset */
     _setClock(fn) {
         nowFn = typeof fn === 'function' ? fn : () => Date.now()
     }
 
-    // -- Private helpers --------------------------------------------------
+    //  -- Private helpers --------------------------------------------------
 
-    /**
-     * Sweep every configured host in parallel. A re-entrancy guard ensures at
-     * most one sweep runs at a time.
-     * @private
-     */
+    /** Sweep every configured host in parallel. A re-entrancy guard ensures at
+     * @private */
     async #checkAll() {
         if (this.#checking) return
         this.#checking = true
@@ -422,20 +274,12 @@ class SVideoPlayerMonitor {
         }
     }
 
-    /**
-     * Check a single host: presence gate, fetch, parse, capture the media title, then apply one
-     * observation through the playback-settle state machine. Transient fetch failures keep both the
-     * last effective status AND the in-progress watch session so a brief hiccup neither flaps the
-     * lights nor resets the dwell clock (no observation is applied on that sweep).
+    /** Check a single host: presence gate, fetch, parse, capture the media title, then apply one.
      * @private
      * @param {string} host - Host name
-     * @param {{host: string, port: number, path: string, parser: string}} cfg - Endpoint config
-     */
+     * @param {{host: string, port: number, path: string, parser: string}} cfg - Endpoint config */
     async #checkOne(host, cfg) {
-        // Presence gate: skip polling only when the host is *known* offline --
-        // an offline machine cannot answer anyway. Unknown presence (host not
-        // listed in any ping category, or no state cached yet) still polls:
-        // the HTTP fetch plus the strike counter is its own reachability test.
+        //  Presence gate: skip polling only when the host is *known* offline --
         const presence = await NetworkPresence.getPresence(host)
         if (presence === PRESENCE_OFFLINE) {
             await this.#observe(host, null, null)
@@ -458,11 +302,10 @@ class SVideoPlayerMonitor {
             const strikes = (this.#failCounts.get(host) ?? 0) + 1
             this.#failCounts.set(host, strikes)
             if (strikes >= FAILURE_STRIKES) {
-                // Player stopped answering -- treat it as gone and reset the watch session.
+                //  Player stopped answering -- treat it as gone and reset the watch session.
                 await this.#observe(host, 'unreachable', null)
             } else {
-                // Keep the previous effective status AND the existing watch session to avoid
-                // flapping on transient failures; no observation is applied this sweep.
+                //  Keep the previous effective status AND the existing watch session to avoid.
                 LoggerService.debug(
                     `${host}: status fetch failed (${strikes}/${FAILURE_STRIKES}): ${error.message}`,
                     'VideoPlayerMonitor'
@@ -471,21 +314,11 @@ class SVideoPlayerMonitor {
         }
     }
 
-    /**
-     * Apply one playback observation to a host's watch-session state machine (held in StateService
-     * under `videoPlayer.<host>.*`) and publish the resulting automation-effective status.
-     *
-     * A host reports an effective `playing` only once the SAME media title has been observed playing
-     * continuously for at least {@link playbackSettleMs}; until then it reads as `stopped`, so dark-mode
-     * rules and video-player suppression stay inert while someone browses/skips titles. Once settled,
-     * play/pause act immediately. Reset semantics: a pause BEFORE settling clears the clock (must play
-     * continuously again); stop / unreachable / offline clear the session entirely; switching to a
-     * different title restarts the dwell clock from scratch.
+    /** Apply one playback observation to a host's watch-session state machine.
      * @private
      * @param {string} host - Host name
      * @param {string|null} rawStatus - Provider status ('playing'|'paused'|'stopped'|'unreachable'), or null when offline/unknown
-     * @param {string|null} title - Media title captured by the provider, or null
-     */
+     * @param {string|null} title - Media title captured by the provider, or null */
     async #observe(host, rawStatus, title) {
         const now = nowFn()
         const keyTitle = `videoPlayer.${host}.title`
@@ -500,16 +333,16 @@ class SVideoPlayerMonitor {
             const prevSettled = StateService.get(keySettled) === true
 
             if (prevTitle !== t || prevSince == null) {
-                // New/different media (or no prior session): start a fresh dwell clock.
+                //  New/different media (or no prior session): start a fresh dwell clock.
                 StateService.set(keyTitle, t)
                 StateService.set(keySince, now)
                 StateService.set(keySettled, false)
                 effective = 'stopped'
             } else if (prevSettled) {
-                // Already watching this same title -- stays active immediately on resume/continue.
+                //  Already watching this same title -- stays active immediately on resume/continue.
                 effective = 'playing'
             } else if ((now - prevSince) >= playbackSettleMs) {
-                // Continuous same-title play just crossed the settle window -> actively watching.
+                //  Continuous same-title play just crossed the settle window -> actively watching.
                 StateService.set(keySettled, true)
                 effective = 'playing'
                 LoggerService.info(
@@ -517,46 +350,39 @@ class SVideoPlayerMonitor {
                     'VideoPlayerMonitor'
                 )
             } else {
-                // Still within the settle window: keep settling, report as not-yet-playing.
+                //  Still within the settle window: keep settling, report as not-yet-playing.
                 effective = 'stopped'
             }
         } else if (rawStatus === 'paused') {
-            // A pause before settling breaks "continuous play": reset the watch session. Once settled,
-            // pausing only toggles lights/suppression back on/off without resetting the clock.
+            // A pause before settling breaks "continuous play": reset the watch session.
             if (StateService.get(keySettled) !== true) this.#clearSession(keyTitle, keySince, keySettled)
             effective = 'paused'
         } else {
-            // stopped / unreachable / offline(null): clear any in-progress watch session.
+            //  stopped / unreachable / offline(null): clear any in-progress watch session.
             this.#clearSession(keyTitle, keySince, keySettled)
             effective = rawStatus   // 'stopped'|'unreachable'|null
         }
 
-        // Publish the enumerated status: 'unreachable' (player not answering) and null (host
-        // offline / no data) both enumerate to the single `offline` status, so drifting between
-        // those raw conditions never fires a status transition; the raw detail rides along for logs.
+        // Publish the enumerated status: 'unreachable' (player not answering) and null.
         const published = effective === null || effective === 'unreachable' ? STATUS_OFFLINE : effective
         await this.#setStatus(host, published, effective)
     }
 
-    /**
-     * Clear a host's watch-session state from StateService (title / start time / settled flag).
+    /** Clear a host's watch-session state from StateService (title / start time / settled flag).
      * @private
      * @param {string} keyTitle - StateService title key
      * @param {string} keySince - StateService sinceMs key
-     * @param {string} keySettled - StateService settled key
-     */
+     * @param {string} keySettled - StateService settled key */
     #clearSession(keyTitle, keySince, keySettled) {
         StateService.delete(keyTitle)
         StateService.delete(keySince)
         StateService.delete(keySettled)
     }
 
-    /**
-     * Validate one videoPlayers entry from network.yaml.
+    /** Validate one videoPlayers entry from network.yaml.
      * @private
      * @param {*} entry - Raw entry value
-     * @returns {string|null} Problem description, or null when valid
-     */
+     * @returns {string|null} Problem description, or null when valid */
     #validatePlayerEntry(entry) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
             return 'entry must be an object with port/path/parser keys'
@@ -576,39 +402,26 @@ class SVideoPlayerMonitor {
         return null
     }
 
-    /**
-     * Instantiate the provider for a host's parser name.
+    /** Instantiate the provider for a host's parser name.
      * @private
      * @param {{parser: string}} cfg - Endpoint config
-     * @returns {Object|null} Provider instance, or null for an unknown parser
-     */
+     * @returns {Object|null} Provider instance, or null for an unknown parser */
     #getProvider(cfg) {
         const ProviderClass = PROVIDERS[cfg?.parser]
         return ProviderClass ? new ProviderClass() : null
     }
 
-    /**
-     * Store an automation-effective status for a host, persist the transition durably via SQLite,
-     * and publish an EventBus event only when the value genuinely changed versus the stored
-     * history. Gating on the store keeps an unchanged-across-restart state from re-firing
-     * subscribers (mirrors NetworkPresence); it still publishes while the database is
-     * temporarily unavailable to preserve fail-open behaviour. Called with the settle-aware
-     * enumerated status (plus its raw detail) produced by {@link #observe}: a change of raw
-     * detail that leaves the published status intact is debug-log-only -- no store row and no
-     * EventBus event, so automations never re-react to it.
+    /** Store an automation-effective status for a host, persist the transition durably via SQLite.
      * @private
      * @param {string} host - Host name
      * @param {string} status - Published status ('playing'|'paused'|'stopped'|'offline')
-     * @param {string|null} [rawDetail=null] - Raw observation behind the status ('unreachable', null = host offline / no data)
-     */
+     * @param {string|null} [rawDetail=null] - Raw observation behind the status ('unreachable', null = host offline / no data) */
     async #setStatus(host, status, rawDetail = null) {
         const prev = this.#statuses.get(host)
         const prevRaw = this.#rawDetails.get(host)
 
         if (prev === status) {
-            // Published status unchanged; only the raw offline detail can differ (player stopped
-            // answering vs. host confirmed offline). Keep it log-only so no transition, no store
-            // row and no EventBus event is produced for it.
+            // Published status unchanged; only the raw offline detail can differ.
             if (prevRaw !== rawDetail) {
                 this.#rawDetails.set(host, rawDetail)
                 const prevText = describeRawDetail(prevRaw)
@@ -626,9 +439,7 @@ class SVideoPlayerMonitor {
         this.#statuses.set(host, status)
         this.#rawDetails.set(host, rawDetail)
 
-        // Persist durably and use the store as the change baseline so an unchanged state across
-        // restarts does not re-fire subscribers (mirrors NetworkPresence); still publish when the
-        // store is unavailable to keep fail-open behaviour.
+        //  Persist durably and use the store as the change baseline so an unchanged state.
         const result = await DatabaseService.recordTransition({ domain: 'videoPlayer', subject: host, toState: status })
         if (!result.changed && DatabaseService.isAvailable()) return
 
@@ -641,13 +452,9 @@ class SVideoPlayerMonitor {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Export frozen singleton
-// ---------------------------------------------------------------------------
+//  Export frozen singleton.
 
-/**
- * Frozen singleton instance of the video-player monitor.
- */
+/** Frozen singleton instance of the video-player monitor. */
 const VideoPlayerMonitor = new SVideoPlayerMonitor()
 Object.freeze(VideoPlayerMonitor)
 export default VideoPlayerMonitor

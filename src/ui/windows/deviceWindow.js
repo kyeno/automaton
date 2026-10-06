@@ -1,14 +1,8 @@
 /**
  * Device Window -- Window 2.
- *
  * Displays device information and system stats in a structured table format.
- * Extends BaseWindow for consistent buffering and rendering.
- *
- * Dependencies: receives `term` and `layout` via constructor.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -23,9 +17,7 @@ import solar from '../../lib/sun.js'
 import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
-// ---------------------------------------------------------------------------
-// Column widths (fixed-width alignment, no tabs)
-// ---------------------------------------------------------------------------
+//  Column widths (fixed-width alignment, no tabs)
 
 const NAME_W = 35
 const STATE_W = 16
@@ -37,16 +29,9 @@ const PRESS_W = 8
 const LIGHT_W = 7
 const ACTION_W = 10
 
-// ---------------------------------------------------------------------------
-// DeviceWindow
-// ---------------------------------------------------------------------------
+//  DeviceWindow.
 
-/**
- * Device status table displayed in the terminal UI.
- * Renders a fixed-width table showing device name, state, origin, battery,
- * temperature, humidity, pressure, illuminance, and last action for all
- * registered devices. Refreshes reactively via EventBus subscriptions.
- */
+/** Device status table displayed in the terminal UI. */
 class DeviceWindow extends BaseWindow {
 
     #refreshInterval
@@ -58,49 +43,36 @@ class DeviceWindow extends BaseWindow {
     #lastRenderedLines = null
     #channelShortcut
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Create a new DeviceWindow instance.
+    /** Create a new DeviceWindow instance.
      * @param {*} term - The terminal-kit instance
      * @param {*} layout - UiLayoutManager instance
-     * @param {number} channelShortcut - Numeric shortcut from channel config
-     */
+     * @param {number} channelShortcut - Numeric shortcut from channel config */
     constructor(term, layout, channelShortcut = 2) {
         super('Devices', term, layout, channelShortcut)
         this.#channelShortcut = channelShortcut
 
-        // Listen for 'devices:ready' from DeviceContainer. This fires once after
-        // initial device discovery completes, and again when a device is dynamically
-        // added. DeviceWindow reacts by rebuilding its per-device subscriptions.
-        // Stored separately from #unsubscribes because #resubscribeDevices() tears
-        // those down on every fire -- keeping the ready listener in that array would
-        // unsubscribe itself right after the first event.
+        //  Listen for 'devices:ready' from DeviceContainer. This fires once.
         this.#unsubscribeReady = EventBus.subscribe('devices:ready', () => this.#resubscribeDevices())
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Show this window, refresh the content immediately, and start periodic updates.
-     */
+    /** Show this window, refresh the content immediately, and start periodic updates. */
     show() {
         super.show()
         this.refresh()
         this.#startRefreshTimer()
     }
 
-    /**
-     * Hide this window and stop the periodic refresh timer.
-     */
+    /** Hide this window and stop the periodic refresh timer. */
     hide() {
         this.#stopRefreshTimer()
         super.hide()
     }
 
-    /**
-     * Destroy this window: stop timers, unsubscribe from events, hide, and clear.
-     */
+    /** Destroy this window: stop timers, unsubscribe from events, hide, and clear. */
     destroy() {
         this.#stopRefreshTimer()
         this.#unsubscribes.forEach(unsub => unsub())
@@ -112,16 +84,11 @@ class DeviceWindow extends BaseWindow {
         this.hide()
     }
 
-    // -- Callbacks --------------------------------------------------------
+    //  -- Callbacks --------------------------------------------------------
 
-    /**
-     * Gathers current system state and pushes it to the window buffer.
-     * Devices are grouped by type: Sensors -> Mechanisms -> Remotes.
-     * Skips the redraw entirely when the rendered content is unchanged from
-     * the previous frame, so the periodic timer does not cause flicker.
-     */
+    /** Gathers current system state and pushes it to the window buffer. */
     refresh() {
-        // Bridge/coordinator entry is excluded at the source (DeviceContainer).
+        //  Bridge/coordinator entry is excluded at the source (DeviceContainer).
         const allDevices = DeviceContainer.getAll({ includeBridge: false })
 
         const sensors = []
@@ -136,39 +103,39 @@ class DeviceWindow extends BaseWindow {
             } else if (prefix === 'Remote') {
                 remotes.push({ name, device })
             } else {
-                // Mechanism (or fallback)
+                //  Mechanism (or fallback)
                 mechanisms.push({ name, device })
             }
         }
 
-        // Sort each group alphabetically by name
+        //  Sort each group alphabetically by name.
         sensors.sort((a, b) => a.name.localeCompare(b.name))
         mechanisms.sort((a, b) => a.name.localeCompare(b.name))
         remotes.sort((a, b) => a.name.localeCompare(b.name))
 
         const lines = []
 
-        // -- Date / solar header -------------------------------------------
+        //  -- Date / solar header -------------------------------------------
         this.#renderHeader(lines)
 
-        // -- Sensors section -------------------------------------------
+        //  -- Sensors section -------------------------------------------
         if (sensors.length > 0) {
             this.#renderSensors(sensors, lines)
         }
 
-        // -- Mechanisms section ----------------------------------------
+        //  -- Mechanisms section ----------------------------------------
         if (mechanisms.length > 0) {
             lines.push('')
             this.#renderMechanisms(mechanisms, lines)
         }
 
-        // -- Remotes section -------------------------------------------
+        //  -- Remotes section -------------------------------------------
         if (remotes.length > 0) {
             lines.push('')
             this.#renderRemotes(remotes, lines)
         }
 
-        // -- Summary footer --------------------------------------------
+        //  -- Summary footer --------------------------------------------
         const totalDevices = sensors.length + mechanisms.length + remotes.length
         lines.push('')
         lines.push(
@@ -179,27 +146,22 @@ class DeviceWindow extends BaseWindow {
             AnsiColors.reset
         )
 
-        // Skip the redraw when nothing changed since the previous frame -- the
-        // periodic timer would otherwise force a visible clear+redraw flicker on
-        // every cycle even though the table content is identical.
+        //  Skip the redraw when nothing changed since the previous frame.
         if (this.#sameLines(this.#lastRenderedLines, lines)) {
             return
         }
         this.#lastRenderedLines = lines
 
-        // Clear buffer and push all current lines for a fresh dashboard view
+        //  Clear buffer and push all current lines for a fresh dashboard view.
         this.clear()
         lines.forEach(line => this.print(line))
     }
 
-    /**
-     * Compare two rendered line arrays element-wise for strict equality so an
-     * unchanged frame can skip its redraw entirely.
+    /** Compare two rendered line arrays element-wise for strict equality.
      * @param {string[]|null} previous - Lines from the last painted frame
      * @param {string[]} next - Newly built lines
      * @returns {boolean} true when both frames are identical
-     * @private
-     */
+     * @private */
     #sameLines(previous, next) {
         if (!previous || previous.length !== next.length) return false
         for (let i = 0; i < next.length; i++) {
@@ -208,21 +170,18 @@ class DeviceWindow extends BaseWindow {
         return true
     }
 
-    // -- Section renderers --------------------------------------------------
+    //  -- Section renderers --------------------------------------------------
 
-    /**
-     * Render the Sensors section.
-     * Columns: Name  Temp  Humid  Light  Batt
+    /** Render the Sensors section.
      * @private
      * @param {Array<Object>} sensors - Sensor device instances collected by the caller
-     * @param {Array<string>} lines - Row buffer that receives the rendered section
-     */
+     * @param {Array<string>} lines - Row buffer that receives the rendered section */
     #renderSensors(sensors, lines) {
         const header = AnsiColors.bold + AnsiColors.cyan +
             '-- Sensors (' + sensors.length + ') --' + AnsiColors.reset
         lines.push(header)
 
-        // Header row (spaces between columns for readability)
+        //  Header row (spaces between columns for readability)
         let hdr = ''
         hdr += 'Name'.padEnd(NAME_W)
         hdr += ' Temp'.padEnd(TEMP_W + 1)
@@ -242,10 +201,10 @@ class DeviceWindow extends BaseWindow {
 
             let line = ''
 
-            // Name column (bold name, padded to NAME_W visible width)
+            //  Name column (bold name, padded to NAME_W visible width)
             line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
 
-            // Temperature column (right-aligned, formatted as "24.2*C")
+            //  Temperature column (right-aligned, formatted as "24.2*C")
             if (temperature != null) {
                 const tempStr = Number(temperature).toFixed(1) + '*C'
                 line += ' ' + tempStr.padStart(TEMP_W)
@@ -253,7 +212,7 @@ class DeviceWindow extends BaseWindow {
                 line += ' '.repeat(TEMP_W + 1)
             }
 
-            // Humidity column (spaced from temp with a separator space)
+            //  Humidity column (spaced from temp with a separator space)
             if (humidity != null) {
                 const humStr = String(humidity) + '% '
                 line += ' ' + humStr.padStart(HUMID_W + 1)
@@ -261,7 +220,7 @@ class DeviceWindow extends BaseWindow {
                 line += ' '.repeat(HUMID_W + 2)
             }
 
-            // Pressure column
+            //  Pressure column.
             if (pressure != null) {
                 const pressStr = `${Math.round(pressure)}hPa`
                 line += pressStr.padStart(PRESS_W)
@@ -269,7 +228,7 @@ class DeviceWindow extends BaseWindow {
                 line += ' '.repeat(PRESS_W)
             }
 
-            // Illuminance column
+            //  Illuminance column.
             if (illuminance != null) {
                 const lxStr = Math.round(illuminance) + 'lx'
                 line += lxStr.padStart(LIGHT_W)
@@ -277,7 +236,7 @@ class DeviceWindow extends BaseWindow {
                 line += '-'.padStart(LIGHT_W)
             }
 
-            // Battery column (color-coded warning)
+            //  Battery column (color-coded warning)
             if (battery != null) {
                 const battColor = this.#getBatteryColor(battery)
                 line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
@@ -289,13 +248,10 @@ class DeviceWindow extends BaseWindow {
         }
     }
 
-    /**
-     * Render the Mechanisms section.
-     * Columns: Name  State  Origin  Batt
+    /** Render the Mechanisms section.
      * @private
      * @param {Array<Object>} mechanisms - Mechanism device instances collected by the caller
-     * @param {Array<string>} lines - Row buffer that receives the rendered section
-     */
+     * @param {Array<string>} lines - Row buffer that receives the rendered section */
     #renderMechanisms(mechanisms, lines) {
         let totalOn = 0, totalOff = 0, totalUnknown = 0
 
@@ -303,7 +259,6 @@ class DeviceWindow extends BaseWindow {
             '-- Mechanisms (' + mechanisms.length + ') --' + AnsiColors.reset
         lines.push(header)
 
-        // Header row
         let hdr = ''
         hdr += 'Name'.padEnd(NAME_W)
         hdr += 'State'.padStart(STATE_W)
@@ -322,8 +277,7 @@ class DeviceWindow extends BaseWindow {
             let status
             const channels = device.getChannels?.()
             if (Array.isArray(channels) && channels.length > 0) {
-                // Multi-channel device: render per-channel state with positional
-                // labels (ONE/TWO) plus brightness percentage when dimmable.
+                //  Multi-channel device: render per-channel state with positional.
                 const parts = []
                 let anyOn = false
                 let anyOff = false
@@ -362,17 +316,17 @@ class DeviceWindow extends BaseWindow {
 
             let line = ''
 
-            // Name column
+            //  Name column.
             line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
 
-            // State column (cyan, right-aligned)
+            //  State column (cyan, right-aligned)
             line += colCell(status, AnsiColors.cyan, STATE_W, 'right')
 
-            // Origin column (color-coded, right-aligned)
+            //  Origin column (color-coded, right-aligned)
             const oColor = this.#getOriginColor(origin)
             line += colCell(origin, oColor, ORIGIN_W, 'right')
 
-            // Battery column
+            //  Battery column.
             if (battery != null) {
                 const battColor = this.#getBatteryColor(battery)
                 line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
@@ -383,25 +337,21 @@ class DeviceWindow extends BaseWindow {
             lines.push(line)
         }
 
-        // Mechanisms summary
+        //  Mechanisms summary.
         lines.push(
             AnsiColors.dim + '  ON: ' + totalOn + ' | OFF: ' + totalOff + ' | Unknown: ' + totalUnknown + AnsiColors.reset
         )
     }
 
-    /**
-     * Render the Remotes section.
-     * Columns: Name  Last Action  Batt
+    /** Render the Remotes section.
      * @private
      * @param {Array<Object>} remotes - Remote device instances collected by the caller
-     * @param {Array<string>} lines - Row buffer that receives the rendered section
-     */
+     * @param {Array<string>} lines - Row buffer that receives the rendered section */
     #renderRemotes(remotes, lines) {
         const header = AnsiColors.bold + AnsiColors.cyan +
             '-- Remotes (' + remotes.length + ') --' + AnsiColors.reset
         lines.push(header)
 
-        // Header row
         let hdr = ''
         hdr += 'Name'.padEnd(NAME_W)
         hdr += 'Action'.padStart(ACTION_W)
@@ -415,17 +365,17 @@ class DeviceWindow extends BaseWindow {
 
             let line = ''
 
-            // Name column
+            //  Name column.
             line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
 
-            // Action column (grey, right-aligned)
+            //  Action column (grey, right-aligned)
             if (action != null && action !== '') {
                 line += colCell(String(action), AnsiColors.grey, ACTION_W, 'right')
             } else {
                 line += ' '.repeat(ACTION_W)
             }
 
-            // Battery column
+            //  Battery column.
             if (battery != null) {
                 const battColor = this.#getBatteryColor(battery)
                 line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
@@ -437,25 +387,11 @@ class DeviceWindow extends BaseWindow {
         }
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Render the header line: the localized current date plus today's sunrise/sunset.
-     *
-     * The date sentence comes from the locale's date bundle (`date_sentence` in
-     * `etc/i18n/{locale}/date.yaml`) with its `{% %}` tokens resolved through
-     * temporal.getDateParts(); a locale without that entry falls back to a plain
-     * English sentence. Sunrise and sunset are the raw geometric events from
-     * solar.getSunriseSunset() rendered as "HH:MM", shown as "--:--" when the
-     * observer location is missing or the sun does not rise/set that day.
-     *
-     * The header is part of the refreshed frame, so the existing 5-second refresh
-     * picks up the midnight date rollover and the next day's solar times by itself:
-     * a frame that differs redraws, an identical one is skipped.
-     *
+    /** Render the header line: the localized current date plus today's sunrise/sunset.
      * @param {string[]} lines - Buffer to append the header lines to
-     * @private
-     */
+     * @private */
     #renderHeader(lines) {
         const now = new Date()
         const bundle = temporal.loadDateBundle() ?? {}
@@ -476,40 +412,30 @@ class DeviceWindow extends BaseWindow {
         lines.push('')
     }
 
-    /**
-     * Return an ANSI color code based on the command origin.
-     *
+    /** Return an ANSI color code based on the command origin.
      * @param {string} origin - One of 'human', 'automation', or fallback
      * @returns {string} ANSI SGR color code
-     * @private
-     */
+     * @private */
     #getOriginColor(origin) {
         if (origin === 'human') return AnsiColors.green
         if (origin === 'automation') return AnsiColors.magenta
         return AnsiColors.grey
     }
 
-    /**
-     * Return a warning color for low battery levels.
-     *
+    /** Return a warning color for low battery levels.
      * @param {number} battery - Battery percentage (0-100)
      * @returns {string} ANSI SGR color code (red <=15%, yellow <=30%, empty otherwise)
-     * @private
-     */
+     * @private */
     #getBatteryColor(battery) {
         if (battery != null && battery <= 15) return AnsiColors.red
         if (battery != null && battery <= 30) return AnsiColors.yellow
         return ''
     }
 
-    /**
-     * Clean up existing subscriptions and subscribe to zigbee:<deviceName> channels
-     * for every known device. Called when 'devices:ready' is emitted by DeviceContainer
-     * -- both after initial load and on dynamic device addition.
-     * @private
-     */
+    /** Clean up existing subscriptions and subscribe to zigbee:<deviceName> channels
+     * @private */
     #resubscribeDevices() {
-        // Clean up any previous subscriptions so we don't stack them
+        //  Clean up any previous subscriptions so we don't stack them.
         this.#unsubscribes.forEach(unsub => unsub())
         this.#unsubscribes = []
 
@@ -529,19 +455,15 @@ class DeviceWindow extends BaseWindow {
         }
     }
 
-    /**
-     * Start the periodic refresh timer (every 5 seconds).
-     * @private
-     */
+    /** Start the periodic refresh timer (every 5 seconds).
+     * @private */
     #startRefreshTimer() {
         this.#stopRefreshTimer()
         this.#refreshInterval = setInterval(() => this.refresh(), 5000)
     }
 
-    /**
-     * Stop the periodic refresh timer.
-     * @private
-     */
+    /** Stop the periodic refresh timer.
+     * @private */
     #stopRefreshTimer() {
         if (this.#refreshInterval) {
             clearInterval(this.#refreshInterval)

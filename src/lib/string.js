@@ -1,79 +1,44 @@
 /**
  * String utility functions.
- *
  * @module lib/string
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
 'use strict'
 
-/**
- * Transforms a string by trimming, lowercasing, and replacing
- * all whitespace characters with underscores.
- *
+/** Transforms a string by trimming, lowercasing, and replacing.
  * @param {string} str - The string to transform.
- * @returns {string} The transformed string.
- */
+ * @returns {string} The transformed string. */
 export function slugify(str) {
     return str.trim().toLowerCase().replace(/\s+/g, '_')
 }
 
-/**
- * Derives the rule-target key used under automation `rules[].targets` from a
- * DeviceContainer friendly name: trims surrounding whitespace and collapses
- * internal whitespace runs to single underscores while preserving original
- * casing (e.g., "Kuchnia Gniazdo LED" -> "Kuchnia_Gniazdo_LED").
- *
- * Unlike {@link slugify}, this transform is deliberately near-reversible so
- * YAML keys stay recognizable as the exact registered device name; it exists
- * solely for user-facing automation config keys. Internal identity slugs
- * (cache keys, interaction routing) keep using case-insensitive slugify().
- *
+/** Derives the rule-target key used under automation `rules[].targets`
  * @param {string} str - The device name to transform.
- * @returns {string} The transformed target key.
- */
+ * @returns {string} The transformed target key. */
 export function toTargetKey(str) {
     return str.trim().replace(/\s+/g, '_')
 }
 
-/**
- * Emoji and pictograph code-point ranges: emoticons, symbols and pictographs,
- * transport and map, alchemical symbols, geometric shapes, arrows, supplemental
- * symbols, chess and dominoes, symbolic icons, misc symbols, dingbats, variation
- * selectors, mahjong tiles, playing cards and the zero-width joiner.
- *
- * Shared by stripMarkdown() (which removes them from AI output) and by
- * sanitizeText() (which removes them from incoming text), so the two cleaning
- * paths can never drift apart on what counts as an emoji.
- *
- * @type {RegExp}
- */
+/** Emoji and pictograph code-point ranges: emoticons, symbols and pictographs,
+ * @type {RegExp} */
 const EMOJI_REGEX = /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F700}-\u{1F77F}]|[\u{1F780}-\u{1F7FF}]|[\u{1F800}-\u{1F8FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FA6F}]|[\u{1FA70}-\u{1FAFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{FE00}-\u{FE0F}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|\u{200D}/gu
 
 
-/**
- * Strips markdown formatting (bold, italic, code blocks, headers, links,
- * images, blockquotes, list markers, horizontal rules) and emoji characters
- * from a string.
- *
- * Useful for cleaning AI responses before passing them to TTS or terminal UI
- * that does not render markdown or emoji well.
- *
+/** Strips markdown formatting.
  * @param {string} str - The input string.
- * @returns {string} The cleaned string without markdown and emoji.
- */
+ * @returns {string} The cleaned string without markdown and emoji. */
 export function stripMarkdown(str) {
     if (!str || typeof str !== 'string') return str
 
     let cleaned = str
 
-    // Strip fenced code blocks (``` ... ```)
+    //  Strip fenced code blocks (``` ... ```)
     cleaned = cleaned.replace(/```[\s\S]*?```/g, '')
 
-    // Strip inline code (`...`) - preserve inner text
+    //  Strip inline code (`...`) - preserve inner text.
     cleaned = cleaned.replace(/`([^`]+)`/g, '$1')
 
     // Strip bold (**text** or __text__)

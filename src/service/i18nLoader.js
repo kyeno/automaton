@@ -1,15 +1,8 @@
 /**
  * I18n Loader -- Unified Internationalization & Formatting Configuration Manager.
- *
- * Loads etc/automaton.yaml which controls the active locale (`locale.language`) and
- * time format (`locale.time_format`) settings for consistent display across the
- * entire UI (status bar, log window, AI chat). Also loads the AI language bundle
- * from etc/i18n/{locale}/ai.yaml. Provides a singleton so all modules share the
- * same loaded configuration and bundle.
- *
+ * Loads etc/automaton.yaml which controls the active locale (`locale.language`)
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -23,9 +16,6 @@ import ConfigService from './configService.js'
 import LoggerService from './loggerService.js'
 import { PROJECT_ROOT } from '../lib/projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Root directory containing per-locale i18n subdirectories. */
 const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
@@ -39,14 +29,9 @@ const VALID_TIME_FORMATS = ['12h', '24h']
 /** Default time format. */
 const DEFAULT_TIME_FORMAT = '12h'
 
-// ---------------------------------------------------------------------------
-// I18nLoader (singleton)
-// ---------------------------------------------------------------------------
+//  I18nLoader (singleton)
 
-/**
- * Loads and provides access to UI internationalization settings and the active
- * AI language bundle. ES module caching guarantees single instantiation.
- */
+/** Loads and provides access to UI internationalization settings and the active. */
 class SI18nLoader {
 
     /** @type {string} */ #locale = DEFAULT_LOCALE
@@ -54,13 +39,10 @@ class SI18nLoader {
     /** @type {Record<string, unknown>|null} */ #bundle = null
     /** @type {boolean} */ #initialized = false
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Load the i18n configuration and AI language bundle. Call once during
-     * application startup.
-     * @async
-     */
+    /** Load the i18n configuration and AI language bundle. Call once during
+     * @async */
     async init() {
         const result = await this.reload()
         this.#initialized = true
@@ -70,30 +52,18 @@ class SI18nLoader {
         )
     }
 
-    /**
-     * Resolve which locale directory a raw config language value maps to: the named
-     * subdirectory when one exists under etc/i18n/, otherwise DEFAULT_LOCALE. Mirrors
-     * exactly what init()/reload() apply so callers (/config reload) can predict the
-     * active directory without touching cached state.
+    /** Resolve which locale directory a raw config language value.
      * @param {*} languageValue - Raw locale.language value from a (candidate) config snapshot
-     * @returns {string} Directory name under etc/i18n/
-     */
+     * @returns {string} Directory name under etc/i18n/ */
     resolveLocaleDir(languageValue) {
         const candidate = String(languageValue ?? '').trim()
         if (candidate && fs.existsSync(path.join(I18N_ROOT, candidate))) return candidate
         return DEFAULT_LOCALE
     }
 
-    /**
-     * Re-read locale settings from (reloaded) config and swap in the matching
-     * language bundle. Used by `/config reload` after a successful config swap so a
-     * changed locale.language / locale.time_format takes effect without a restart.
-     * Safe to call repeatedly; reports what actually changed for caller output.
-     * `bundleChanged` flags content movement in ai.yaml itself -- relevant even when
-     * neither locale nor time format moved.
+    /** Re-read locale settings from (reloaded) config and swap in the matching.
      * @async
-     * @returns {Promise<{locale:string, timeFormat:string, changed:boolean, bundleChanged:boolean}>} Post-reload state
-     */
+     * @returns {Promise<{locale:string, timeFormat:string, changed:boolean, bundleChanged:boolean}>} Post-reload state */
     async reload() {
         const before = { locale: this.#locale, timeFormat: this.#timeFormat }
         const bundleBefore = JSON.stringify(this.#bundle ?? null)
@@ -115,69 +85,48 @@ class SI18nLoader {
         }
     }
 
-    /**
-     * Whether init()/reload() has run at least once -- gate callers use before invoking
-     * subsystem refreshes from `/config reload` so uninitialized services are never touched.
-     * @returns {boolean}
-     */
+    /** Whether init()/reload() has run at least once -- gate callers use before invoking
+     * @returns {boolean} */
     get isReady() {
         return this.#initialized
     }
 
-    /**
-     * Return the active locale directory name (e.g., 'pl_PL', 'en_US').
-     * This is automaton.yaml's locale.language value and matches a subdirectory
-     * under etc/i18n/. Consumers use it directly to build bundle file paths.
-     * @returns {string}
-     */
+    /** Return the active locale directory name (e.g., 'pl_PL', 'en_US').
+     * @returns {string} */
     getLocale() {
         return this.#locale
     }
 
-    /**
-     * Return the configured time display format.
-     * @returns {'12h'|'24h'}
-     */
+    /** Return the configured time display format.
+     * @returns {'12h'|'24h'} */
     getTimeFormat() {
         return this.#timeFormat
     }
 
-    /**
-     * Check whether timestamps should use 12-hour (am/pm) format.
-     * Convenience method for consumers that need a boolean.
-     * @returns {boolean}
-     */
+    /** Check whether timestamps should use 12-hour (am/pm) format.
+     * @returns {boolean} */
     is12HourFormat() {
         return this.#timeFormat === '12h'
     }
 
-    /**
-     * Return the full loaded AI language bundle as a plain object.
-     * @returns {Object}
-     */
+    /** Return the full loaded AI language bundle as a plain object.
+     * @returns {Object} */
     getBundle() {
         return this.#bundle || {}
     }
 
-    /**
-     * Return the decimal separator for the active locale.
-     * @returns {string} e.g., "," for pl_PL, "." for en_US
-     */
+    /** Return the decimal separator for the active locale.
+     * @returns {string} e.g., "," for pl_PL, "." for en_US */
     getDecimalSeparator() {
         return this.t('formatting.decimal_separator', '.')
     }
 
-    /**
-     * Format a numeric value using the active locale's decimal rules via Intl.NumberFormat.
-     * Uses the BCP 47 locale mapped from the short language code.
-     * Trailing zeros are stripped so e.g. "23,00" becomes "23" and "50,50" becomes "50,5".
-     *
+    /** Format a numeric value using the active locale's decimal rules via Intl.NumberFormat.
      * @param {number} value - The number to format
      * @param {number} [fractionDigits=2] - Maximum decimal precision
-     * @returns {string} Formatted number string respecting locale conventions
-     */
+     * @returns {string} Formatted number string respecting locale conventions */
     formatNumber(value, fractionDigits = 2) {
-        // Convert underscore to hyphen for BCP 47 compliance (pl_PL -> pl-PL)
+        //  Convert underscore to hyphen for BCP 47 compliance (pl_PL -> pl-PL)
         const locale = this.#locale.replace('_', '-')
         try {
             let formatted = new Intl.NumberFormat(locale, {
@@ -185,26 +134,19 @@ class SI18nLoader {
                 maximumFractionDigits: fractionDigits
             }).format(value)
 
-            // Strip trailing zeros after the decimal separator, then strip the separator itself if bare.
-            // Handles both "," (Polish) and "." (English) decimal separators.
+            //  Strip trailing zeros after the decimal separator, then strip the separator itself if bare.
             formatted = formatted.replace(/([,.])0+($|\s+)/g, '$2')
 
             return formatted
         } catch {
-            // Fallback if locale is unsupported by the runtime
+            //  Fallback if locale is unsupported by the runtime.
             return String(value)
         }
     }
 
-    /**
-     * Format the current local time using the active locale and configured
-     * time format (12h or 24h). Used by {% %} interpolation in i18n strings.
-     *
-     * Example output: "04:09" (24h) or "4:09 AM" (12h).
-     *
+    /** Format the current local time using the active locale and configured.
      * @param {Date} [date] - Optional date; defaults to Date.now()
-     * @returns {string} Formatted time string respecting locale and time_format config
-     */
+     * @returns {string} Formatted time string respecting locale and time_format config */
     formatTime(date = new Date()) {
         const locale = this.#locale.replace('_', '-')
         try {
@@ -214,19 +156,15 @@ class SI18nLoader {
                 hour12: this.is12HourFormat()
             }).format(date)
         } catch {
-            // Fallback if locale is unsupported by the runtime
+            //  Fallback if locale is unsupported by the runtime.
             return String(date.toLocaleTimeString())
         }
     }
 
-    /**
-     * Resolve a dotted key path against the loaded AI language bundle.
-     * Example: t('sections.devices_header') -> "=== DOSTĘPNE URZĄDZENIA ==="
-     *
+    /** Resolve a dotted key path against the loaded AI language bundle.
      * @param {string} key - Dot-separated key path
      * @param {string} [fallback] - Value returned if key not found
-     * @returns {*} The resolved value or fallback
-     */
+     * @returns {*} The resolved value or fallback */
     t(key, fallback = undefined) {
         if (!this.#bundle) return fallback
 
@@ -241,20 +179,17 @@ class SI18nLoader {
         return current !== undefined ? current : fallback
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Load and parse etc/automaton.yaml to extract locale.language and locale.time_format.
-     * @private
-     */
+    /** Load and parse etc/automaton.yaml to extract locale.language and locale.time_format.
+     * @private */
     #loadConfig() {
         try {
-            // ConfigService is initialized early in main.js before LoggerService,
-            // so it's guaranteed to be ready by the time I18nLoader.init() runs.
+            //  ConfigService is initialized early in main.js before LoggerService.
             const lang = ConfigService.get('locale.language')
             const tf   = ConfigService.get('locale.time_format')
 
-            // Parse locale.language -- value must name an existing bundle directory.
+            //  Parse locale.language -- value must name an existing bundle directory.
             if (lang) {
                 const candidate = String(lang).trim()
                 if (fs.existsSync(path.join(I18N_ROOT, candidate))) {
@@ -271,7 +206,7 @@ class SI18nLoader {
                 }
             }
 
-            // Parse locale.time_format
+            //  Parse locale.time_format.
             if (tf && VALID_TIME_FORMATS.includes(String(tf).trim())) {
                 this.#timeFormat = String(tf).trim()
             }
@@ -283,12 +218,9 @@ class SI18nLoader {
         }
     }
 
-    /**
-     * Load the YAML bundle file for the determined locale from the locale
-     * subdirectory (e.g., etc/i18n/pl_PL/ai.yaml).
+    /** Load the YAML bundle file for the determined locale from the locale.
      * @async
-     * @private
-     */
+     * @private */
     async #loadBundle() {
         const filePath = path.join(I18N_ROOT, this.#locale, 'ai.yaml')
 
@@ -317,6 +249,6 @@ class SI18nLoader {
     }
 }
 
-// Module-level singleton -- ES module caching guarantees single instantiation.
+//  Module-level singleton -- ES module caching guarantees single instantiation.
 const I18nLoaderInstance = Object.freeze(new SI18nLoader())
 export default I18nLoaderInstance

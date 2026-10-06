@@ -1,16 +1,8 @@
 /**
  * AI Assistant -- Main Orchestrator (Optimized for Prompt Caching).
- *
- * Manages conversation state, tool execution loops, and persistence of
- * chat history via CacheService. Emits device-interaction events through
- * EventBus so the UI can display real-time action messages.
- *
- * Language bundles are loaded via I18nLoader from etc/ai/i18n/{lang}.yaml,
- * making all AI-facing messages internationalizable.
- *
+ * Manages conversation state, tool execution loops.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -29,25 +21,16 @@ import ChatMessageOrigin from '../enum/aiChatMessageOrigin.js'
 import { stripMarkdown, interpolateTokens } from '../lib/string.js'
 import temporal from '../lib/date.js'
 
-// ---------------------------------------------------------------------------
-// Type Definitions
-// ---------------------------------------------------------------------------
+//  Type Definitions.
 
-/**
- * A single message in the AI conversation history.
- * Carries role, content, optional tool-call metadata, and an internal timestamp.
- *
+/** A single message in the AI conversation history.
  * @typedef {Object} ConversationMessage
  * @property {'system'|'user'|'assistant'|'tool'} role - Message role
  * @property {string} [content] - Text content (optional for assistant messages with tool_calls)
  * @property {Array<Object>} [tool_calls] - Tool call requests from the assistant
  * @property {string} [tool_call_id] - ID of the tool call this message responds to
- * @property {number} [_ts] - Internal epoch-millisecond timestamp (stripped before API calls)
- */
+ * @property {number} [_ts] - Internal epoch-millisecond timestamp (stripped before API calls) */
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Redis key for persisting conversation history. */
 const CONVERSATION_KEY = 'ai:conversation:default'
@@ -61,23 +44,12 @@ const DEFAULT_MAX_TURNS = 20
 /** Safety limit for tool-call iterations per user message. */
 const MAX_TOOL_ITERATIONS = 10
 
-/**
- * Name the assistant reports when `ai.name` is unset or blank. Kept deliberately
- * generic: the configured name is what personalizes the assistant, so the
- * fallback must not pretend to be one.
- */
+/** Name the assistant reports when `ai.name` is unset or blank. Kept deliberately */
 const DEFAULT_ASSISTANT_NAME = 'AI'
 
-// ---------------------------------------------------------------------------
-// SAiAssistant (singleton)
-// ---------------------------------------------------------------------------
+//  SAiAssistant (singleton)
 
-/**
- * Central orchestrator for AI-powered device control.
- *
- * Coordinates the LLM provider, manages conversation state, executes
- * tool calls returned by the model, and persists/restores chat history.
- */
+/** Central orchestrator for AI-powered device control. */
 class SAiAssistant {
 
     instance
@@ -89,11 +61,8 @@ class SAiAssistant {
     /** @type {number} */ #maxTurns = DEFAULT_MAX_TURNS
     /** @type {boolean} */ #initialized = false
 
-    /**
-     * FIFO chain of in-flight turns -- processMessage() appends each turn here so
-     * concurrent callers are serialized against the single shared conversation.
-     * @type {Promise<unknown>}
-     */
+    /** FIFO chain of in-flight turns -- processMessage() appends each turn here so
+     * @type {Promise<unknown>} */
     #queue = Promise.resolve()
 
     /** Number of turns currently holding the FIFO lock; drives the ai.busy shared state. */
@@ -102,24 +71,18 @@ class SAiAssistant {
     /** Epoch ms when the current busy streak began (null while idle); kept on deactivation so observers can report elapsed time. */
     #busySince = null
 
-    // -- Singleton --------------------------------------------------------
 
-    /**
-     * Synchronous singleton constructor.
-     * @returns {this}
-     */
+    /** Synchronous singleton constructor.
+     * @returns {this} */
     constructor() {
         if (!SAiAssistant.instance) SAiAssistant.instance = this
         return SAiAssistant.instance
     }
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Load configuration, initialize the LLM provider, restore
-     * conversation history, and mark the assistant as ready.
-     * @async
-     */
+    /** Load configuration, initialize the LLM provider, restore
+     * @async */
     async init() {
         this.#loadConfig()
 
@@ -136,7 +99,7 @@ class SAiAssistant {
             return
         }
 
-        // Initialize structures with static system prompt + live device definitions
+        //  Initialize structures with static system prompt + live device definitions.
         this.#messages = [
             { role: 'system', content: this.getEffectiveSystemPrompt() }
         ]
@@ -145,41 +108,30 @@ class SAiAssistant {
         this.#initialized = true
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Check whether the AI assistant is fully initialized and usable.
-     * @returns {boolean}
-     */
+    /** Check whether the AI assistant is fully initialized and usable.
+     * @returns {boolean} */
     isAvailable() {
         return this.#initialized && this.#provider !== null
     }
 
-    /**
-     * Whether init() has completed at all (with or without a working provider) -- gate
-     * callers use before invoking resetConversation() from `/config reload`.
-     * @returns {boolean}
-     */
+    /** Whether init() has completed at all (with or without a working provider) -- gate
+     * @returns {boolean} */
     isReady() {
         return this.#initialized
     }
 
-    /**
-     * Reset the conversation to a fresh system-prompt state and drop any cached history.
-     * Called by /config reload when ai.* settings changed: re-snapshots ai.* config values,
-     * rebuilds the LLM provider so new model/sampling parameters apply, then delegates the
-     * actual message/cache reset to the existing clearConversation() path. Safe no-op
-     * before init().
+    /** Reset the conversation to a fresh system-prompt state and drop any cached history.
      * @async
-     * @returns {Promise<{reset:boolean, dropped:number}>} How much live state was cleared
-     */
+     * @returns {Promise<{reset:boolean, dropped:number}>} How much live state was cleared */
     async resetConversation() {
         if (!this.#initialized) return { reset: false, dropped: 0 }
 
         const hadProvider = this.#provider !== null
         const dropped = Math.max(0, this.#messages.length - 1)
 
-        // Re-read ai.* now that ConfigService holds the freshly reloaded values
+        //  Re-read ai.* now that ConfigService holds the freshly reloaded values.
         this.#loadConfig()
         if (hadProvider) this.#reinitProvider()   // picks up new model / max_tokens / temperature
 
@@ -192,11 +144,8 @@ class SAiAssistant {
         return { reset: true, dropped }
     }
 
-    /**
-     * Construct and validate a fresh LLM provider against current config. Mirrors the
-     * init() path; failure disables AI features again instead of throwing.
-     * @private
-     */
+    /** Construct and validate a fresh LLM provider against current config. Mirrors the
+     * @private */
     #reinitProvider() {
         try {
             this.#provider = new OpenAiProvider()
@@ -210,48 +159,20 @@ class SAiAssistant {
         }
     }
 
-    /**
-     * Check whether an AI provider can be constructed, regardless of init state.
-     * Mirrors OpenAiProvider requirements (API URL + model name); safe to call before
-     * init(). Used by bootstrap and the UI to skip work entirely when unconfigured.
-     * @returns {boolean}
-     */
+    /** Check whether an AI provider can be constructed, regardless of init state.
+     * @returns {boolean} */
     isConfigured() {
         const apiUrl = process.env.AI_API_URL
         if (!apiUrl || !String(apiUrl).trim()) return false
         return Boolean(ConfigService.get('ai.model'))
     }
 
-     /**
-      * Process a user message through the LLM, handling tool-call loops.
-      *
-      * Sends the conversation to the provider, executes any requested tools
-      * up to {@link MAX_TOOL_ITERATIONS}, then persists state and returns
-      * the final text response.
-      *
-      * Turns are serialized through an internal FIFO chain: concurrent callers
-      * (interactive chat vs periodic automation ticks) each receive their own promise,
-      * but the shared conversation is only ever driven one turn at a time -- in request
-      * order. A failing turn still releases the queue for the next caller. While any turn
-      * holds the FIFO lock the shared state key `ai.busy` carries `{ active, since }`
-      * (via StateService) so UI components drive their "AI thinking..." indicators from
-      * that state instead of inline print logic.
-      *
-      * System-origin turns ({@link ChatMessageOrigin.SYSTEM}) are isolated from the shared
-      * history either way they run: by default they execute standalone against a fresh
-      * system-prompt-only array with no chat history sent at all (see
-      * {@link #systemCallsIncludeChatHistory}), and when ai.include_chat_history_in_system_calls
-      * is enabled the message-array length is instead snapshotted before the prompt is pushed
-      * and restored on every exit path (success, tool-loop completion or failure). Either way,
-      * weather-style announcements never accumulate in context and failed ticks leave no orphan
-      * user messages behind.
-      *
+     /** Process a user message through the LLM, handling tool-call loops.
       * @param {string} userInput - The user's input message.
       * @param {Object} [options] - Optional processing options.
       * @param {'user'|'system'} [options.origin='user'] - Message authorship origin (for UI rendering).
       * @param {Record<string, unknown>} [options.tts] - Extra TTS server parameters forwarded verbatim into the 'tts:speak' event payload for this reply (e.g., intro/outro jingle framing); omitted when absent or not an object.
-      * @returns {Promise<string>} The assistant's textual reply.
-      */
+      * @returns {Promise<string>} The assistant's textual reply. */
     processMessage(userInput, options = {}) {
         if (!this.isAvailable()) {
             return Promise.resolve('[AI is currently unavailable - check provider configuration.]')
@@ -266,14 +187,9 @@ class SAiAssistant {
         return next
     }
 
-    /**
-     * Update the shared `ai.busy` state while turns hold the FIFO lock. A counter keeps
-     * the streak active across back-to-back serialized turns; `since` records when the
-     * current streak began and is preserved on deactivation so observers (e.g., AiWindow)
-     * can report how long inference took.
+    /** Update the shared `ai.busy` state while turns hold the FIFO lock.
      * @param {boolean} active - true when a turn starts holding the lock, false when it releases it
-     * @private
-     */
+     * @private */
     #setAiBusy(active) {
         if (active) {
             if (this.#busyCount === 0) this.#busySince = Date.now()
@@ -288,40 +204,24 @@ class SAiAssistant {
         }
     }
 
-    /**
-     * Whether system-origin turns include accumulated chat history in their LLM request.
-     * Governed by ai.include_chat_history_in_system_calls (default false): standalone
-     * announcements see only the fresh system prompt plus their own message -- faster
-     * inference and deterministic rewrites for small models; set true explicitly when an
-     * announcement should be aware of prior conversation context.
-     *
-     * Exposed without the # prefix so unit tests can pin both payload shapes against a
-     * stubbed provider (the singleton instance itself is frozen).
-     * @returns {boolean} true only when the flag is explicitly enabled
-     */
+    /** Whether system-origin turns include accumulated chat history in their LLM request.
+     * @returns {boolean} true only when the flag is explicitly enabled */
     systemCallsIncludeChatHistory() {
         return ConfigService.get('ai.include_chat_history_in_system_calls', false) === true
     }
 
-    /**
-     * Run one turn with system-origin isolation: user-origin turns execute directly on the
-     * shared conversation; system-origin runs leave zero residue behind -- either executing
-     * standalone against a fresh [systemPrompt] array (default, no chat history sent) or
-     * trimming their own messages off afterwards in context-aware mode. The FIFO queue
-     * serializes turns, so swapping #messages mid-slot cannot interleave with another caller.
+    /** Run one turn with system-origin isolation: user-origin turns execute directly.
      * @private
      * @param {string} userInput - The user's input message.
      * @param {Object} [options] - Optional processing options (see processMessage()).
-     * @returns {Promise<string>} The assistant's textual reply.
-     */
+     * @returns {Promise<string>} The assistant's textual reply. */
     async #runTurnIsolated(userInput, options = {}) {
         const origin = options.origin || 'user'
         if (origin !== ChatMessageOrigin.SYSTEM) {
             return await this.#executeTurn(userInput, options)
         }
 
-        // Standalone mode (default): the model sees only the freshly built system prompt plus
-        // this announcement. Shared state is restored in finally even when the LLM call fails.
+        //  Standalone mode (default): the model sees only the freshly built system prompt.
         if (!this.systemCallsIncludeChatHistory()) {
             const savedMessages = this.#messages
             this.#messages = [{ role: 'system', content: this.getEffectiveSystemPrompt() }]
@@ -332,8 +232,7 @@ class SAiAssistant {
             }
         }
 
-        // Context-aware mode: full history visible to the turn; snapshot where the shared
-        // conversation stood before the prompt was pushed and restore it on every exit path.
+        //  Context-aware mode: full history visible to the turn; snapshot where the shared.
         const restoreAt = this.#messages.length
         try {
             return await this.#executeTurn(userInput, options)
@@ -342,22 +241,16 @@ class SAiAssistant {
         }
     }
 
-    /**
-     * Execute one full AI turn against the shared conversation -- the actual
-     * push/tool-loop/return machinery behind processMessage(). Assumes availability
-     * (checked by the entry point); thrown errors propagate to that caller's queue slot.
+    /** Execute one full AI turn against the shared conversation -- the actual.
      * @private
      * @param {string} userInput - The user's input message.
      * @param {Object} [options] - Optional processing options (see processMessage()).
-     * @returns {Promise<string>} The assistant's textual reply.
-     */
+     * @returns {Promise<string>} The assistant's textual reply. */
     async #executeTurn(userInput, options = {}) {
         const origin = options.origin || 'user'
         const isSystemOrigin = origin === ChatMessageOrigin.SYSTEM
 
-        // Optional per-reply TTS passthrough params -- spread into every 'tts:speak' emission
-        // below so callers can shape how their utterance sounds without touching the decoupled
-        // TtsService directly. Non-object values degrade to no extras at all.
+        //  Optional per-reply TTS passthrough params -- spread into every 'tts:speak' emission.
         const ttsOptions = (options.tts && typeof options.tts === 'object') ? options.tts : {}
         this.#messages.push({ role: 'user', content: userInput, _ts: Date.now(), _origin: origin })
         let iteration = 0
@@ -365,18 +258,16 @@ class SAiAssistant {
         while (iteration < MAX_TOOL_ITERATIONS) {
             iteration++
 
-            // Returns the optimized, tiny static array (100% cache friendly)
+            //  Returns the optimized, tiny static array (100% cache friendly)
             const tools = ToolBuilder.build()
 
-            // Strip internal fields (_ts) before sending to AI provider
+            //  Strip internal fields (_ts) before sending to AI provider.
             const apiMessages = this.stripInternalFields(this.#messages)
             const assistantMsg = await this.#provider.chat(apiMessages, tools)
             this.#messages.push({ ...assistantMsg, _ts: Date.now(), _origin: origin })
 
             if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
-                // Check if the model returned JSON instead of proper tool_calls -- catch models
-                // that don't support native function calling but output structured JSON in text.
-                // parseJsonIntent now returns an array of intents to handle multi-device responses.
+                //  Check if the model returned JSON instead of proper tool_calls -- catch models.
                 const jsonIntents = ToolBuilder.parseJsonIntent(assistantMsg.content)
 
                 if (jsonIntents && jsonIntents.length > 0) {
@@ -385,11 +276,7 @@ class SAiAssistant {
                         'AiAssistant'
                     )
 
-                    // Reconstruct a structurally valid OpenAI exchange from the pseudo-calls: attach
-                    // synthesized tool_calls to the assistant message we just stored, then record one
-                    // tool-result message per intent with matching ids. Providers that validate chat
-                    // shape see exactly what they would get from native function calling, and each
-                    // stored result stays individually parseable for UI rendering.
+                    //  Reconstruct a structurally valid OpenAI exchange from the pseudo-calls: attach.
                     const synthCalls = jsonIntents.map((intent, i) => ({
                         id: `synth_tool_${iteration}_${i}`,
                         type: 'function',
@@ -404,7 +291,7 @@ class SAiAssistant {
                     }))
                     this.#messages[this.#messages.length - 1].tool_calls = synthCalls
 
-                    // Execute all parsed intents; results feed back into the conversation so the AI can respond naturally
+                    //  Execute all parsed intents; results feed back into the conversation so the AI can respond naturally.
                     for (let i = 0; i < jsonIntents.length; i++) {
                         const result = await ToolBuilder.executeIntent(jsonIntents[i])
                         this.#messages.push({
@@ -416,23 +303,21 @@ class SAiAssistant {
                         })
                     }
 
-                    // Continue loop so the AI can process the tool results and give natural response
+                    //  Continue loop so the AI can process the tool results and give natural response.
                     continue
                 }
 
-                // Skip persistence for system-originated messages so periodic ticks
-                // do not extend the conversation TTL or pollute cached history
+                //  Skip persistence for system-originated messages so periodic ticks.
                 if (!isSystemOrigin) {
                     this.#trimConversation()
                     await this.#persistConversation()
                 }
                 let response = assistantMsg.content || ''
 
-                // Conditionally strip markdown formatting and emoji from AI response
+                //  Conditionally strip markdown formatting and emoji from AI response.
                 response = this.#maybeStripFormatting(response)
 
-                // Emit TTS event so the decoupled TtsService can speak the response;
-                // caller-supplied TTS params travel along in the same payload.
+                //  Emit TTS event so the decoupled TtsService can speak the response;
                 if (response) {
                     EventBus.emit('tts:speak', { text: response, ...ttsOptions })
                 }
@@ -454,7 +339,7 @@ class SAiAssistant {
 
         let fallback = "I'm sorry, I encountered an issue while processing your request. Please try again."
         this.#messages.push({ role: 'assistant', content: fallback, _ts: Date.now(), _origin: origin })
-        // Skip persistence for system-originated messages (same rationale as above)
+        //  Skip persistence for system-originated messages (same rationale as above)
         if (!isSystemOrigin) {
             this.#trimConversation()
             await this.#persistConversation()
@@ -464,9 +349,7 @@ class SAiAssistant {
         return fallback
     }
 
-    /**
-     * Clear the conversation history and reset to a fresh system prompt.
-     */
+    /** Clear the conversation history and reset to a fresh system prompt. */
     clearConversation() {
         this.#messages = [
             { role: 'system', content: this.getEffectiveSystemPrompt() }
@@ -475,68 +358,42 @@ class SAiAssistant {
         LoggerService.info('Conversation cleared', 'AiAssistant')
     }
 
-    /**
-     * Return the number of non-system messages in the current conversation.
-     * @returns {number}
-     */
+    /** Return the number of non-system messages in the current conversation.
+     * @returns {number} */
     getMessageCount() {
         return this.#messages.length - 1
     }
 
-    /**
-     * Return the non-system messages array for UI display purposes.
-     * Messages include role ('user', 'assistant', 'tool') and content.
-     * @returns {Array<Object>} Array of message objects
-     */
+    /** Return the non-system messages array for UI display purposes.
+     * @returns {Array<Object>} Array of message objects */
     getConversationHistory() {
         return this.#messages.filter(m => m.role !== 'system')
     }
 
-    /**
-     * Return the full messages array including the system prompt.
-     * Used by diagnostic/test tools to inspect the exact payload sent to the LLM.
-     * @returns {Array<Object>} Full message array including system message
-     */
+    /** Return the full messages array including the system prompt.
+     * @returns {Array<Object>} Full message array including system message */
     getMessages() {
         return this.#messages
     }
 
-    /**
-     * Inject a test user message into the conversation (for diagnostic scripts).
-     * Does NOT trigger tool execution or persistence -- just appends the message.
-     * @param {string} content - The user message text to inject.
-     */
+    /** Inject a test user message into the conversation (for diagnostic scripts).
+     * @param {string} content - The user message text to inject. */
     injectUserMessage(content) {
         this.#messages.push({ role: 'user', content, _ts: Date.now() })
     }
 
-    // -- Public API: System Prompt ----------------------------------------
+    //  -- Public API: System Prompt ----------------------------------------
 
-    /**
-     * The assistant's own configured name (`ai.name`), the single source of truth
-     * for every place the assistant is named: the `{% name %}` token in the system
-     * prompt, the AI window's transcript prefix and the action lines.
-     *
-     * Whitespace is trimmed and an unset/blank value degrades to
-     * DEFAULT_ASSISTANT_NAME, so a config without a name still reads sensibly.
-     *
-     * @returns {string} The assistant name to display and to speak as.
-     */
+    /** The assistant's own configured name (`ai.name`), the single source of truth
+     * @returns {string} The assistant name to display and to speak as. */
     getAssistantName() {
         const raw = ConfigService.get('ai.name')
         const name = (typeof raw === 'string') ? raw.trim() : ''
         return name !== '' ? name : DEFAULT_ASSISTANT_NAME
     }
 
-    /**
-     * Return the effective system prompt (base prompt + device list).
-     *
-     * The `{% name %}` token in the i18n prompt is resolved here rather than at
-     * load time, so a `/config reload` that changes `ai.name` reaches the model on
-     * the very next turn.
-     *
-     * @returns {string} The full effective system prompt.
-     */
+    /** Return the effective system prompt (base prompt + device list).
+     * @returns {string} The full effective system prompt. */
     getEffectiveSystemPrompt() {
         const devices = DeviceContainer.getAll()
         const roles = this.#loadDeviceRoles()
@@ -544,9 +401,7 @@ class SAiAssistant {
         const devicesHeader = I18nLoader.t('sections.devices_header', '=== DEVICES ===')
         const deviceInstruction = I18nLoader.t('sections.device_instruction', '')
 
-        // Build flat device list: mechanisms + sensors only.
-        // Pure remotes are skipped (AI rarely interacts with them directly),
-        // except for dual-purpose devices explicitly annotated in i18n.
+        //  Build flat device list: mechanisms + sensors only.
         const allDevices = []
 
         for (const name of Object.keys(devices)) {
@@ -554,7 +409,7 @@ class SAiAssistant {
 
             const prefix = devices[name]?.getLogPrefix?.() || 'Mechanism'
 
-            // Skip pure remotes unless they have an i18n annotation (dual-purpose devices)
+            //  Skip pure remotes unless they have an i18n annotation (dual-purpose devices)
             if (prefix === 'Remote' && !roles.has(name)) continue
 
             const role = roles.get(name) || ''
@@ -567,15 +422,11 @@ class SAiAssistant {
         return `${basePrompt}\n\n${devicesHeader}\n${deviceInstruction}\n${allDevices.join('\n')}`
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Load device role annotations from the active i18n bundle.
-     * Returns a flat map of deviceName -> role description string.
-     *
+    /** Load device role annotations from the active i18n bundle.
      * @returns {Map<string, string>}
-     * @private
-     */
+     * @private */
     #loadDeviceRoles() {
         const roles = new Map()
         try {
@@ -595,11 +446,8 @@ class SAiAssistant {
         return roles
     }
 
-    /**
-     * Load AI configuration from YAML file.
-     * The system_prompt is loaded from the i18n bundle.
-     * @private
-     */
+    /** Load AI configuration from YAML file.
+     * @private */
     #loadConfig() {
         try {
             this.#conversationTtlSec = this.#resolveConversationTtl()
@@ -609,21 +457,16 @@ class SAiAssistant {
             LoggerService.warn(`Failed to load AI config (${error.message}), using defaults`, 'AiAssistant')
         }
 
-        // System prompt from i18n bundle
+        //  System prompt from i18n bundle.
         const i18nPrompt = I18nLoader.t('system_prompt')
         if (i18nPrompt && typeof i18nPrompt === 'string' && i18nPrompt.trim()) {
             this.#systemPrompt = i18nPrompt.trim()
         }
     }
 
-    /**
-     * Resolve conversation history TTL in whole seconds from main config.
-     * Accepts legacy plain seconds or a human-readable duration ("15m", "900s")
-     * parsed via temporal.humanToMs(); missing values silently fall back to
-     * DEFAULT_CONVERSATION_TTL_SEC, present-but-invalid ones warn first (fail-open).
+    /** Resolve conversation history TTL in whole seconds from main config.
      * @private
-     * @returns {number} TTL in whole seconds (> 0)
-     */
+     * @returns {number} TTL in whole seconds (> 0) */
     #resolveConversationTtl() {
         const raw = ConfigService.get('ai.conversation_ttl_sec')
         if (raw == null) return DEFAULT_CONVERSATION_TTL_SEC
@@ -644,13 +487,9 @@ class SAiAssistant {
         return sec
     }
 
-    /**
-     * Strip internal fields (_ts, etc.) from messages before sending to AI provider.
-     * Only keeps standard API fields: role, content, tool_calls, tool_call_id.
-     *
+    /** Strip internal fields (_ts, etc.) from messages before sending to AI provider.
      * @param {Array<Object>} msgs - Full message array with internal metadata
-     * @returns {Array<Object>} Cleaned messages safe for LLM API
-     */
+     * @returns {Array<Object>} Cleaned messages safe for LLM API */
     stripInternalFields(msgs) {
         return msgs.map(m => {
             const clean = {}
@@ -662,24 +501,17 @@ class SAiAssistant {
         })
     }
 
-    /**
-     * Conditionally strip markdown formatting and emoji from an AI response.
-     * No-ops when the feature is disabled via configuration.
-     *
+    /** Conditionally strip markdown formatting and emoji from an AI response.
      * @param {string} text - The raw AI response text.
      * @returns {string} Cleaned text if strip_ai_formatting is true, otherwise unchanged.
-     * @private
-     */
+     * @private */
     #maybeStripFormatting(text) {
         const shouldStrip = ConfigService.get('ai.strip_ai_formatting', false)
         return shouldStrip ? stripMarkdown(text) : text
     }
 
-    /**
-     * Trim the conversation history to stay within {@link #maxTurns}.
-     * Preserves the system prompt at index 0.
-     * @private
-     */
+    /** Trim the conversation history to stay within {@link #maxTurns}.
+     * @private */
     #trimConversation() {
         if (this.#messages.length <= this.#maxTurns + 1) return
         const keep = this.#maxTurns
@@ -687,16 +519,12 @@ class SAiAssistant {
         this.#messages = trimmed
     }
 
-    /**
-     * Persist non-system messages to CacheService with TTL.
-     * Silently skips if cache is unavailable.
-     * @private
-     */
+    /** Persist non-system messages to CacheService with TTL.
+     * @private */
     async #persistConversation() {
         if (!CacheService.isConnected()) return
         try {
-            // Exclude system-role messages AND system-origin conversation turns
-            // so periodic ticks never pollute cached history
+            //  Exclude system-role messages AND system-origin conversation turns.
             const chatMessages = this.#messages.filter(
                 m => m.role !== 'system' && m._origin !== ChatMessageOrigin.SYSTEM
             )
@@ -706,11 +534,8 @@ class SAiAssistant {
         }
     }
 
-    /**
-     * Restore conversation history from CacheService on startup.
-     * Handles both native array and legacy JSON-string formats.
-     * @private
-     */
+    /** Restore conversation history from CacheService on startup.
+     * @private */
     async #restoreConversation() {
         if (!CacheService.isConnected()) return
         try {
@@ -740,7 +565,7 @@ class SAiAssistant {
     }
 }
 
-// Singleton instance -- frozen to prevent mutation of the public API surface.
+//  Singleton instance -- frozen to prevent mutation of the public API surface.
 const AiAssistantInstance = new SAiAssistant()
 Object.freeze(AiAssistantInstance)
 export default AiAssistantInstance

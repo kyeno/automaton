@@ -1,33 +1,8 @@
 /**
  * Durable state-transition history service backed by local SQLite.
- *
- * Single source of truth for timestamped state transitions of monitored entities
- * (video players, network presence, and any future monitor). Backed by Node's
- * built-in `node:sqlite` -- no external dependencies -- so history is available
- * offline and survives restarts without a running Redis broker.
- *
- * Design notes:
- *   - Event-sourced / append-only: every genuine transition is recorded as a row
- *     with an epoch-millisecond timestamp; current state is simply the latest row
- *     per (domain, subject), which keeps fast indexed reads while preserving full
- *     history needed for recency conditions ("last change was > N minutes ago").
- *   - Deduped on write: recordTransition() only inserts when the value differs from
- *     the stored one, so repeated identical polls never bloat the table or re-fire
- *     events after a restart that resumes in the same state.
- *   - Fail-open: if the database cannot be opened (read-only filesystem, lock, ...)
- *     the service reports itself unavailable and all accessors degrade gracefully
- *     instead of throwing, so monitors keep working exactly as before.
- *   - States are normalized to short string labels ('online', 'offline', 'playing',
- *     ..., 'unknown'); JS null/undefined maps to 'unknown'. Consumers map back to
- *     their own contracts (e.g., presence 1/0) at their boundary.
- *
- * Storage defaults to <project root>/var/db/automaton.db and can be overridden with the
- * DB_PATH environment variable (or by passing a path to init()). Retention prunes rows
- * older than STATE_DB_RETENTION_DAYS (default 90) at startup.
- *
+ * Single source of truth for timestamped state transitions of monitored entities.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -40,9 +15,6 @@ import path from 'node:path'
 import LoggerService from './loggerService.js'
 import PROJECT_ROOT from '../lib/projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Default database file location relative to the project root. */
 const DEFAULT_DB_FILE = path.join('var', 'db', 'automaton.db')
@@ -53,15 +25,9 @@ const UNKNOWN_LABEL = 'unknown'
 /** Default retention window in days before history rows are pruned at startup. */
 const DEFAULT_RETENTION_DAYS = 90
 
-// ---------------------------------------------------------------------------
-// SDatabaseService (module-level singleton)
-// ---------------------------------------------------------------------------
+//  SDatabaseService (module-level singleton)
 
-/**
- * Local SQLite-backed store of timestamped state transitions.
- * ES module caching guarantees a single instance; private fields stay mutable
- * even though the exported object is frozen.
- */
+/** Local SQLite-backed store of timestamped state transitions. */
 class SDatabaseService {
 
     /** Open SQLite handle, or null when unavailable. @type {object|null} */
@@ -73,18 +39,11 @@ class SDatabaseService {
     /** Warn-once flag so a downed store does not spam on every call. @type {boolean} */
     #warnedUnavailable = false
 
-    // -- Lifecycle --------------------------------------------------------
+    //  -- Lifecycle --------------------------------------------------------
 
-    /**
-     * Open (or create) the SQLite database, enable WAL + busy timeout, ensure the
-     * schema exists, and apply retention pruning. Never throws: on failure it logs
-     * an error and leaves the service marked unavailable so callers fail open.
-     * Safe to call more than once; subsequent calls re-open idempotently.
-     *
+    /** Open (or create) the SQLite database, enable WAL + busy timeout.
      * @param {string} [dbPath] - Explicit database path (e.g., ':memory:' for tests).
-     *   Defaults to $DB_PATH or <project root>/var/db/automaton.db.
-     * @returns {Promise<boolean>} true when the store is ready, false otherwise.
-     */
+     * @returns {Promise<boolean>} true when the store is ready, false otherwise. */
     async init(dbPath) {
         const resolved = dbPath ?? process.env.DB_PATH ?? path.join(PROJECT_ROOT, DEFAULT_DB_FILE)
 
@@ -114,36 +73,27 @@ class SDatabaseService {
         }
     }
 
-    /**
-     * Close the database handle and mark the service unavailable. Safe when already closed.
-     * @returns {Promise<void>}
-     */
+    /** Close the database handle and mark the service unavailable. Safe when already closed.
+     * @returns {Promise<void>} */
     async close() {
         const had = this.#ready || this.#db != null
         this.#closeHandle()
         if (had) this.#log('info', 'State history store closed')
     }
 
-    // -- Availability -----------------------------------------------------
+    //  -- Availability -----------------------------------------------------
 
-    /**
-     * Whether the store is currently usable. Callers use this to fail open/closed explicitly.
-     * @returns {boolean} true when a live connection exists.
-     */
+    /** Whether the store is currently usable. Callers use this to fail open/closed explicitly.
+     * @returns {boolean} true when a live connection exists. */
     isAvailable() {
         return this.#ready && this.#db != null
     }
 
-    // -- Write ------------------------------------------------------------
+    //  -- Write ------------------------------------------------------------
 
-    /**
-     * Record a state transition, inserting a row only when it differs from the stored value.
-     * This single method centralizes change-detection so monitors do not each re-implement it.
-     *
+    /** Record a state transition, inserting a row only when it differs from the stored value.
      * @param {{domain: string, subject: string, toState: string|null, source?: string}} entry - Transition details;
-     *   `toState` may be null/undefined (recorded as 'unknown').
-     * @returns {Promise<{changed: boolean, ts: number|null}>} changed=true and ts set when a new row was written.
-     */
+     * @returns {Promise<{changed: boolean, ts: number|null}>} changed=true and ts set when a new row was written. */
     async recordTransition({ domain, subject, toState, source = 'poll' }) {
         if (!this.isAvailable()) {
             this.#warnUnavailableOnce()
@@ -170,14 +120,12 @@ class SDatabaseService {
         }
     }
 
-    // -- Read -------------------------------------------------------------
+    //  -- Read -------------------------------------------------------------
 
-    /**
-     * Current stored label for a subject, or null when absent/unavailable.
+    /** Current stored label for a subject, or null when absent/unavailable.
      * @param {string} domain - e.g., 'videoPlayer' | 'network'.
      * @param {string} subject - host name / device name.
-     * @returns {Promise<string|null>} Stored label ('online', 'playing', ..., 'unknown'), or null.
-     */
+     * @returns {Promise<string|null>} Stored label ('online', 'playing', ..., 'unknown'), or null. */
     async getCurrent(domain, subject) {
         if (!this.isAvailable()) return null
         try {
@@ -188,13 +136,10 @@ class SDatabaseService {
         }
     }
 
-    /**
-     * Epoch-millisecond timestamp of the most recent recorded transition for a subject,
-     * or null when none exists or the store is unavailable. Powers recency conditions.
+    /** Epoch-millisecond timestamp of the most recent recorded transition for a subject.
      * @param {string} domain - Domain identifier.
      * @param {string} subject - Subject identifier.
-     * @returns {Promise<number|null>} Timestamp (ms since epoch), or null.
-     */
+     * @returns {Promise<number|null>} Timestamp (ms since epoch), or null. */
     async lastTransitionTs(domain, subject) {
         if (!this.isAvailable()) return null
         try {
@@ -208,19 +153,10 @@ class SDatabaseService {
         }
     }
 
-    /**
-     * How long (ms) the subject sat in its state immediately preceding the current one --
-     * i.e., the interval between this subject's two most recent transitions. Because
-     * recordTransition() only inserts when the value changes, consecutive rows always
-     * differ, so the second-newest row is by definition the previous state. The duration
-     * is measured up to the newest transition's timestamp (not wall-clock "now"), which
-     * keeps it stable for callers evaluating shortly after the event. Returns null when
-     * fewer than two transitions are recorded or the store is unavailable. Powers
-     * absence/presence windowing (e.g., the greeter's reboot vs welcome-back decision).
+    /** How long (ms) the subject sat in its state immediately preceding the current one --
      * @param {string} domain - Domain identifier.
      * @param {string} subject - Subject identifier.
-     * @returns {Promise<number|null>} Duration in milliseconds, or null.
-     */
+     * @returns {Promise<number|null>} Duration in milliseconds, or null. */
     async priorStateDurationMs(domain, subject) {
         if (!this.isAvailable()) return null
         try {
@@ -236,16 +172,10 @@ class SDatabaseService {
         }
     }
 
-    /**
-     * Timestamp (epoch milliseconds) of the subject's second-most-recent transition --
-     * i.e., the moment it left its previous state. For a host that just came back online
-     * this is when it went offline; paired with priorStateDurationMs() it lets callers
-     * render both how long AND since when an absence lasted ("last online on ...").
-     * Returns null when fewer than two transitions are recorded or the store is unavailable.
+    /** Timestamp (epoch milliseconds) of the subject's second-most-recent transition --
      * @param {string} domain - Domain identifier.
      * @param {string} subject - Subject identifier.
-     * @returns {Promise<number|null>} Transition timestamp in ms, or null.
-     */
+     * @returns {Promise<number|null>} Transition timestamp in ms, or null. */
     async priorTransitionTs(domain, subject) {
         if (!this.isAvailable()) return null
         try {
@@ -259,12 +189,9 @@ class SDatabaseService {
         }
     }
 
-    /**
-     * Recent transitions (newest first), optionally filtered by domain and/or subject.
-     * Intended for debugging, UI history views, and AI tools.
+    /** Recent transitions (newest first), optionally filtered by domain and/or subject.
      * @param {{domain?: string, subject?: string, limit?: number}} [filter] - Optional filters.
-     * @returns {Promise<Array<{ts: number, domain: string, subject: string, fromState: string|null, toState: string, source: string}>>}
-     */
+     * @returns {Promise<Array<{ts: number, domain: string, subject: string, fromState: string|null, toState: string, source: string}>>} */
     async getTransitions({ domain, subject, limit = 50 } = {}) {
         if (!this.isAvailable()) return []
         try {
@@ -283,7 +210,7 @@ class SDatabaseService {
         }
     }
 
-    // -- Internal ---------------------------------------------------------
+    //  -- Internal ---------------------------------------------------------
 
     /** Total number of stored transition rows (0 when unavailable or unreadable). @private */
     #rowCount() {
@@ -296,13 +223,11 @@ class SDatabaseService {
         }
     }
 
-    /**
-     * Read the latest stored label for a subject without availability guards.
+    /** Read the latest stored label for a subject without availability guards.
      * @private
      * @param {string} domain - State-change domain
      * @param {string} subject - Subject identifier within the domain
-     * @returns {string|undefined} Latest stored label, or undefined when absent
-     */
+     * @returns {string|undefined} Latest stored label, or undefined when absent */
     #rawCurrent(domain, subject) {
         const row = this.#db.prepare(
             'SELECT to_state FROM state_events WHERE domain = ? AND subject = ? ORDER BY id DESC LIMIT 1'
@@ -356,12 +281,10 @@ class SDatabaseService {
         this.#log('warn', 'State history store is not available -- transitions will not be persisted')
     }
 
-    /**
-     * Route logs through LoggerService with a console fallback so logging never throws.
+    /** Route logs through LoggerService with a console fallback so logging never throws.
      * @private
      * @param {'trace'|'debug'|'info'|'warn'|'error'} level - Log level
-     * @param {string} message - Message body
-     */
+     * @param {string} message - Message body */
     #log(level, message) {
         const fn = typeof LoggerService !== 'undefined' ? LoggerService?.[level] : undefined
         if (typeof fn === 'function') {
@@ -377,6 +300,6 @@ function normalizeLabel(value) {
     return value == null ? UNKNOWN_LABEL : String(value)
 }
 
-// Module-level singleton -- ES module caching guarantees single instantiation.
+//  Module-level singleton -- ES module caching guarantees single instantiation.
 const DatabaseService = Object.freeze(new SDatabaseService())
 export default DatabaseService

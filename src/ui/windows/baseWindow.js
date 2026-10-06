@@ -1,15 +1,8 @@
 /**
  * Base Window Class.
- *
  * Provides the foundation for all windows in the main slot.
- * Handles line buffering, scroll offsets, and rendering within
- * the constraints of the UiLayoutManager's main slot.
- *
- * Dependencies: receives `term` and `layoutManager` via constructor.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -19,9 +12,7 @@ import StateService from '../../service/stateService.js'
 import { wrapAnsi, wrapPreformatted, visibleLen } from '../../lib/terminal.js'
 import AnsiColors from '../../enum/ansiColors.js'
 
-// ---------------------------------------------------------------------------
-// Rendering constants (per-window buffer limit overridable via ui.window_settings.max_buffer_lines)
-// ---------------------------------------------------------------------------
+//  Rendering constants (per-window buffer limit overridable via ui.window_settings.max_buffer_lines)
 
 /** Max buffered entries per window; above 5000 risks OOM on narrow-terminal resize. */
 const DEFAULT_MAX_BUFFER_LINES = 2000
@@ -32,26 +23,15 @@ const MIN_WRAP_WIDTH = 50
 /** Minimum effective wrapping width for structured messages after subtracting prefix length. */
 const MIN_EFFECTIVE_WIDTH = 30
 
-// ---------------------------------------------------------------------------
-// BaseWindow
-// ---------------------------------------------------------------------------
 
-/**
- * Abstract base class for all terminal UI windows.
- * Manages line buffering with configurable max lines, scroll offsets,
- * backscroll detection, and rendering within the layout's main slot.
- * Supports both plain-string print() and structured message buffering
- * for proper text wrapping on terminal resize.
- */
+/** Abstract base class for all terminal UI windows. */
 class BaseWindow {
     /** How to interpret text input: 'chat' (send to AI silently) or 'command' (log + slash-command) */
     static inputMode = 'command'
 
     #term
     #layout
-    // Buffer stores either plain strings or structured objects:
-    //   { text: string, prefix: string } -- IRC-style message with prefix on first wrapped line
-    //   { text: string, preformatted: true } -- whitespace-significant line, hard-wrapped only
+    //  Buffer stores either plain strings or structured objects:
     #buffer = []
     #title = 'Window'
     #visible = false
@@ -71,15 +51,13 @@ class BaseWindow {
     /** Whether the next render must be a full re-render (resize, clear, etc.). */
     #forceFullRender = true
 
-    // -- Initialization ---------------------------------------------------
+    //  -- Initialization ---------------------------------------------------
 
-    /**
-     * Create a new BaseWindow instance.
+    /** Create a new BaseWindow instance.
      * @param {string} title - Display title for this window
      * @param {*} term - The terminal-kit instance
      * @param {*} layout - UiLayoutManager instance
-     * @param {number} channelShortcut - Numeric shortcut from channel config for EventBus activity
-     */
+     * @param {number} channelShortcut - Numeric shortcut from channel config for EventBus activity */
     constructor(title, term, layout, channelShortcut = 0) {
         this.#title = title
         this.#term = term
@@ -87,13 +65,10 @@ class BaseWindow {
         this.#channelShortcut = channelShortcut
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Show or hide this window.
-     * When made visible, triggers an immediate render.
-     * @param {boolean} visible
-     */
+    /** Show or hide this window.
+     * @param {boolean} visible */
     setVisible(visible) {
         this.#visible = visible
         if (visible) {
@@ -101,49 +76,34 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Show this window, force a full re-render, and trigger draw.
-     */
+    /** Show this window, force a full re-render, and trigger draw. */
     show() {
         this.#forceFullRender = true
         this.setVisible(true)
     }
 
-    /**
-     * Hide this window.
-     */
+    /** Hide this window. */
     hide() { this.setVisible(false) }
 
-    /**
-     * Check if this window is currently visible.
-     * @returns {boolean}
-     */
+    /** Check if this window is currently visible.
+     * @returns {boolean} */
     get isVisible() { return this.#visible }
 
-    /**
-     * Get the dimensions of a named layout slot.
+    /** Get the dimensions of a named layout slot.
      * @param {string} slotName - 'main' | 'status' | 'input'
-     * @returns {{x: number, y: number, width: number, height: number}|null}
-     */
+     * @returns {{x: number, y: number, width: number, height: number}|null} */
     getLayoutSlot(slotName) { return this.#layout.getSlot(slotName) }
 
-    /**
-     * Set the maximum number of buffered entries before trimming oldest.
-     * @param {number} n
-     */
+    /** Set the maximum number of buffered entries before trimming oldest.
+     * @param {number} n */
     setMaxBufferLines(n) {
         this.#maxBufferLines = Math.max(100, Number(n) || DEFAULT_MAX_BUFFER_LINES)
     }
 
-    /**
-     * Append plain text to the buffer and re-render if visible.
-     * Splits multi-line strings on '\n' so each segment becomes its own visual line
-     * (wrapAnsi does NOT handle newlines -- that responsibility is on the caller).
-     * Truncates extremely large inputs to prevent OOM / render freezes.
-     * @param {string} text
-     */
+    /** Append plain text to the buffer and re-render if visible.
+     * @param {string} text */
     print(text) {
-        // Guard against massive single prints (e.g., StateService.dump JSON)
+        //  Guard against massive single prints (e.g., StateService.dump JSON)
         const MAX_CHARS = 50_000
         let truncated = false
         if (text.length > MAX_CHARS) {
@@ -152,7 +112,7 @@ class BaseWindow {
         }
         for (const line of text.split('\n')) {
             this.#buffer.push(line)
-            // If truncating, check budget after each line to avoid overshooting
+            //  If truncating, check budget after each line to avoid overshooting.
             if (truncated && this.#buffer.length >= this.#maxBufferLines) break
         }
         this.#trimBuffer()
@@ -161,17 +121,9 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Append an IRC-style structured message to the buffer.
-     * The raw `text` is wrapped at render time using the current slot width,
-     * with `prefix` applied to the first wrapped line and matching spaces
-     * applied to continuation lines. This ensures correct re-wrapping on resize.
-     * Extremely large payloads are truncated before buffering, mirroring print(),
-     * since wrapping/rendering cost scales with length.
-     *
+    /** Append an IRC-style structured message to the buffer.
      * @param {string} text - Raw message body (unwrapped)
-     * @param {string} prefix - Prefix for the first line (e.g. "[HH:mm:ss] <AI> ")
-     */
+     * @param {string} prefix - Prefix for the first line (e.g. "[HH:mm:ss] <AI> ") */
     printMessage(text, prefix) {
         const MAX_CHARS = 50_000
         let body = String(text ?? '')
@@ -185,17 +137,10 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Append whitespace-significant text (box-drawing trees, aligned tables) to the
-     * buffer. Unlike print(), lines are NOT word-reflowed: each line is kept
-     * byte-identical when it fits the slot width and hard-broken otherwise, with
-     * continuation lines re-indented to the original leading whitespace. Use for
-     * output whose spacing carries meaning (e.g., /config debug's tree).
-     * Extremely large payloads are truncated before buffering, mirroring print().
-     * @param {string} text
-     */
+    /** Append whitespace-significant text (box-drawing trees, aligned tables) to the
+     * @param {string} text */
     printPreformatted(text) {
-        // Guard against massive single prints (e.g., huge config dumps)
+        //  Guard against massive single prints (e.g., huge config dumps)
         const MAX_CHARS = 50_000
         let body = String(text ?? '')
         let truncated = false
@@ -205,7 +150,7 @@ class BaseWindow {
         }
         for (const line of body.split('\n')) {
             this.#buffer.push({ text: line, preformatted: true })
-            // If truncating, check budget after each line to avoid overshooting
+            //  If truncating, check budget after each line to avoid overshooting.
             if (truncated && this.#buffer.length >= this.#maxBufferLines) break
         }
         this.#trimBuffer()
@@ -214,9 +159,7 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Clear the buffer and force a full re-render on next draw.
-     */
+    /** Clear the buffer and force a full re-render on next draw. */
     clear() {
         this.#buffer = []
         this.#scrollOffset = 0
@@ -227,14 +170,11 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Scroll one page up (away from the live tail).
-     * No-op if already at the top of the buffer.
-     */
+    /** Scroll one page up (away from the live tail). */
     scrollPageUp() {
         const slot = this.#layout?.getSlot('main')
         if (!slot) return
-        // Calculate total visual lines to know if there's room to scroll
+        //  Calculate total visual lines to know if there's room to scroll.
         const wrapWidth = Math.max(slot.width, MIN_WRAP_WIDTH)
         const totalVisual = this.#countVisualLines(wrapWidth)
         const maxOffset = Math.max(0, totalVisual - slot.height)
@@ -245,10 +185,7 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Scroll one page down toward the live tail.
-     * When reaching the bottom, reset to live-follow mode.
-     */
+    /** Scroll one page down toward the live tail. */
     scrollPageDown() {
         const slot = this.#layout?.getSlot('main')
         if (!slot) return
@@ -256,7 +193,7 @@ class BaseWindow {
         const totalVisual = this.#countVisualLines(wrapWidth)
         const maxOffset = Math.max(0, totalVisual - slot.height)
         this.#scrollOffset = Math.max(0, this.#scrollOffset - slot.height)
-        // If at or below the bottom, snap to live-follow mode
+        //  If at or below the bottom, snap to live-follow mode.
         if (this.#scrollOffset <= 0) {
             this.#scrollOffset = 0
         }
@@ -266,70 +203,47 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Return current scroll offset (for status bar "More" indicator).
-     * @returns {number}
-     */
+    /** Return current scroll offset (for status bar "More" indicator).
+     * @returns {number} */
     getScrollOffset() { return this.#scrollOffset }
 
-    /**
-     * Check if buffer has no entries.
-     * @returns {boolean} true when buffer is empty
-     */
+    /** Check if buffer has no entries.
+     * @returns {boolean} true when buffer is empty */
     get isEmpty() { return this.#buffer.length === 0 }
 
-    /**
-     * Check if window is currently in backscrolled state (not following tail).
-     * @returns {boolean}
-     */
+    /** Check if window is currently in backscrolled state (not following tail).
+     * @returns {boolean} */
     isBackscrolled() { return this.#scrollOffset > 0 }
 
-    /**
-     * Force the next render to be a full re-render.
-     * Call this on resize or when wrapping may have changed.
-     */
+    /** Force the next render to be a full re-render. */
     forceFullRender() {
         this.#forceFullRender = true
     }
 
-    /**
-     * Trim the buffer to stay within #maxBufferLines by removing oldest entries first.
-     * Also shifts #bufferEntryCountAtLastRender down by the number of dropped
-     * entries; without that adjustment the "rendered up-to" index stays pinned
-     * at the cap once the buffer fills, every later render sees zero new
-     * entries and silently skips drawing -- freezing the window until a forced
-     * full re-render (window switch / PgUp-PgDn) after each batch of logs.
-     * @private
-     */
+    /** Trim the buffer to stay within #maxBufferLines by removing oldest entries first.
+     * @private */
     #trimBuffer() {
         const excess = this.#buffer.length - this.#maxBufferLines
         if (excess <= 0) return
         this.#buffer = this.#buffer.slice(-this.#maxBufferLines)
-        // Keep the tracking index aligned with the trimmed array so incremental
-        // renders still recognize genuinely-new tail entries as pending work.
+        //  Keep the tracking index aligned with the trimmed array so incremental.
         this.#bufferEntryCountAtLastRender = Math.max(
             0,
             Math.min(this.#bufferEntryCountAtLastRender - excess, this.#buffer.length)
         )
     }
 
-    /**
-     * Return the display title for this window.
-     * @returns {string}
-     */
+    /** Return the display title for this window.
+     * @returns {string} */
     getTitle() { return this.#title }
 
-    /**
-     * Return the numeric channel shortcut for EventBus activity emissions.
-     * @returns {number}
-     */
+    /** Return the numeric channel shortcut for EventBus activity emissions.
+     * @returns {number} */
     getChannelShortcut() { return this.#channelShortcut }
 
-    // -- Rendering --------------------------------------------------------
+    //  -- Rendering --------------------------------------------------------
 
-    /**
-     * Throttled render -- caps refresh rate at ~33 FPS to prevent lag during heavy output.
-     */
+    /** Throttled render -- caps refresh rate at ~33 FPS to prevent lag during heavy output. */
     render() {
         if (!this.#visible || !this.#term || this.#renderPending) return
 
@@ -340,15 +254,12 @@ class BaseWindow {
         }, 30) // Max ~33 refreshes per second
     }
 
-    // -- Private Helpers --------------------------------------------------
+    //  -- Private Helpers --------------------------------------------------
 
-    /**
-     * Count total visual lines produced by wrapping all buffer entries.
-     * Used by scrollPageUp/scrollPageDown to determine scroll boundaries.
+    /** Count total visual lines produced by wrapping all buffer entries.
      * @param {number} wrapWidth - Width to use for wrapping
      * @returns {number} Total visual line count
-     * @private
-     */
+     * @private */
     #countVisualLines(wrapWidth) {
         let count = 0
         this.#buffer.forEach(entry => {
@@ -372,14 +283,11 @@ class BaseWindow {
         return count
     }
 
-    /**
-     * Wrap a single buffer entry into visual lines.
-     * Extracted so it can be reused for both full and incremental rendering.
+    /** Wrap a single buffer entry into visual lines.
      * @param {*} entry - Buffer entry (string, {text, prefix}, or {text, preformatted})
      * @param {number} wrapWidth - Wrapping width
      * @returns {string[]} Wrapped visual lines
-     * @private
-     */
+     * @private */
     #wrapEntry(entry, wrapWidth) {
         if (typeof entry === 'string') {
             return wrapAnsi(entry, wrapWidth)
@@ -411,26 +319,15 @@ class BaseWindow {
         return result
     }
 
-    /**
-     * Perform the actual rendering of the window content within the main slot.
-     * Uses ANSI-aware wrapping from lib/terminal to preserve color formatting.
-     * Structured messages ({text, prefix}) are wrapped dynamically at render time
-     * so they re-wrap correctly when the terminal is resized.
-     *
-     * Supports incremental rendering: when width hasn't changed and no force flag
-     * is set, only new entries since last render are wrapped and appended -- avoiding
-     * the costly clearSlot() + full redraw that causes screen flicker.
-     * The draw itself runs inside a try/finally so the cursor is always restored
-     * even when rendering throws mid-frame.
-     * @private
-     */
+    /** Perform the actual rendering of the window content within the main slot.
+     * @private */
     #executeRender() {
         if (!this.#visible || !this.#term) return
 
         const slot = this.#layout.getSlot('main')
         if (!slot) return
 
-        // Use centralized check from layout manager
+        //  Use centralized check from layout manager.
         const tooNarrow = this.#layout.isTooNarrow()
 
         if (tooNarrow) {
@@ -448,21 +345,18 @@ class BaseWindow {
             this.#forceFullRender = true
         }
 
-        // Detect resize -- forces full re-render since wrapping changes
+        //  Detect resize -- forces full re-render since wrapping changes.
         if (slot.width !== this.#lastSlotWidth) {
             this.#forceFullRender = true
         }
 
-        // Hide cursor during drawing to prevent flickering
+        //  Hide cursor during drawing to prevent flickering.
         const term = this.#term
         term.hideCursor(true)
         try {
             this.#drawFrame(slot)
         } finally {
-            // Always restore the prompt position and cursor visibility even when
-            // a draw throws mid-way; otherwise the terminal keeps a hidden cursor
-            // and stale positions until the next window switch, which makes the
-            // window look frozen/stale (especially under screen).
+            //  Always restore the prompt position and cursor visibility even.
             const refreshInput = StateService.get('ui.refreshInputCursor')
             if (refreshInput) {
                 refreshInput()
@@ -471,36 +365,31 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Draw the main-slot frame: either a full re-render or an incremental append,
-     * depending on #forceFullRender and scroll state. Split out of #executeRender
-     * so its entire body can run inside a try/finally that guarantees cursor
-     * restoration no matter where a draw fails.
+    /** Draw the main-slot frame: either a full re-render or an incremental.
      * @param {{x: number, y: number, width: number, height: number}} slot - Main layout slot
-     * @private
-     */
+     * @private */
     #drawFrame(slot) {
         const wrapWidth = Math.max(slot.width, MIN_WRAP_WIDTH)
         const term = this.#term
 
         if (this.#forceFullRender) {
-            // --- FULL RENDER: redraw everything from the buffer ---------------
+            //  --- FULL RENDER: redraw everything from the buffer ---------------
             this.#renderAll(slot, wrapWidth, this.#scrollOffset)
 
-            // Update tracking state for next incremental render
+            //  Update tracking state for next incremental render.
             this.#lastSlotWidth = slot.width
             this.#bufferEntryCountAtLastRender = this.#buffer.length
             this.#forceFullRender = false
 
         } else {
-            // --- INCREMENTAL RENDER: only process new entries -----------------
+            //  --- INCREMENTAL RENDER: only process new entries -----------------
             const newEntries = this.#buffer.slice(this.#bufferEntryCountAtLastRender)
 
             if (newEntries.length > 0 || this.#scrollOffset !== 0) {
                 if (this.#scrollOffset === 0) {
-                    // Live-follow mode: append only new lines at absolute positions
+                    //  Live-follow mode: append only new lines at absolute positions.
 
-                    // First, count how many visual lines were already on screen
+                    //  First, count how many visual lines were already on screen.
                     const oldVisualCount = Math.min(
                         this.#bufferEntryCountAtLastRender > 0
                             ? this.#countExistingVisualLines(this.#bufferEntryCountAtLastRender, wrapWidth)
@@ -508,21 +397,18 @@ class BaseWindow {
                         slot.height
                     )
 
-                    // Wrap only new entries
+                    //  Wrap only new entries.
                     const newVisualLines = []
                     newEntries.forEach(entry => {
                         newVisualLines.push(...this.#wrapEntry(entry, wrapWidth))
                     })
 
-                    // If existing content scrolled off the top, fall back to a full
-                    // re-render for correctness. scrollOffset is 0 here by guard, so
-                    // #renderAll draws exactly the bottom `slot.height` lines.
+                    //  If existing content scrolled off the top, fall back to a full.
                     const overflow = oldVisualCount + newVisualLines.length - slot.height
                     if (overflow > 0) {
                         this.#renderAll(slot, wrapWidth, 0)
                     } else {
-                        // No overflow -- true incremental case: draw the new lines
-                        // below whatever was already on screen.
+                        //  No overflow -- true incremental case: draw the new lines.
                         let screenRow = oldVisualCount
                         newVisualLines.forEach((line) => {
                             if (screenRow < slot.height) {
@@ -533,7 +419,7 @@ class BaseWindow {
                         })
                     }
                 } else {
-                    // Backscrolled -- do a full re-render to update positions correctly
+                    //  Backscrolled -- do a full re-render to update positions correctly.
                     this.#renderAll(slot, wrapWidth, this.#scrollOffset)
                 }
 
@@ -542,14 +428,11 @@ class BaseWindow {
         }
     }
 
-    /**
-     * Count visual lines produced by the first N buffer entries.
-     * Used to determine how many screen rows were occupied before new content arrived.
+    /** Count visual lines produced by the first N buffer entries.
      * @param {number} entryCount - Number of buffer entries from start to count
      * @param {number} wrapWidth - Wrapping width
      * @returns {number} Visual line count
-     * @private
-     */
+     * @private */
     #countExistingVisualLines(entryCount, wrapWidth) {
         let count = 0
         for (let i = 0; i < Math.min(entryCount, this.#buffer.length); i++) {
@@ -558,20 +441,11 @@ class BaseWindow {
         return count
     }
 
-    /**
-     * Full-screen render of all buffered entries within the main slot.
-     *
-     * Clears the slot, wraps every entry at the current width, applies the
-     * scroll offset (tail window), appends the "-- More --" indicator when
-     * backscrolled, and draws each line at its absolute position. Shared by
-     * the forced-full, backscrolled, and overflow-fallback paths so they
-     * cannot drift apart.
-     *
+    /** Full-screen render of all buffered entries within the main slot.
      * @param {{x: number, y: number, width: number, height: number}} slot - Main layout slot
      * @param {number} wrapWidth - Wrapping width in visible characters
      * @param {number} scrollOffset - Scroll offset from bottom (0 = live tail)
-     * @private
-     */
+     * @private */
     #renderAll(slot, wrapWidth, scrollOffset) {
         const term = this.#term
         this.#layout.clearSlot('main')
@@ -581,11 +455,11 @@ class BaseWindow {
             visualLines.push(...this.#wrapEntry(entry, wrapWidth))
         })
 
-        // Apply scroll offset: tailStart counts back from the end
+        //  Apply scroll offset: tailStart counts back.
         const tailStart = Math.max(0, visualLines.length - slot.height - scrollOffset)
         const linesToRender = visualLines.slice(tailStart, tailStart + slot.height)
 
-        // Show "-- More --" indicator when backscrolled
+        //  Show "-- More --" indicator when backscrolled.
         if (scrollOffset > 0 && linesToRender.length < slot.height) {
             linesToRender.push(this.#buildMoreIndicator(wrapWidth, tailStart, visualLines.length))
         }
@@ -596,14 +470,12 @@ class BaseWindow {
         })
     }
 
-    /**
-     * Build a "-- More --" indicator line with padding matching slot width.
+    /** Build a "-- More --" indicator line with padding matching slot width.
      * @param {number} wrapWidth - Slot wrapping width
      * @param {number} tailStart - Index in visualLines where viewport starts
      * @param {number} totalLines - Total visual lines available
      * @returns {string} Formatted indicator line
-     * @private
-     */
+     * @private */
     #buildMoreIndicator(wrapWidth, tailStart, totalLines) {
         const label = `-- ${tailStart + 1}/${totalLines} --`
         const pad = Math.max(0, wrapWidth - label.length)

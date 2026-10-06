@@ -1,20 +1,15 @@
 /**
  * Validator schema for etc/automaton.yaml (main configuration).
- *
  * Loaded automatically by ConfigBase when section name is "main".
- * Schema format: each key defines expected type, required flag, enum values,
- * nested properties, or array item schemas.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
 'use strict'
 
 export default {
-    // Automation section -- global device/interaction behavior (durations)
+    //  Automation section -- global device/interaction behavior (durations)
     automation: {
         type: 'object',
         required: false,
@@ -29,20 +24,20 @@ export default {
         }
     },
 
-    // Locale / localization section
+    //  Locale / localization section.
     locale: {
         type: 'object',
         required: true,
         properties: {
             language:    { type: 'string', required: true },
             time_format: { type: 'string', enum: ['12h', '24h'], required: true },
-            // Geolocation -- observer coordinates driving sun-based rule shorthands ("sundawn"/"sundusk").
+            //  Geolocation -- observer coordinates driving sun-based rule shorthands ("sundawn"/"sundusk").
             geo_latitude:  { type: 'number', required: false },
             geo_longitude: { type: 'number', required: false }
         }
     },
 
-    // AI section -- provider + conversation settings
+    //  AI section -- provider + conversation settings.
     ai: {
         type: 'object',
         required: true,
@@ -59,7 +54,7 @@ export default {
         }
     },
 
-    // AI bridge section -- dedicated MQTT channel feeding external prompts into the AI engine
+    //  AI bridge section -- dedicated MQTT channel feeding external prompts into the AI engine.
     ai_bridge: {
         type: 'object',
         required: false,
@@ -70,14 +65,12 @@ export default {
         }
     },
 
-    // Alerts section -- spoken notifications for notable system events
-    // (src/monitor/zigbeeDeviceOfflineMonitor.js + src/monitor/networkDeviceOfflineMonitor.js)
+    //  Alerts section -- spoken notifications for notable system events.
     alerts: {
         type: 'object',
         required: false,
         properties: {
-            // Zigbee devices leaving the mesh; legacy family (device_offline_*) is
-            // honoured by the monitor with a deprecation warning, so it stays valid here
+            //  Zigbee devices leaving the mesh.
             device_offline_tts:         { type: 'boolean' },
             device_offline_cooldown_ms: { type: ['number', 'string'] },
             device_offline_ignore:      { type: 'array' },
@@ -86,7 +79,7 @@ export default {
             zigbee_offline_ignore:      { type: 'array' },
             zigbee_offline_tts_profile: { type: 'string' },
             zigbee_offline_tts_options: { type: 'object' },
-            // Mission-critical network hosts going offline
+            //  Mission-critical network hosts going offline.
             network_offline_tts:              { type: 'boolean' },
             network_offline_cooldown_ms:      { type: ['number', 'string'] },
             network_offline_ignore:           { type: 'array' },
@@ -94,12 +87,12 @@ export default {
             network_offline_tts_options:      { type: 'object' },
             network_offline_announce_boot:    { type: 'boolean' },
             network_offline_announce_recovery:{ type: 'boolean' },
-            // Per-device overrides keyed by device name -- dynamic keys, validated as a map
+            //  Per-device overrides keyed by device name -- dynamic keys, validated as a map.
             network_offline_devices:          { type: 'object' }
         }
     },
 
-    // Paths section (optional - provides config file paths and directory paths)
+    //  Paths section (optional - provides config file paths and directory paths)
     paths: {
         type: 'object',
         required: false,
@@ -123,7 +116,7 @@ export default {
         }
     },
 
-    // Logger section
+    //  Logger section.
     logger: {
         type: 'object',
         required: true,
@@ -156,12 +149,12 @@ export default {
         }
     },
 
-    // UI section -- terminal interface (status bar, layout, buffer limit, windows). See doc/ui/.
+    // UI section -- terminal interface (status bar, layout, buffer limit, windows)
     ui: {
         type: 'object',
         required: true,
         properties: {
-            // Jingle framing profile for text typed into the UI TTS window
+            //  Jingle framing profile for text typed into the UI TTS window.
             tts_profile: { type: 'string' },
             status_bar: {
                 type: 'object',

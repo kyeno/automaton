@@ -1,37 +1,9 @@
 /**
  * TTS Greeter Automation.
- * Greets people when their computers come back online, with the message chosen by
- * how long the host was absent -- measured from the transition history via
- * DatabaseService.priorStateDurationMs() (the interval between the host's two most
- * recent transitions, i.e., how long it sat OFFLINE before this return event). A
- * quick reboot therefore never triggers a full welcome; absence windows are pure
- * config data (greeting_windows) so new "funny" conditions cost zero code.
- *
- * Output routing is a precise boolean switch (config.use_ai), unlike WeatherMan which
- * always routes through AI when available:
- *   use_ai false -> speak the bucket's tts.<host> sentence directly (default);
- *   use_ai true  + AI available -> send the bucket's ai.<host> instruction to the model,
- *                   which speaks its own greeting (AiAssistant fires 'tts:speak' for it);
- *   use_ai true  + AI down/empty/error -> warn in logs and speak the plain TTS sentence
- *                   instead. There is deliberately NO spoken fallback notice here -- a
- *                   missed greeting must not be announced twice.
- *
- * Sentences live in the per-locale greeter bundle (etc/i18n/<locale>/greeter.yaml):
- * each bucket holds per-host lines split by output path (tts/ai), with names filled
- * from names.<host> via {% name_vocative %} / {% name_genitive %} placeholders so each
- * template picks the grammatical case it needs. A host that has no line in a given
- * bucket on either channel simply does not require a greeting there (e.g., a shared HTPC)
- * and those returns skip silently instead of warning. When transition history provides
- * an absence duration, a localized note is appended after the greeting: below 24h it says
- * how long ago the host was last seen online ("...8 hours ago"), from 24h up it gives the
- * full calendar date plus clock time of the offline transition itself. Both render via
- * lib/date's date/time machinery and degrade silently when data or templates are missing.
- * TTS notes ship as _named/_anonymous pairs: the possessive form ("Twój komputer ...") is
- * spoken only when the host's welcome TTS line addresses them by name.
- *
+ * Greets people when their computers come back online.
+ * how long the host was absent -- measured from the transition history.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -53,9 +25,6 @@ import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import temporal from '../../src/lib/date.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Path to this automation's YAML config file. */
 const CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tts-greeter.yaml')
@@ -66,17 +35,10 @@ const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
 /** Domain under which NetworkPresence records host transitions. */
 const NETWORK_DOMAIN = 'network'
 
-/**
- * Bucket spoken when the absence duration cannot be determined (no prior transition
- * recorded for the host -- fresh install, pruned history). Fails open with a full
- * welcome: one extra greeting beats a silent homecoming.
- */
+/** Bucket spoken when the absence duration cannot be determined. */
 const UNKNOWN_ABSENCE_BUCKET = 'welcome'
 
-/**
- * Absence boundary in ms: below it the note is relative ("last seen online X ago");
- * at/above it, absolute -- full calendar date + clock time of the offline moment.
- */
+/** Absence boundary in ms: below it the note is relative ("last seen online X ago"); */
 const ABSENCE_NOTE_LONG_MIN_MS = 24 * 3_600_000
 
 export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
@@ -84,52 +46,34 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
     /** @type {Record<string, unknown>|null} Cached greeter i18n bundle; reloaded on every run. */
     #bundle = null
 
-    // -- Construction & lifecycle ------------------------------------------
+    //  -- Construction & lifecycle ------------------------------------------
 
-    /**
-     * Construct the greeter from its YAML config file located next to this script.
-     */
+    /** Construct the greeter from its YAML config file located next to this script. */
     constructor() {
         super({ name: 'TtsGreeterAutomation', configPath: CONFIG_PATH })
     }
 
-    /**
-     * Lifecycle hook -- loads the greeter i18n bundle once on top of the base init;
-     * execute() re-reads it fresh per run so sentence edits take effect immediately.
-     */
+    /** Lifecycle hook -- loads the greeter i18n bundle once on top of the base init; */
     async init() {
         await super.init()
         this.#bundle = this.#loadBundle()
     }
 
-    // -- Public API ----------------------------------------------------------
+    //  -- Public API ----------------------------------------------------------
 
-    /**
-     * Custom execute flow: evaluate each candidate host and greet it when its absence
-     * matches a configured window. Overrides the parent's device-targeting flow entirely
-     * since this automation has no device targets -- only speech output.
-     *
-     * Event runs (network:<host>) are scoped to their own host; timer/manual/forced
-     * runs cover every configured host. A host is greeted ONLY when currently online --
-     * going-offline events are observed but never spoken about.
-     *
-     * @param {{trigger?: string, force?: boolean}|null} [triggerData] - Trigger info;
-     *   force:true bypasses silent-period suppression (e.g., "/automation force")
-     */
+    /** Custom execute flow: evaluate each candidate host and greet it when its absence
+     * @param {{trigger?: string, force?: boolean}|null} [triggerData] - Trigger info; */
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
-        // Off-guard: if neither the AI pipeline nor the TTS server is available there is
-        // no output channel for the greeting -- skip the run entirely rather than
-        // assembling sentences that can only be dropped.
+        //  Off-guard: if neither the AI pipeline nor the TTS server is available there.
         if (!AiAssistant.isAvailable() && !TtsService.isEnabled()) {
             this.log('Both AI and TTS unavailable -- skipping greeter run', 'debug')
             return
         }
 
-        // Suppress execution during a configured silent period (before any work begins),
-        // unless explicitly forced from outside (e.g., "/automation force").
+        //  Suppress execution during a configured silent period (before any work begins)
         if (this.isInSilentPeriod()) {
             if (triggerData?.force === true) {
                 this.log(`Forced run -- silent period bypassed (${triggerSource})`, 'info')
@@ -139,7 +83,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             }
         }
 
-        // Reload bundle fresh each run (interpolation is runtime, not cached).
+        //  Reload bundle fresh each run (interpolation is runtime, not cached).
         this.#bundle = this.#loadBundle()
         if (!this.#bundle) {
             this.log('No greeter i18n bundle loaded, skipping', 'warn')
@@ -155,39 +99,23 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         }
     }
 
-    /**
-     * No device targets for this automation -- returns empty Map so the parent's flow
-     * short-circuits gracefully. We override execute() entirely but keep this for parity.
-     * @returns {Map<string, never>} Empty map
-     */
+    /** No device targets for this automation -- returns empty Map so the parent's flow
+     * @returns {Map<string, never>} Empty map */
     loadDevices() {
         return new Map()
     }
 
-    /**
-     * Not used by ttsGreeter (no device commands). Required abstract method kept for
-     * signature parity with the base class contract.
+    /** Not used by ttsGreeter (no device commands). Required abstract method kept.
      * @param {*} _device - Unused in this override (kept for signature parity)
      * @param {string} _targetKey - Unused in this override
-     * @returns {null} Always null
-     */
+     * @returns {null} Always null */
     resolveCommand(_device, _targetKey) {
         return null
     }
 
-    /**
-     * Decide whether a host should be greeted right now and with which bucket.
-     * Greetings require the host to be online NOW; the absence duration is how long it
-     * sat offline before this transition (priorStateDurationMs), matched top-down
-     * against greeting_windows -- first match wins, no match means silence. An unknown
-     * duration (no prior history) fails open with the full welcome bucket.
-     *
-     * Exposed without the # prefix so tests can pin window selection against real DB
-     * history; execute() is the sole production caller.
+    /** Decide whether a host should be greeted right now and with which bucket.
      * @param {string} host - Configured network host name
-     * @returns {Promise<{action: 'speak', bucket: string, absenceMs: number|null}|{action: 'skip', reason: string}>}
-     *   Decision record: speak + chosen bucket (+ measured absence when known), or skip + why
-     */
+     * @returns {Promise<{action: 'speak', bucket: string, absenceMs: number|null}|{action: 'skip', reason: string}>} */
     async greetDecisionFor(host) {
         const current = await DatabaseService.getCurrent(NETWORK_DOMAIN, host)
         if (current !== 'online') {
@@ -208,21 +136,10 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return { action: 'skip', reason: `absence of ${Math.round(absenceMs / 1000)}s matches no greeting window` }
     }
 
-    /**
-     * Send one greeting through the AI -> TTS pipeline with graceful degradation. A
-     * non-empty model reply is surfaced in the chat window as a periodic response (the
-     * audio itself was already fired by AiAssistant for that reply). An empty reply or
-     * any provider failure logs a warning and reports false so the caller speaks the
-     * plain sentence directly -- there is deliberately NO spoken fallback notice here;
-     * unlike WeatherMan's periodic report, a missed greeting must not be announced twice.
-     *
-     * Exposed without the # prefix so tests can pin behaviour against a stubbed
-     * AiAssistant without MQTT, devices, or a live LLM; #deliver() is the sole
-     * production caller.
+    /** Send one greeting through the AI -> TTS pipeline with graceful degradation.
      * @param {string} aiInstruction - Full instruction sent to the model
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} [ttsOptions={}] - Framing forwarded to the model's own speech
-     * @returns {Promise<boolean>} true when the AI voiced the greeting, false on fallback
-     */
+     * @returns {Promise<boolean>} true when the AI voiced the greeting, false on fallback */
     async routeThroughAi(aiInstruction, ttsOptions = {}) {
         let spoken = ''
         try {
@@ -238,8 +155,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             return false
         }
 
-        // Emit the AI's response back to UI for rendering with <AI> prefix.
-        // Guard against --no-ui runs where no subscribers exist.
+        //  Emit the AI's response back to UI for rendering with <AI> prefix.
         if (EventBus.hasSubscribers('ai:periodicResponse')) {
             EventBus.emit('ai:periodicResponse', { text: spoken })
         }
@@ -247,13 +163,11 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return true
     }
 
-    // -- Greeting flow -------------------------------------------------------
+    //  -- Greeting flow -------------------------------------------------------
 
-    /**
-     * Evaluate one host end-to-end and deliver when due; logs the decision either way.
+    /** Evaluate one host end-to-end and deliver when due; logs the decision either way.
      * @private
-     * @param {string} host - Configured network host name
-     */
+     * @param {string} host - Configured network host name */
     async #greetIfDue(host) {
         const decision = await this.greetDecisionFor(host)
         if (decision.action === 'skip') {
@@ -265,19 +179,10 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         await this.#deliver(host, decision)
     }
 
-    /**
-     * Deliver one decided greeting through the configured output path. use_ai=true routes
-     * through the model's own voice when it can answer; every other case speaks the plain
-     * tts.<host> sentence directly. A bucket missing from the bundle entirely warns (a
-     * window "sentence" typo); a host with no line in that bucket on EITHER channel is
-     * treated as not requiring a greeting there and skips silently at debug level instead.
-     * Missing single-channel templates still warn rather than speak raw {% ... %} tokens.
-     * When history provides an absence duration, the localized absence note is appended
-     * after whichever text goes out (AI instruction or spoken TTS).
+    /** Deliver one decided greeting through the configured output path.
      * @private
      * @param {string} host - Host key under names/
-     * @param {{bucket: string}} decision - Decision from greetDecisionFor()
-     */
+     * @param {{bucket: string}} decision - Decision from greetDecisionFor() */
     async #deliver(host, decision) {
         const section = this.#bundle?.[decision.bucket]
         if (!section || typeof section !== 'object' || Array.isArray(section)) {
@@ -285,8 +190,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             return
         }
         if (!this.#hasLine(section, 'tts', host) && !this.#hasLine(section, 'ai', host)) {
-            // Deliberate per-host opt-out (e.g., a shared HTPC only needs some buckets):
-            // nothing to say for this machine here, so no warning either.
+            //  Deliberate per-host opt-out (e.g., a shared HTPC only needs some buckets):
             this.log(`No greeting configured for "${host}" in bucket "${decision.bucket}" -- treating as not required`, 'debug')
             return
         }
@@ -297,8 +201,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             return
         }
 
-        // Framing (intro/outro/spacing) resolved once per greeting from this automation's
-        // own tts_profile / tts_options; it travels on both output paths.
+        //  Framing (intro/outro/spacing) resolved once per greeting from this automation's.
         const ttsOptions = TtsProfiles.resolve(this.config, (message) => this.log(message, 'warn'))
 
         if (this.config.use_ai === true && AiAssistant.isAvailable()) {
@@ -306,40 +209,33 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
             if (!instruction) {
                 this.log(`No AI instruction for "${decision.bucket}.ai.${host}" -- speaking the plain TTS sentence instead`, 'warn')
             } else {
-                // Ask the model to include the absence note too when history provides one.
+                //  Ask the model to include the absence note too when history provides one.
                 const aiNote = await this.#absenceNote(host, 'ai', decision)
                 if (aiNote) instruction = `${instruction} ${aiNote}`
-                // Emit system input to UI with exactly what goes to the model.
-                // Guard against --no-ui runs where no subscribers exist.
+                //  Emit system input to UI with exactly what goes to the model.
                 if (EventBus.hasSubscribers('ai:systemMessage')) {
                     EventBus.emit('ai:systemMessage', { text: instruction })
                 }
                 if (await this.routeThroughAi(instruction, ttsOptions)) return
-                // routeThroughAi already logged why; fall through and speak directly so
-                // a flaky/slow LLM never drops the greeting entirely.
+                //  routeThroughAi already logged why.
             }
         } else if (this.config.use_ai === true) {
             this.log('use_ai enabled but AI unavailable -- speaking the plain TTS sentence instead', 'warn')
         }
 
-        // Append the localized absence note when history provides a duration;
-        // it never replaces or blocks the main greeting.
+        //  Append the localized absence note when history provides a duration;
         const ttsNote = await this.#absenceNote(host, 'tts', decision)
         const spoken = ttsNote ? `${plainText} ${ttsNote}` : plainText
         TtsProfiles.speak(spoken, ttsOptions)
         this.log(`Greeting for "${host}" (${decision.bucket}) sent via direct TTS`, 'debug')
     }
 
-    // -- Config & bundle helpers ---------------------------------------------
+    //  -- Config & bundle helpers ---------------------------------------------
 
-    /**
-     * Hosts to evaluate on a given trigger. Event runs are scoped to their own host;
-     * timer/manual/forced runs cover every configured host. Events naming an unconfigured
-     * host are ignored (not ours to greet).
+    /** Hosts to evaluate on a given trigger. Event runs are scoped to their own host;
      * @private
      * @param {string} triggerSource - Trigger identifier from execute()
-     * @returns {string[]} Candidate hosts (may be empty)
-     */
+     * @returns {string[]} Candidate hosts (may be empty) */
     #candidateHosts(triggerSource) {
         const configured = this.#configuredHosts()
         if (/^network:.+$/.test(String(triggerSource ?? ''))) {
@@ -351,12 +247,9 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return configured
     }
 
-    /**
-     * Normalized list of hosts from config.triggers_network (array or single string);
-     * empty when unset so the greeter stays inert until pointed at real machines.
+    /** Normalized list of hosts from config.triggers_network (array or single string);
      * @private
-     * @returns {string[]} Host names
-     */
+     * @returns {string[]} Host names */
     #configuredHosts() {
         const raw = this.config?.triggers_network
         if (Array.isArray(raw)) return raw.map((h) => String(h)).filter(Boolean)
@@ -364,13 +257,9 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return []
     }
 
-    /**
-     * Parsed greeting windows in YAML order (top-down, first match wins). Malformed
-     * entries warn and are skipped rather than failing closed; malformed bounds open up
-     * that side instead of silently swallowing every absence.
+    /** Parsed greeting windows in YAML order (top-down, first match wins)
      * @private
-     * @returns {Array<{name: string, minMs: number|null, maxMs: number|null, bucket: string}>} Usable windows
-     */
+     * @returns {Array<{name: string, minMs: number|null, maxMs: number|null, bucket: string}>} Usable windows */
     #windows() {
         const out = []
         const raw = this.config?.greeting_windows
@@ -393,15 +282,11 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return out
     }
 
-    /**
-     * Resolve one window bound via temporal.parseDurationMs(); absent values are
-     * open-ended (null); present-but-invalid ones warn and also open the side rather
-     * than failing closed.
+    /** Resolve one window bound via temporal.parseDurationMs(); absent values are.
      * @private
      * @param {*} raw - Raw config value ("5s", "7m", "4h", plain ms, or omitted)
      * @param {string} label - Config path used in warning messages
-     * @returns {number|null} Bound in milliseconds, or null for an unbounded side
-     */
+     * @returns {number|null} Bound in milliseconds, or null for an unbounded side */
     #parseBound(raw, label) {
         if (raw == null || raw === '') return null
         const ms = temporal.parseDurationMs(raw)
@@ -410,12 +295,9 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return null
     }
 
-    /**
-     * Load the greeter i18n bundle for the active locale; null when missing/unreadable
-     * so execute() can warn once instead of throwing mid-run.
+    /** Load the greeter i18n bundle for the active locale; null when missing/unreadable.
      * @private
-     * @returns {Record<string, unknown>|null} Parsed bundle object
-     */
+     * @returns {Record<string, unknown>|null} Parsed bundle object */
     #loadBundle() {
         try {
             const localeDir = I18nLoader.getLocale()
@@ -429,16 +311,12 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         }
     }
 
-    /**
-     * Fill {% token %} placeholders in a raw template from a flat token map. Returns the
-     * interpolated text, or '' (with a warning naming the bundle path) when any token is
-     * missing or empty -- callers skip instead of speaking raw {% ... %} tokens.
+    /** Fill {% token %} placeholders in a raw template from a flat token map.
      * @private
      * @param {string} template - Raw YAML template line
      * @param {Record<string, unknown>} tokens - Token name to replacement string
      * @param {string} label - Bundle path used in warning messages
-     * @returns {string} Interpolated text, or '' when unresolvable
-     */
+     * @returns {string} Interpolated text, or '' when unresolvable */
     #fillTemplate(template, tokens, label) {
         let unresolved = false
         const text = String(template).replace(/\{%\s*([a-z_]+)\s*%}/g, (_match, key) => {
@@ -454,16 +332,12 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         return text
     }
 
-    /**
-     * Resolve one sentence template (bucket + output channel + host) with name-case
-     * interpolation. Returns '' when any part is missing or a placeholder cannot be
-     * filled, so callers warn and skip instead of speaking raw {% ... %} tokens.
+    /** Resolve one sentence template (bucket + output channel + host) with name-case.
      * @private
      * @param {string} bucket - Bundle section, e.g., 'welcome' | 'forgot' | 'reboot'
      * @param {'tts'|'ai'} channel - Output-path section inside the bucket
      * @param {string} host - Host key under names/
-     * @returns {string} Interpolated text, or '' when unresolvable
-     */
+     * @returns {string} Interpolated text, or '' when unresolvable */
     #sentence(bucket, channel, host) {
         const template = this.#bundle?.[bucket]?.[channel]?.[host]
         if (typeof template !== 'string' || !template.trim()) return ''
@@ -475,69 +349,47 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
         }, `${bucket}.${channel}.${host}`)
     }
 
-    /**
-     * Whether a non-empty template line exists for one output channel of a bucket+host
-     * pair; lets #deliver() tell an intentional per-host omission (no lines at all ->
-     * "greeting not required", skip silently) from a partial configuration (one channel
-     * missing -> warn and fall back as before).
+    /** Whether a non-empty template line exists for one output channel of a bucket+host.
      * @private
      * @param {{tts?: Record<string, unknown>, ai?: Record<string, unknown>}} section - Parsed bundle bucket section
      * @param {'tts'|'ai'} channel - Output-path key inside the section
      * @param {string} host - Host name
-     * @returns {boolean} true when a usable string line is present
-     */
+     * @returns {boolean} true when a usable string line is present */
     #hasLine(section, channel, host) {
         const value = section?.[channel]?.[host]
         return typeof value === 'string' && value.trim() !== ''
     }
 
-    /**
-     * Whether the host's canonical welcome TTS line addresses them by name (contains a
-     * {% name_vocative %} / {% name_genitive %} placeholder); chooses between the possessive
-     * (_named) and neutral (_anonymous) absence-note variants -- "Twój komputer ..." only
-     * makes sense after a greeting that named the person. A missing line counts as
-     * anonymous so shared machines never get a possessive note.
+    /** Whether the host's canonical welcome TTS line addresses them by name.
      * @private
      * @param {string} host - Host key under names/
-     * @returns {boolean} true when the welcome TTS line uses a name placeholder
-     */
+     * @returns {boolean} true when the welcome TTS line uses a name placeholder */
     #greetingUsesName(host) {
         const line = this.#bundle?.welcome?.tts?.[host]
         return typeof line === 'string' && /\{%\s*name_(?:vocative|genitive)\s*%\}/.test(line)
     }
 
-    /**
-     * Build the localized absence note appended after the bucket greeting, or '' to omit
-     * it. Two tiers by how long the host was off: below ABSENCE_NOTE_LONG_MIN_MS --
-     * "last seen online <duration> ago" via lib/date's speech-oriented phrase; at/above
-     * it -- full calendar date + zero-padded 24-hour clock time of the offline transition
-     * (the same date_sentence machinery WeatherMan uses). The tts channel prefers the
-     * _named / _anonymous pair -- possessive only when the welcome line names the person
-     * -- and degrades to legacy short_* lines in older bundles rather than dropping the
-     * note. Returns '' whenever anything is missing so the main greeting always stands
-     * alone. Never throws.
+    /** Build the localized absence note appended after the bucket greeting, or '' to omit.
      * @private
      * @param {string} host - Configured network host name
      * @param {'tts'|'ai'} channel - Output-path section inside absence_note/
      * @param {{bucket: string, absenceMs: number|null}} decision - Decision record from greetDecisionFor()
-     * @returns {Promise<string>} Interpolated note without leading separator, or '' to omit
-     */
+     * @returns {Promise<string>} Interpolated note without leading separator, or '' to omit */
     async #absenceNote(host, channel, decision) {
         if (!Number.isFinite(decision?.absenceMs) || !(decision.absenceMs > 0)) return ''
         const section = this.#bundle?.absence_note?.[channel]
         if (!section || typeof section !== 'object') return ''
 
-        // Relative ("... X temu") below the boundary; absolute date + time at/above it.
+        //  Relative ("... X temu") below the boundary; absolute date + time at/above it.
         const variant = decision.absenceMs >= ABSENCE_NOTE_LONG_MIN_MS ? 'long' : 'recent'
 
         const pick = (key) => (typeof section[key] === 'string' && String(section[key]).trim()) ? section[key] : null
         const resolveTemplate = (v) => (channel === 'tts')
-            // The possessive form ("Twój komputer ...") only fits a greeting that named the
-            // person; machines without one get the neutral anonymous variant instead.
+            //  The possessive form ("Twój komputer ...") only fits a greeting.
             ? pick(`${v}_${this.#greetingUsesName(host) ? 'named' : 'anonymous'}`) ?? pick(v)
             : pick(v)
 
-        // Bundles predating the recent tier keep their "off for ..." short_* lines.
+        //  Bundles predating the recent tier keep their "off for ..." short_* lines.
         const candidates = variant === 'recent' ? ['recent', 'short'] : [variant]
         let template = null
         let usedVariant = variant
@@ -549,8 +401,7 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
 
         let tokens
         if (usedVariant === 'long') {
-            // The offline transition's own timestamp; fall back to now-minus-absence when
-            // history is shorter than expected so rendering still has a moment.
+            //  The offline transition's own timestamp.
             const offlineTs = await DatabaseService.priorTransitionTs(NETWORK_DOMAIN, host) ?? Math.max(0, Date.now() - decision.absenceMs)
             const moment = new Date(offlineTs)
             const dateTemplate = temporal.loadDateBundle()?.date_sentence

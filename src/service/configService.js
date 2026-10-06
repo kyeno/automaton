@@ -1,22 +1,8 @@
 /**
  * Configuration Service - Container Pattern.
- *
- * Manages multiple named configuration sections loaded from YAML files. Each
- * section is backed by a {@link ConfigBase} instance that handles parsing,
- * optional strict schema validation, CLI overrides, and dot-notation access.
-
- *
- * At startup, loads the "main" config (etc/automaton.yaml), then discovers any
- * additional configs referenced in its `paths.configs` map and loads them as
- * named sections. Individual automations or interactions can also load their
- * own optional companion configs at runtime via {@link load}.
- *
- * Backward-compatible: exposes get(), getSection(), has() delegates to the
- * "main" section so existing callers don't need immediate changes.
- *
+ * Manages multiple named configuration sections loaded from YAML files.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -30,9 +16,7 @@ import ConfigBase from './config/configBase.js'
 import { parse as yamlParse } from 'yaml'
 
 
-// ---------------------------------------------------------------------------
-// Default paths (used when not overridden in main config)
-// ---------------------------------------------------------------------------
+//  Default paths (used when not overridden in main config)
 
 const DEFAULT_PATHS = Object.freeze({
     configs: {
@@ -45,20 +29,12 @@ const DEFAULT_PATHS = Object.freeze({
     }
 })
 
-/**
- * Main-config subtrees whose changes gate dependent-subsystem refreshes during
- * `/config reload`: locale drives i18n + TTS templates, ai.* the assistant, and
- * ui.windows the IRC-style channel definitions.
- */
+/** Main-config subtrees whose changes gate dependent-subsystem. */
 const RELOAD_RELEVANCE_LABELS = Object.freeze(['locale', 'ai', 'ui.windows'])
 
-// ---------------------------------------------------------------------------
-// SConfigContainer (singleton)
-// ---------------------------------------------------------------------------
+//  SConfigContainer (singleton)
 
-/**
- * Configuration container that manages multiple named YAML-backed sections.
- */
+/** Configuration container that manages multiple named YAML-backed sections. */
 class SConfigContainer {
 
     instance
@@ -69,40 +45,21 @@ class SConfigContainer {
     /** Dot-paths of runtime overrides applied via /config set ("section.path") -- reported as discarded on reload(). */
     #runtimeOverrides = new Set()
 
-    // -- Singleton ----------------------------------------------------------
 
-    /**
-     * Synchronous singleton guard -- first instantiation wins and later calls return
-     * the existing instance, so ConfigService.get() is safe from any call site.
-     */
+    /** Synchronous singleton guard -- first instantiation wins and later. */
     constructor() {
         if (!SConfigContainer.instance) SConfigContainer.instance = this
         return SConfigContainer.instance
     }
 
-    // -- Lifecycle ----------------------------------------------------------
+    //  -- Lifecycle ----------------------------------------------------------
 
-    /**
-     * Initialize the configuration container.
-     *
-     * Phase 1 - Validate required environment variables.
-     * Phase 2 - Parse raw --config-override values (all syntax problems reported at once).
-     * Phase 3 - Load "main" config (etc/automaton.yaml), apply overrides, validate strictly.
-     * Phase 4 - Discover and load additional configs from `paths.configs`.
-     *
-     * Validation is strict (nginx-style): a missing file, unparseable YAML or any
-     * schema violation aborts startup instead of running with broken settings.
-     *
+    /** Initialize the configuration container.
      * @param {string[]} [overrides] - Raw "key.path: value" strings collected from repeated
-     *                                 -c/--config-override flags; applied to the main section only
-     * @throws {Error} On missing env vars, bad override syntax, unknown parameters or schema violations
-
-     */
+     * @throws {Error} On missing env vars, bad override syntax, unknown parameters or schema violations */
     async init(overrides = []) {
 
-        // ------------------------------------------------------------------
-        // Phase 1 - Validate required environment variables
-        // ------------------------------------------------------------------
+        //  Phase 1 - Validate required environment variables.
         /** @type {Record<string, string>} */
         const REQUIRED_ENV_VARS = {
             MQTT_URL:    'MQTT broker connection URL (e.g., mqtt://localhost:1883)',
@@ -127,9 +84,7 @@ class SConfigContainer {
 
         try { LoggerService.debug?.('Validating environment variables...', 'ConfigService') } catch {}
 
-        // ------------------------------------------------------------------
-        // Phase 2 - Parse CLI overrides (strict syntax check, all problems at once)
-        // ------------------------------------------------------------------
+        //  Phase 2 - Parse CLI overrides (strict syntax check, all problems at once)
         const rawOverrides = Array.isArray(overrides) ? overrides : []
         /** @type {{ path: string, value: unknown }[]} */
         const entries = []
@@ -148,11 +103,7 @@ class SConfigContainer {
             throw new Error('Invalid --config-override value(s):\n' + parseProblems.map(p => `  ${p}`).join('\n'))
         }
 
-        // ------------------------------------------------------------------
-        // Phase 3 - Load main config, apply overrides, validate strictly.
-        // Any violation is fatal (nginx-style): die here with a clear message
-        // instead of starting up with broken settings.
-        // ------------------------------------------------------------------
+        //  Phase 3 - Load main config, apply overrides, validate strictly.
         let base
         try {
             base = new ConfigBase('etc/automaton.yaml', 'main')
@@ -169,29 +120,25 @@ class SConfigContainer {
         this.#sections.set('main', base)
         try { LoggerService.debug?.('Loaded main configuration from etc/automaton.yaml', 'ConfigService') } catch {}
 
-        // ------------------------------------------------------------------
-        // Phase 4 - Load additional configs from paths.configs
-        // ------------------------------------------------------------------
+        //  Phase 4 - Load additional configs from paths.configs.
         await this.#loadExtraConfigs()
 
     }
 
-    /**
-     * After main config is loaded, discover and load extra YAML configs.
-     * @private
-     */
+    /** After main config is loaded, discover and load extra YAML configs.
+     * @private */
     async #loadExtraConfigs() {
         const main = this.#sections.get('main')
         if (!main) return
 
-        // Get paths from config, falling back to defaults
+        //  Get paths from config, falling back to defaults.
         const configsMap = main.get('paths.configs') ?? DEFAULT_PATHS.configs
 
         for (const [name, relativePath] of Object.entries(configsMap)) {
             if (this.#sections.has(name)) continue // already loaded
 
             let filePath = relativePath
-            // If the path doesn't start with "etc/", prepend it
+            //  If the path doesn't start with "etc/"
             if (!filePath.startsWith('etc/') && !path.isAbsolute(filePath)) {
                 filePath = path.join('etc', name, `${name}.yaml`)
             }
@@ -202,14 +149,14 @@ class SConfigContainer {
                 base = new ConfigBase(filePath, name)
             } catch (error) {
                 try { LoggerService.warn?.(`Failed to load config "${filePath}" as "${name}": ${error.message}`, 'ConfigService') } catch {}
-                // Missing/unreadable optional sections stay non-fatal -- the section simply won't be available.
+                //  Missing/unreadable optional sections stay non-fatal -- the section simply won't be available.
                 continue
             }
 
             this.#sections.set(name, base)
             try { LoggerService.debug?.(`Loaded config section "${name}" from ${filePath}`, 'ConfigService') } catch {}
 
-            // Strict validation: a present-but-invalid section aborts startup.
+            //  Strict validation: a present-but-invalid section aborts startup.
             await base.ensureValidated()
 
         }
@@ -218,17 +165,10 @@ class SConfigContainer {
         try { LoggerService.info?.(`Config container ready (${sectionNames.length} section(s): ${sectionNames.join(', ')})`, 'ConfigService') } catch {}
     }
 
-    /**
-     * Parse one raw --config-override / -c CLI value into a typed override pair.
-     *
-     * Expected shape is a single YAML mapping entry: "key.path: value". The value side
-     * is interpreted as YAML so numbers, booleans and quoted strings keep their natural
-     * types (inline objects/arrays are allowed for whole-subtree overrides too).
-     *
+    /** Parse one raw --config-override / -c CLI value into a typed override pair.
      * @param {string} raw - Raw CLI string (e.g., 'locale.language: en_US')
      * @returns {{ path: string, value: unknown }} Dot-path plus its typed value
-     * @throws {Error} Descriptive message describing the syntax problem
-     */
+     * @throws {Error} Descriptive message describing the syntax problem */
     parseConfigOverride(raw) {
         const trimmed = String(raw ?? '').trim()
         if (!trimmed) {
@@ -264,22 +204,17 @@ class SConfigContainer {
         return { path, value }
     }
 
-    // -- Public API: Section access -----------------------------------------
+    //  -- Public API: Section access -----------------------------------------
 
-    /**
-     * Get a named configuration section.
+    /** Get a named configuration section.
      * @param {string} name - Section name (e.g., "main", "network", "interaction")
-     * @returns {ConfigBase|undefined} The section's accessor, or undefined if not loaded
-     */
+     * @returns {ConfigBase|undefined} The section's accessor, or undefined if not loaded */
     section(name) {
         return this.#sections.get(name) ?? undefined
     }
 
-    /**
-     * List all currently loaded configuration sections in load order ("main" first).
-     * Introspection helper for UI/debug tooling -- e.g., the /config debug listing.
-     * @returns {Array<{name: string, filePath: string, hasValidator: boolean, config: ConfigBase}>}
-     */
+    /** List all currently loaded configuration sections in load order ("main" first).
+     * @returns {Array<{name: string, filePath: string, hasValidator: boolean, config: ConfigBase}>} */
     listSections() {
         const result = []
         for (const [name, base] of this.#sections.entries()) {
@@ -293,47 +228,23 @@ class SConfigContainer {
         return result
     }
 
-    // -- Manual reload (/config reload) --------------------------------------
+    //  -- Manual reload (/config reload) --------------------------------------
 
-    /**
-     * Record a runtime override committed via /config set so that reload() can report it
-     * as discarded -- once config files are re-read from disk they are the source of truth.
+    /** Record a runtime override committed via /config set so that reload() can report.
      * @param {string} sectionName - Section name the override was applied to ("main", "network", ...)
-     * @param {string} dotPath - Dotted parameter path that was overridden
-     */
+     * @param {string} dotPath - Dotted parameter path that was overridden */
     noteSessionOverride(sectionName, dotPath) {
         this.#runtimeOverrides.add(`${String(sectionName).trim()}.${String(dotPath).trim()}`)
     }
 
-    /**
-     * All runtime overrides recorded since startup or the last successful reload.
-     * @returns {string[]} Entries shaped like "section.parameter.path"
-     */
+    /** All runtime overrides recorded since startup or the last successful reload.
+     * @returns {string[]} Entries shaped like "section.parameter.path" */
     sessionOverrides() {
         return [...this.#runtimeOverrides]
     }
 
-    /**
-     * Re-read every config file from disk and swap the results into the live sections --
-     * the manual counterpart of startup loading, used by `/config reload`.
-     *
-     * Two-phase safe swap:
-     *   Phase A -- build candidate ConfigBase instances (main first; extra sections are
-     *              discovered from the CANDIDATE main's paths.configs) and validate each
-     *              strictly. Missing/unreadable optional sections stay non-fatal exactly
-     *              like at startup discovery; a schema violation anywhere is fatal.
-     *   Phase B -- only when every candidate is clean: refresh existing section instances
-     *              in place (so consumers holding references keep working), add newly
-     *              declared ones, drop removed ones ("main" always survives), and clear
-     *              the /config set override ledger -- those values lived only in memory.
-     * On failure nothing changes and every problem is reported verbatim.
-     *
-     * The report also carries `changed`: which relevance subtrees (locale.*, ai.*,
-     * ui.windows) actually differ pre/post swap so callers can gate dependent subsystems
-     * instead of refreshing everything unconditionally.
-     *
-     * @returns {Promise<{ok:boolean, reloaded:string[], added:string[], dropped:{name:string,error?:string}[], failed:{section:string,error:string}[], discardedOverrides:string[], changed:string[]}>}
-     */
+    /** Re-read every config file from disk and swap the results into the live sections --
+     * @returns {Promise<{ok:boolean, reloaded:string[], added:string[], dropped:{name:string,error?:string}[], failed:{section:string,error:string}[], discardedOverrides:string[], changed:string[]}>} */
     async reload() {
         const pre = this.#snapshotRelevance()
 
@@ -344,7 +255,7 @@ class SConfigContainer {
         /** @type {Map<string,string>} Previously loaded sections that could not be re-read, with reason */
         const dropReasons = new Map()
 
-        // ---- Phase A: build + validate candidates --------------------------
+        //  ---- Phase A: build + validate candidates --------------------------
         let mainCandidate = null
         try {
             mainCandidate = new ConfigBase('etc/automaton.yaml', 'main')
@@ -372,8 +283,7 @@ class SConfigContainer {
             try {
                 base = new ConfigBase(filePath, name)
             } catch (error) {
-                // Same leniency as startup discovery: missing/unreadable optional sections are skipped.
-                // If one was loaded before, it drops out of the live set -- with the reason preserved.
+                //  Same leniency as startup discovery: missing/unreadable optional sections are skipped.
                 if (this.#sections.has(name)) dropReasons.set(name, String(error.message ?? error))
                 continue
             }
@@ -395,7 +305,7 @@ class SConfigContainer {
             }
         }
 
-        // ---- Phase B: safe swap ---------------------------------------------
+        //  ---- Phase B: safe swap ---------------------------------------------
         const desired = new Set(candidates.map((c) => c.name))
         /** @type {string[]} */
         const reloaded = []
@@ -437,13 +347,9 @@ class SConfigContainer {
         return { ok: true, reloaded, added, dropped, failed: [], discardedOverrides, changed: this.#diffRelevance(pre) }
     }
 
-    /**
-     * Snapshot the config subtrees whose changes should trigger dependent-subsystem
-     * refreshes during /config reload. JSON serialization gives stable equality checks
-     * over plain YAML data without deep-compare bookkeeping.
+    /** Snapshot the config subtrees whose changes should trigger dependent-subsystem.
      * @private
-     * @returns {Record<string,string>} label -> serialized subtree
-     */
+     * @returns {Record<string,string>} label -> serialized subtree */
     #snapshotRelevance() {
         const main = this.#sections.get('main')
         /** @type {Record<string,string>} */
@@ -454,38 +360,29 @@ class SConfigContainer {
         return snap
     }
 
-    /**
-     * Compare a pre-reload relevance snapshot against current state.
+    /** Compare a pre-reload relevance snapshot against current state.
      * @private
      * @param {Record<string,string>} pre - Snapshot taken before the swap
-     * @returns {string[]} Labels that actually differ
-     */
+     * @returns {string[]} Labels that actually differ */
     #diffRelevance(pre) {
         const post = this.#snapshotRelevance()
         return RELOAD_RELEVANCE_LABELS.filter((label) => pre[label] !== post[label])
     }
 
-    /**
-     * Resolve a section reference to one of the loaded sections. Accepts the exact
-     * section name ("main"), its YAML filename ("automaton.yaml") or any path suffix
-     * ("device/network"), case-insensitively. First match in load order wins. Retained
-     * as an internal/introspection helper -- the /config command surface addresses the
-     * main section directly and no longer exposes per-file selection to users.
+    /** Resolve a section reference to one of the loaded sections. Accepts the exact.
      * @param {string} query - Section name, filename or path fragment
-     * @returns {{name: string, filePath: string, hasValidator: boolean, config: ConfigBase}|null}
-     *          Matching section descriptor, or null when nothing matches
-     */
+     * @returns {{name: string, filePath: string, hasValidator: boolean, config: ConfigBase}|null} */
     resolveSection(query) {
         const raw = String(query ?? '').trim()
         if (!raw) return null
 
         const sections = this.listSections()
 
-        // 1) Exact section-name match (case-insensitive for convenience)
+        //  1) Exact section-name match (case-insensitive for convenience)
         let hit = sections.find((s) => s.name.toLowerCase() === raw.toLowerCase())
         if (hit) return hit
 
-        // 2) Filename / path-suffix fallback against the resolved file location
+        //  2) Filename / path-suffix fallback against the resolved file location.
         const norm = (s) => s.toLowerCase().replace(/\.ya?ml$/i, '')
         const q = norm(raw)
         hit = sections.find((s) => {
@@ -496,21 +393,14 @@ class SConfigContainer {
         return hit ?? null
     }
 
-    /**
-     * Load an additional YAML config file as a named section on demand.
-     *
-     * Used by individual automations/interactions that have their own optional
-     * companion configs. Loaded sections are cached - repeated calls with the
-     * same path return the existing instance.
-     *
+    /** Load an additional YAML config file as a named section on demand.
      * @param {string} filePath  - Path to YAML file (relative to project root or absolute)
      * @param {string} [sectionName] - Name for the section (default: derived from filename)
-     * @returns {ConfigBase|null} ConfigBase instance, or null if file doesn't exist
-     */
+     * @returns {ConfigBase|null} ConfigBase instance, or null if file doesn't exist */
     load(filePath, sectionName) {
         const name = sectionName ?? path.basename(filePath, '.yaml')
 
-        // Return cached instance if already loaded under this name
+        //  Return cached instance if already loaded under this name.
         if (this.#sections.has(name)) {
             try { LoggerService.debug?.(`Returning cached section "${name}"`, 'ConfigService') } catch {}
             return this.#sections.get(name)
@@ -527,57 +417,46 @@ class SConfigContainer {
         }
     }
 
-    /**
-     * Remove a dynamically loaded section from cache.
-     * Cannot unload "main".
+    /** Remove a dynamically loaded section from cache.
      * @param {string} name - Section name to unload
-     * @returns {boolean} true if removed, false if not found or protected
-     */
+     * @returns {boolean} true if removed, false if not found or protected */
     unload(name) {
         if (name === 'main') return false
         return this.#sections.delete(name)
     }
 
-    // -- Public API: Backward-compatible delegates (delegate to "main") -----
+    //  -- Public API: Backward-compatible delegates (delegate to "main") -----
 
-    /**
-     * Get a value from the main configuration using dot notation.
+    /** Get a value from the main configuration using dot notation.
      * @param {string} key       - Dot-separated key (e.g., "logger.file.max_size")
      * @param {*}      [defaultVal] - Fallback value if key doesn't exist
-     * @returns {*}
-     */
+     * @returns {*} */
     get(key, defaultVal) {
         const main = this.#sections.get('main')
         return main ? main.get(key, defaultVal) : defaultVal
     }
 
-    /**
-     * Get an entire section of the main configuration as a shallow copy.
+    /** Get an entire section of the main configuration as a shallow copy.
      * @param {string} key - Dot-notation path to a nested object
-     * @returns {Object|undefined} Shallow copy of the section, or undefined
-     */
+     * @returns {Object|undefined} Shallow copy of the section, or undefined */
     getSection(key) {
         const main = this.#sections.get('main')
         return main ? main.getSection(key) : undefined
     }
 
-    /**
-     * Check whether a key exists in the main configuration.
+    /** Check whether a key exists in the main configuration.
      * @param {string} key - Dot-separated key
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     has(key) {
         const main = this.#sections.get('main')
         return main ? main.has(key) : false
     }
 
-    // -- Public API: Paths helpers ------------------------------------------
+    //  -- Public API: Paths helpers ------------------------------------------
 
-    /**
-     * Resolve a config file path from `paths.configs`, falling back to defaults.
+    /** Resolve a config file path from `paths.configs`, falling back to defaults.
      * @param {string} name - Config name (e.g., "network", "interaction")
-     * @returns {string|null} Resolved relative path, or null if not configured
-     */
+     * @returns {string|null} Resolved relative path, or null if not configured */
     getConfigPath(name) {
         const main = this.#sections.get('main')
         if (!main) return DEFAULT_PATHS.configs[name] ?? null
@@ -586,11 +465,9 @@ class SConfigContainer {
         return configsMap[name] ?? DEFAULT_PATHS.configs[name] ?? null
     }
 
-    /**
-     * Resolve a directory path from `paths.directories`, falling back to defaults.
+    /** Resolve a directory path from `paths.directories`, falling back to defaults.
      * @param {string} name - Directory name (e.g., "automation", "interaction")
-     * @returns {string|null} Resolved relative path, or null if not configured
-     */
+     * @returns {string|null} Resolved relative path, or null if not configured */
     getDirectoryPath(name) {
         const main = this.#sections.get('main')
         if (!main) return DEFAULT_PATHS.directories[name] ?? null
@@ -600,6 +477,6 @@ class SConfigContainer {
     }
 }
 
-// Singleton instance - frozen public API surface
+//  Singleton instance - frozen public API surface.
 const ConfigService = Object.freeze(new SConfigContainer())
 export default ConfigService

@@ -1,31 +1,9 @@
 /**
  * Temporal utilities for time-of-day and season detection.
- *
- * Day periods (morning, noon, afternoon, evening, night) use fixed round-clock
- * boundaries identical year-round ({@link DAY_PERIODS}): morning starts at 05:00,
- * evening runs 18:00-23:59 so it never begins before 6pm, and night covers only true
- * deep night (midnight through pre-dawn). Clock-based zones keep rule behavior
- * predictable across seasons instead of tracking sunrise/sunset.
- * Every hour 0-23 maps to exactly one period -- no gaps, no overlaps.
- *
- * The module exports a frozen singleton carrying:
- * - **Day-period predicates**: `isMorning()`, `isNoon()`, `isAfternoon()`,
- *   `isEvening()`, `isNight()`
- * - **Season predicates**: `isSpring()`, `isSummer()`, `isAutumn()`, `isWinter()`
- * - **Duration formatters**: `millisecondsToHumanReadable()`,
- *   `secondsToHumanReadable()`, `msToHuman()`, `msToHumanPhrase()`
- * - **Duration parsing**: `humanToMs()`, `parseDurationMs()`
- * - **Convenience**: `getCurrentTimePeriod()`, `getHourToPeriodMap()`,
- *   `getCurrentSeason()`, `getLocalDayString()`, `formatClockTime()`
- * - **Date i18n**: `loadDateBundle()`, `getDateParts()`, `getPeriodWords()`,
- *   `getDurationUnits()` -- the module owns the per-locale `date.yaml` bundle
- *   (day/month names, period words, duration units) that speech automations
- *   such as the TTS weatherman interpolate into their opening lines.
- *
+ * Day periods (morning, noon, afternoon, evening, night) use fixed round-clock.
  * @module lib/date
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -40,25 +18,14 @@ import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { PROJECT_ROOT } from './projectRoot.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 /** Root directory containing per-locale i18n subdirectories (holds date.yaml). */
 const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
 
-// ---------------------------------------------------------------------------
-// Season configuration
-// ---------------------------------------------------------------------------
+//  Season configuration.
 
-/**
- * Meteorological season ranges.
- *
- * Each entry maps a season name to `[fromMonth, toMonth]`
- * using zero-based month indices (January = 0).
- *
- * @type {Object}
- */
+/** Meteorological season ranges.
+ * @type {Object} */
 const SEASONS = {
     spring: [2, 4],    // Mar - May
     summer: [5, 7],    // Jun - Aug
@@ -66,30 +33,10 @@ const SEASONS = {
     winter: [11, 1],   // Dec - Feb (wraps)
 }
 
-// ---------------------------------------------------------------------------
-// Day-period partition (fixed round-clock boundaries)
-// ---------------------------------------------------------------------------
+//  Day-period partition (fixed round-clock boundaries)
 
-/**
- * Fixed day-period partition of hours 0-23 -- identical every month of the year.
- *
- * Round-clock boundaries were chosen deliberately instead of tracking sunrise/sunset:
- * "evening" runs 18:00-23:59 so it never begins before 6pm, while "night" covers only
- * true deep night (midnight through pre-dawn). Morning begins at 05:00 regardless of
- * actual dawn time. The five ranges form a continuous partition: each period's `from`
- * equals the previous period's `to + 1`, so no hour falls through a gap or matches two
- * periods.
- *
- * | Period    | Hours   |
- * |-----------|---------|
- * | morning   | 05-10   |
- * | noon      | 11-12   |
- * | afternoon | 13-17   |
- * | evening   | 18-23   |
- * | night     | 00-04   |
- *
- * @type {Record<string, [number, number]>}
- */
+/** Fixed day-period partition of hours 0-23 -- identical every month of the year.
+ * @type {Record<string, [number, number]>} */
 const DAY_PERIODS = Object.freeze({
     morning:   [5, 10],
     noon:      [11, 12],
@@ -98,18 +45,10 @@ const DAY_PERIODS = Object.freeze({
     night:     [0, 4],
 })
 
-// ---------------------------------------------------------------------------
-// Duration unit factors (shared by msToHumanPhrase / humanToMs)
-// ---------------------------------------------------------------------------
+//  Duration unit factors (shared by msToHumanPhrase / humanToMs)
 
-/**
- * Milliseconds per supported duration unit, keyed by the single-letter token
- * used in human-readable strings ("1h", "3m 45s"). The bundle-key mapping
- * (day/hour/minute/second -> d/h/m/s) is kept at call sites so i18n bundles
- * can name their own words freely.
- *
- * @type {Record<string, number>}
- */
+/** Milliseconds per supported duration unit, keyed by the single-letter token
+ * @type {Record<string, number>} */
 const DURATION_UNIT_MS = Object.freeze({
     d: 86_400_000,
     h: 3_600_000,
@@ -117,23 +56,9 @@ const DURATION_UNIT_MS = Object.freeze({
     s: 1_000,
 })
 
-// ---------------------------------------------------------------------------
-// STemporal Class
-// ---------------------------------------------------------------------------
+//  STemporal Class.
 
-/**
- * Provides predicate methods for checking the current
- * time-of-day period and season.
- *
- * Day-period boundaries are fixed round-clock ranges ({@link DAY_PERIODS}),
- * identical year-round -- see that constant for the exact partition table.
- *
- * All predicates are defined explicitly below so they show up in IDE
- * autocompletion, survive minification, and get individual pages in the
- * generated API docs. Each one delegates to the private #checkPeriod() or
- * #checkSeason() helper which reads the {@link SEASONS} configuration and
- * {@link DAY_PERIODS} data.
- */
+/** Provides predicate methods for checking the current. */
 class STemporal {
     /** @type {Record<string, unknown>|null} Cached date.yaml bundle (null = not loaded / failed). */
     #dateBundle = null
@@ -141,95 +66,74 @@ class STemporal {
     /** @type {string|null} Locale the cached date bundle was loaded for. */
     #dateBundleLocale = null
 
-    // -- Private helpers ----------------------------------------------------
+    //  -- Private helpers ----------------------------------------------------
 
-    /**
-     * Checks whether a given hour falls within a range,
-     * handling midnight-wrapping ranges (e.g. night: 21 -> 4).
-     *
+    /** Checks whether a given hour falls within a range.
      * @param {number} h  - The hour to check (0-23).
      * @param {number} from - Start boundary (inclusive).
      * @param {number} to   - End boundary (inclusive).
      * @returns {boolean}
-     * @private
-     */
+     * @private */
     #inHourRange(h, from, to) {
         return from <= to
         ? h >= from && h <= to
         : h >= from || h <= to
     }
 
-    /**
-     * Checks whether a given month falls within a range,
-     * handling year-wrapping ranges (e.g. winter: 11 -> 1).
-     *
+    /** Checks whether a given month falls within a range.
      * @param {number} m  - The month to check (0-11).
      * @param {number} from - Start month index (inclusive).
      * @param {number} to   - End month index (inclusive).
      * @returns {boolean}
-     * @private
-     */
+     * @private */
     #inMonthRange(m, from, to) {
         return from <= to
         ? m >= from && m <= to
         : m >= from || m <= to
     }
 
-    // -- Day period predicates ----------------------------------------------
+    //  -- Day period predicates ----------------------------------------------
 
-    /**
-     * Check whether a given moment falls in the morning period.
+    /** Check whether a given moment falls in the morning period.
      * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     isMorning(date) {
         return this.#checkPeriod('morning', date)
     }
 
-    /**
-     * Check whether a given moment falls in the noon period.
+    /** Check whether a given moment falls in the noon period.
      * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     isNoon(date) {
         return this.#checkPeriod('noon', date)
     }
 
-    /**
-     * Check whether a given moment falls in the afternoon period.
+    /** Check whether a given moment falls in the afternoon period.
      * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     isAfternoon(date) {
         return this.#checkPeriod('afternoon', date)
     }
 
-    /**
-     * Check whether a given moment falls in the evening period.
+    /** Check whether a given moment falls in the evening period.
      * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     isEvening(date) {
         return this.#checkPeriod('evening', date)
     }
 
-    /**
-     * Check whether a given moment falls in the night period.
+    /** Check whether a given moment falls in the night period.
      * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
-     * @returns {boolean}
-     */
+     * @returns {boolean} */
     isNight(date) {
         return this.#checkPeriod('night', date)
     }
 
-    /**
-     * Internal helper to check a specific day period at a given moment.
-     *
+    /** Internal helper to check a specific day period at a given moment.
      * @param {'morning'|'noon'|'afternoon'|'evening'|'night'} period
      * @param {Date} [now=new Date()] - Moment to evaluate
      * @returns {boolean}
-     * @private
-     */
+     * @private */
     #checkPeriod(period, now = new Date()) {
         const range = DAY_PERIODS[period]
         if (!range) return false
@@ -237,64 +141,46 @@ class STemporal {
         return this.#inHourRange(now.getHours(), from, to)
     }
 
-    // -- Season predicates --------------------------------------------------
+    //  -- Season predicates --------------------------------------------------
 
-    /**
-     * Check if the current month is spring (Mar-May).
-     * @returns {boolean}
-     */
+    /** Check if the current month is spring (Mar-May).
+     * @returns {boolean} */
     isSpring() {
         return this.#checkSeason('spring')
     }
 
-    /**
-     * Check if the current month is summer (Jun-Aug).
-     * @returns {boolean}
-     */
+    /** Check if the current month is summer (Jun-Aug).
+     * @returns {boolean} */
     isSummer() {
         return this.#checkSeason('summer')
     }
 
-    /**
-     * Check if the current month is autumn (Sep-Nov).
-     * @returns {boolean}
-     */
+    /** Check if the current month is autumn (Sep-Nov).
+     * @returns {boolean} */
     isAutumn() {
         return this.#checkSeason('autumn')
     }
 
-    /**
-     * Check if the current month is winter (Dec-Feb).
-     * @returns {boolean}
-     */
+    /** Check if the current month is winter (Dec-Feb).
+     * @returns {boolean} */
     isWinter() {
         return this.#checkSeason('winter')
     }
 
-    /**
-     * Internal helper to check a specific season.
-     *
+    /** Internal helper to check a specific season.
      * @param {string} seasonName - Season key from SEASONS config
      * @returns {boolean}
-     * @private
-     */
+     * @private */
     #checkSeason(seasonName) {
         const [from, to] = SEASONS[seasonName]
         return this.#inMonthRange(new Date().getMonth(), from, to)
     }
 
-    // -- Duration formatting ------------------------------------------------
+    //  -- Duration formatting ------------------------------------------------
 
-    /**
-     * Format a duration in milliseconds into a compact, human-readable string.
-     * Used for logging timer intervals, debounce windows, reconnect delays, etc.
-     * Only non-zero units are shown. Seconds are always included as the smallest unit.
-     *
-     * Examples: "300ms", "1sec 200ms", "45sec", "2min 30sec", "1h 5min", "3d 12h"
-     *
+    /** Format a duration in milliseconds into a compact, human-readable string.
      * @param {number} ms - Duration in milliseconds (non-negative integer)
-     * @returns {string} Human-readable duration string
-     */
+     * @returns {string} Human-readable duration string */
     millisecondsToHumanReadable(ms) {
         if (!Number.isFinite(ms) || ms < 0) return '0ms'
         if (ms === 0) return '0ms'
@@ -305,7 +191,7 @@ class STemporal {
         const seconds = Math.floor((ms % 60_000) / 1_000)
         const millis = ms % 1_000
 
-        // If sub-second, show only milliseconds
+        //  If sub-second, show only milliseconds.
         if (ms < 1_000) return `${ms}ms`
 
         const parts = []
@@ -313,22 +199,15 @@ class STemporal {
         if (hours > 0) parts.push(`${hours}h`)
         if (minutes > 0) parts.push(`${minutes}min`)
         if (seconds > 0) parts.push(`${seconds}sec`)
-        // Milliseconds only shown when no larger units present and value is small
+        //  Milliseconds only shown when no larger units present and value is small.
         else if (parts.length === 0 && millis > 0) parts.push(`${millis}ms`)
 
         return parts.join(' ')
     }
 
-    /**
-     * Format a duration in whole seconds into a compact, human-readable string.
-     * Used for countdowns and cooldown-remaining displays.
-     * Only non-zero units are shown; seconds always included as the smallest unit.
-     *
-     * Examples: "30sec", "12min 34sec", "1h 5min 12sec"
-     *
+    /** Format a duration in whole seconds into a compact, human-readable string.
      * @param {number} totalSeconds - Duration in seconds (non-negative integer)
-     * @returns {string} Human-readable duration string
-     */
+     * @returns {string} Human-readable duration string */
     secondsToHumanReadable(totalSeconds) {
         if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '0sec'
         if (totalSeconds === 0) return '0sec'
@@ -343,14 +222,9 @@ class STemporal {
         return parts.join(' ')
     }
 
-    /**
-     * Convert milliseconds to a compact "every Xs/m/h" interval string.
-     * Returns 'disabled' for zero/negative/missing values.
-     * Used by UI commands to display timer intervals.
-     *
+    /** Convert milliseconds to a compact "every Xs/m/h" interval string.
      * @param {number} ms - Timer interval in milliseconds
-     * @returns {string} e.g. "every 5s", "every 5m", "every 2h", or "disabled"
-     */
+     * @returns {string} e.g. "every 5s", "every 5m", "every 2h", or "disabled" */
     msToHuman(ms) {
         if (!ms || ms <= 0) return 'disabled'
         const secs = Math.round(ms / 1_000)
@@ -361,28 +235,10 @@ class STemporal {
         return `every ${hours}h`
     }
 
-    /**
-     * Convert milliseconds into a localized, speech-oriented duration phrase such as
-     * "2 hours" or "1 godzin 30 minut". Unlike {@link msToHuman}, this method is meant for
-     * spoken / LLM-facing output: unit words are supplied by the caller (typically an i18n
-     * bundle), so this module stays language-agnostic and grammatical agreement for specific
-     * counts (e.g., Polish case endings) is left to downstream consumers such as the small
-     * model that rewrites the final sentence.
-     *
-     * The largest adjacent unit pair whose bigger count is at least 1 wins
-     * (day+hour -> hour+minute -> minute+second). The smaller part is appended only when it
-     * makes up a significant remainder (>= max(half a small unit, 10% of the big unit)), so
-     * clean values stay single-unit ("1 hours") while e.g. 90 s reads "1 minutes 30 seconds"
-     * instead of a misleading rounded "2 minutes". Sub-second values fall back to a rounded
-     * second count; null is returned when nothing resolves.
-     *
+    /** Convert milliseconds into a localized, speech-oriented duration phrase such.
      * @param {number} ms - Duration in milliseconds (positive finite value)
      * @param {{day?: string, hour?: string, minute?: string, second?: string}} [units]
-     *   Localized unit words keyed by canonical English singular names, e.g.
-     *   `{ day: 'dni', hour: 'godzin' }`. Missing/empty words skip that unit.
-     * @returns {string|null} e.g. "5 hours 30 minutes"; null for invalid input or when no
-     *   usable unit word can express the duration.
-     */
+     * @returns {string|null} e.g. "5 hours 30 minutes"; null for invalid input or when no */
     msToHumanPhrase(ms, units = {}) {
         if (!Number.isFinite(ms) || !(ms > 0)) return null
 
@@ -411,7 +267,7 @@ class STemporal {
             return phrase
         }
 
-        // Sub-second values (or only a second word available).
+        //  Sub-second values (or only a second word available).
         const secCount = Math.round(ms / DURATION_UNIT_MS.s)
         const secWord = units?.second
         if (secCount >= 1 && typeof secWord === 'string' && secWord.trim()) {
@@ -421,20 +277,9 @@ class STemporal {
     }
 
 
-    /**
-     * Parse a human-readable duration string into milliseconds -- the inverse of the
-     * compact formatters above, intended for config files (`timer_interval: "3m 45s"`).
-     *
-     * Grammar: one or more whitespace-separated "<integer><unit>" tokens where the unit
-     * is `d` (days), `h` (hours), `m` (minutes) or `s` (seconds); case-insensitive.
-     * Examples: `"90s"`, `"3m 45s"`, `"1h"`, `"2d 4h"`. Bare numbers are rejected on
-     * purpose so that units stay explicit and unambiguous.
-     *
+    /** Parse a human-readable duration string into milliseconds.
      * @param {string} text - Human-readable duration, e.g. "1h" or "3m 45s"
-     * @returns {number|null} Total milliseconds; null when the input is not a string,
-     *   is empty/malformed, or overflows Number.MAX_SAFE_INTEGER. Callers responsible
-     *   for timers should additionally enforce their own upper bound (see AutomationBase).
-     */
+     * @returns {number|null} Total milliseconds; null when the input is not a string, */
     humanToMs(text) {
         if (typeof text !== 'string') return null
         const trimmed = text.trim()
@@ -448,32 +293,20 @@ class STemporal {
         return total
     }
 
-    /**
-     * Resolve a config duration value into milliseconds, accepting either a legacy
-     * plain number (already milliseconds) or a human-readable string parsed via
-     * humanToMs(). Pure helper for polymorphic config keys such as
-     * `timer_interval` and `human_interaction_cooldown_ms`; callers are responsible
-     * for validating bounds and applying their own fallbacks on null.
-     *
+    /** Resolve a config duration value into milliseconds, accepting either a legacy.
      * @param {number|string|null|undefined} value - Raw config value
-     * @returns {number|null} Milliseconds; null when the value is missing, not a
-     *   finite number / well-formed duration string, or overflows safe integers.
-     */
+     * @returns {number|null} Milliseconds; null when the value is missing, not a */
     parseDurationMs(value) {
         if (typeof value === 'number') return Number.isFinite(value) ? value : null
         if (typeof value === 'string') return this.humanToMs(value)
         return null
     }
 
-    // -- Convenience --------------------------------------------------------
+    //  -- Convenience --------------------------------------------------------
 
-    /**
-     * Return a human-readable string for the time-of-day period at a given moment.
-     * Checks each period predicate and returns the first one that matches.
-     *
+    /** Return a human-readable string for the time-of-day period at a given moment.
      * @param {Date} [date=new Date()] - Moment to evaluate; defaults to the current time
-     * @returns {'morning'|'noon'|'afternoon'|'evening'|'night'|null} The matching period or null.
-     */
+     * @returns {'morning'|'noon'|'afternoon'|'evening'|'night'|null} The matching period or null. */
     getCurrentTimePeriod(date = new Date()) {
         if (this.isMorning(date)) return 'morning'
         if (this.isNoon(date)) return 'noon'
@@ -483,53 +316,25 @@ class STemporal {
         return null
     }
 
-    /**
-     * Build the full 24-entry hour-to-period lookup table for {@link DAY_PERIODS}.
-     *
-     * Index i holds the period name active during clock hour i, so consumers can map
-     * any hour of the day without instantiating per-hour Dates themselves. Because the
-     * partition is fixed round-clock boundaries, the result is identical year-round --
-     * this stays the single source of truth for rule coverage analysis
-     * ({@link lib/ruleCoverage}) and similar tooling instead of duplicating the table.
-     *
-     * @returns {Array<string>} 24-element array; index = hour (0-23), value = period name.
-     */
+    /** Build the full 24-entry hour-to-period lookup table for {@link DAY_PERIODS}.
+     * @returns {Array<string>} 24-element array; index = hour (0-23), value = period name. */
     getHourToPeriodMap() {
         const reference = new Date(2026, 8 /* September */, 15) // arbitrary date; zones are clock-based
         return Array.from({ length: 24 }, (_, h) => this.getCurrentTimePeriod(new Date(reference.getFullYear(), reference.getMonth(), reference.getDate(), h)))
     }
 
-    /**
-     * First clock hour covered by a named day-period.
-     *
-     * Inverse of {@link getHourToPeriodMap}: given a period name, returns the start boundary
-     * of its range so callers can anchor "start-of-morning"-style instants to a concrete hour
-     * (e.g. 'morning' -> 5). Used by merged-gate conditions that mix sun events with
-     * clock/period boundaries.
-     *
+    /** First clock hour covered by a named day-period.
      * @param {string} period - Period name ('morning' | 'noon' | 'afternoon' | 'evening' | 'night').
-     * @returns {number|null} First hour (0-23) covered by the period, or null when unknown.
-     */
+     * @returns {number|null} First hour (0-23) covered by the period, or null when unknown. */
     getPeriodStartHour(period) {
         const range = typeof period === 'string' ? DAY_PERIODS[period] : undefined
         return Array.isArray(range) ? range[0] : null
     }
-    // -- Clock-bound parsing ------------------------------------------------
+    //  -- Clock-bound parsing ------------------------------------------------
 
-    /**
-     * Parse one clock-bound token into a fractional hour on the 0-24 axis.
-     *
-     * Every "what time is it" bound in the system funnels through here so the three
-     * spellings mean the same thing everywhere: a plain hour (`22`, `12.5`), the
-     * colon clock time used by silence windows (`"22:00"`, `"22:00:30"`) and the
-     * NATO-style HHMM spelling used in rule conditions (`1230` is 12:30, `2359` is
-     * 23:59, `0030` is 00:30). The split is unambiguous because a plain hour can
-     * never reach three digits, so a bare `1200` is 12:00 and never a minute count.
-     *
+    /** Parse one clock-bound token into a fractional hour on the 0-24 axis.
      * @param {number|string} value - Raw clock-bound token.
-     * @returns {number|null} Fractional hour (0 <= h < 24), or null when the token is
-     *   not a valid clock time (e.g. 24, 1299, "half past six").
-     */
+     * @returns {number|null} Fractional hour (0 <= h < 24), or null when the token is */
     parseClockHour(value) {
         const text = (typeof value === 'string') ? value.trim() : null
         if (text !== null && !/^(\d{1,2}:\d{2}(:\d{2})?|\d+(\.\d+)?)$/.test(text)) return null
@@ -546,8 +351,7 @@ class STemporal {
         const numeric = (text !== null) ? Number(text) : value
         if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return null
 
-        // Three digits or more can only be a HHMM clock time; leading zeros are kept
-        // for strings so "0030" reads as 00:30 rather than as the hour 30.
+        //  Three digits or more can only be a HHMM clock time; leading zeros are kept.
         const digits = (text !== null) ? text : String(Math.trunc(numeric))
         if (/^\d+$/.test(digits) && digits.length >= 3) {
             const hour = Number(digits.slice(0, -2))
@@ -559,31 +363,18 @@ class STemporal {
         return (numeric >= 0 && numeric < 24) ? numeric : null
     }
 
-    /**
-     * Whether a clock-bound token is written in the NATO-style HHMM spelling, i.e. the
-     * form that carries sub-hour precision. Rule gates compare integer hours on the fast
-     * path; a bound written as `1230` has to be resolved to a fractional hour first, so
-     * callers use this to pick the precise path.
-     *
+    /** Whether a clock-bound token is written in the NATO-style HHMM spelling.
      * @param {number|string} value - Raw clock-bound token.
-     * @returns {boolean} True when the token is a valid HHMM clock time (100 and up).
-     */
+     * @returns {boolean} True when the token is a valid HHMM clock time (100 and up). */
     isNatoClockBound(value) {
         const text = (typeof value === 'string') ? value.trim() : null
         if (text !== null) return /^\d{3,}$/.test(text)
         return (typeof value === 'number' && Number.isFinite(value) && Math.trunc(value) >= 100)
     }
 
-    /**
-     * Render a fractional hour as a zero-padded "HH:MM" clock string.
-     *
-     * Inverse of {@link parseClockHour}, used in rule-evaluation logs so a resolved sun
-     * instant (17.4819...) reads back as the clock time an author would have written
-     * (17:29) instead of a raw float.
-     *
+    /** Render a fractional hour as a zero-padded "HH:MM" clock string.
      * @param {number} hour - Fractional hour on the 0-24 axis.
-     * @returns {string} Zero-padded "HH:MM", or "invalid" for a non-finite / out-of-range hour.
-     */
+     * @returns {string} Zero-padded "HH:MM", or "invalid" for a non-finite / out-of-range hour. */
     formatClockHour(hour) {
         if (!Number.isFinite(hour) || hour < 0 || hour >= 24) return 'invalid'
         const totalMinutes = Math.min(Math.round(hour * 60), 1439)
@@ -594,11 +385,8 @@ class STemporal {
 
 
 
-    /**
-     * Return a human-readable string for the current season.
-     * Every month maps to exactly one meteorological season, so this always resolves.
-     * @returns {'spring'|'summer'|'autumn'|'winter'} The matching season name.
-     */
+    /** Return a human-readable string for the current season.
+     * @returns {'spring'|'summer'|'autumn'|'winter'} The matching season name. */
     getCurrentSeason() {
         if (this.isSpring()) return 'spring'
         if (this.isSummer()) return 'summer'
@@ -606,13 +394,9 @@ class STemporal {
         return 'winter'
     }
 
-    /**
-     * Format a date as its local calendar-day string "YYYY-MM-DD".
-     * Uses local time components (not UTC) so day boundaries follow the system timezone;
-     * used e.g. by automation daily "once" markers.
+    /** Format a date as its local calendar-day string "YYYY-MM-DD".
      * @param {Date} [date=new Date()] - Date to format
-     * @returns {string} Local day in ISO-like "YYYY-MM-DD" form
-     */
+     * @returns {string} Local day in ISO-like "YYYY-MM-DD" form */
     getLocalDayString(date = new Date()) {
         const y = date.getFullYear()
         const m = String(date.getMonth() + 1).padStart(2, '0')
@@ -620,35 +404,19 @@ class STemporal {
         return `${y}-${m}-${d}`
     }
 
-    /**
-     * Render a moment as a zero-padded 24-hour clock string ("HH:MM").
-     * Used by speech automations (the TTS greeter's absence note) when the referenced
-     * moment is recent enough that a bare time reads more naturally than a full calendar
-     * date. Always 24h regardless of the locale's 12/24 preference, so tiny TTS voices
-     * never have to disambiguate AM/PM from context.
+    /** Render a moment as a zero-padded 24-hour clock string ("HH:MM").
      * @param {Date} [date=new Date()] - Moment to render
-     * @returns {string} Zero-padded "HH:MM" (e.g., "07:35", "23:10")
-     */
+     * @returns {string} Zero-padded "HH:MM" (e.g., "07:35", "23:10") */
     formatClockTime(date = new Date()) {
         const h = String(date.getHours()).padStart(2, '0')
         const m = String(date.getMinutes()).padStart(2, '0')
         return `${h}:${m}`
     }
 
-    // -- Date i18n ----------------------------------------------------------
+    //  -- Date i18n ----------------------------------------------------------
 
-    /**
-     * Load (and cache) the per-locale date bundle from `etc/i18n/{locale}/date.yaml`.
-     *
-     * The bundle holds the localized vocabulary this module "owns": day-of-week
-     * names, (genitive) month names, the year word, day-period words, and
-     * duration-unit words. It is re-read whenever the active locale changes
-     * (e.g., after a `/config reload`) and retried on a previous load failure,
-     * so a bundle created after startup is picked up without a restart.
-     *
-     * @returns {Record<string, unknown>|null} The parsed bundle, or null when the
-     *   file is missing or cannot be parsed (callers degrade gracefully).
-     */
+    /** Load (and cache) the per-locale date bundle from `etc/i18n/{locale}/date.yaml`.
+     * @returns {Record<string, unknown>|null} The parsed bundle, or null when the */
     loadDateBundle() {
         const locale = I18nLoader.getLocale()
         if (this.#dateBundle !== null && this.#dateBundleLocale === locale) return this.#dateBundle
@@ -665,18 +433,9 @@ class STemporal {
         return this.#dateBundle
     }
 
-    /**
-     * Resolve the localized date parts for a moment, ready for `{% %}` interpolation.
-     *
-     * Returns the day-of-week name (nominative), the day-of-month number, the
-     * month name (genitive in declension-aware locales such as Polish), the year
-     * number, and the trailing year word (empty in languages without one). Every
-     * field is always present; missing bundle entries degrade to empty strings so
-     * a partially translated bundle never leaks a raw `{% %}` placeholder.
-     *
+    /** Resolve the localized date parts for a moment, ready for `{% %}` interpolation.
      * @param {Date} [date=new Date()] - Moment to format
-     * @returns {{day_name: string, day: string, month_name: string, year: string, year_word: string}}
-     */
+     * @returns {{day_name: string, day: string, month_name: string, year: string, year_word: string}} */
     getDateParts(date = new Date()) {
         const bundle = this.loadDateBundle() ?? {}
         const dayNames = Array.isArray(bundle.day_names) ? bundle.day_names : []
@@ -690,39 +449,22 @@ class STemporal {
         }
     }
 
-    /**
-     * Localized day-period words for `{% time_of_day %}`, keyed by the five
-     * period names returned by {@link getCurrentTimePeriod} (morning/noon/
-     * afternoon/evening/night). Moved here from the weatherman bundle so all
-     * date/time vocabulary lives in one place.
-     * @returns {Record<string, string>} Period name to localized word (empty object when unavailable).
-     */
+    /** Localized day-period words for `{% time_of_day %}`, keyed by the five
+     * @returns {Record<string, string>} Period name to localized word (empty object when unavailable). */
     getPeriodWords() {
         const bundle = this.loadDateBundle() ?? {}
         return (bundle.period_words && typeof bundle.period_words === 'object') ? bundle.period_words : {}
     }
 
-    /**
-     * Localized duration-unit words for `{% next_interval %}` (day/hour/minute/
-     * second), moved here from the weatherman bundle. Pass the result to
-     * {@link msToHumanPhrase}.
-     * @returns {Record<string, string>} Unit key to localized word (empty object when unavailable).
-     */
+    /** Localized duration-unit words for `{% next_interval %}` (day/hour/minute/
+     * @returns {Record<string, string>} Unit key to localized word (empty object when unavailable). */
     getDurationUnits() {
         const bundle = this.loadDateBundle() ?? {}
         return (bundle.duration_units && typeof bundle.duration_units === 'object') ? bundle.duration_units : {}
     }
 }
 
-// ---------------------------------------------------------------------------
-// Export frozen singleton
-// ---------------------------------------------------------------------------
+//  Export frozen singleton.
 
-/**
- * Frozen singleton instance providing temporal utilities.
- *
- * Day-period and season predicates default to the current system clock but accept
- * an explicit moment for deterministic evaluation; duration formatters accept
- * numeric arguments.
- */
+/** Frozen singleton instance providing temporal utilities. */
 export default Object.freeze(new STemporal())

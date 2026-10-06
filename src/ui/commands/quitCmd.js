@@ -1,12 +1,8 @@
 /**
  * Quit Command -- triggers graceful shutdown of Automaton.
- *
  * Registered under the canonical name 'quit' with aliases ['exit', 'q'].
- * All three verbs (/quit, /exit, /q) route to this same command instance.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -19,12 +15,10 @@ class QuitCmd extends CommandBase {
     static description = 'Exit automaton gracefully'
     static aliases = ['exit', 'q']
 
-    /**
-     * Trigger graceful shutdown; all three verbs (/quit, /exit, /q) land here.
-     * @param {string} args - Raw argument string after the verb (ignored -- just shut down)
-     */
+    /** Trigger graceful shutdown; all three verbs (/quit, /exit, /q) land here.
+     * @param {string} args - Raw argument string after the verb (ignored -- just shut down) */
     async execute(args) {
-        // Ignore any arguments -- just shut down
+        //  Ignore any arguments -- just shut down.
         this.ctx.shutdown()
     }
 }

@@ -1,30 +1,9 @@
 /**
  * Roller Shutters Interaction Base (abstract).
- *  Shared travel logic for remote-controlled roller shutter groups: a single
- *  button press runs the group fully open or fully closed, while a double
- *  press nudges every shutter by STEP_PERCENT from its cached position,
- *  clamped to the 0-100 range.
- *
- *  End-stop feedback: when EVERY shutter in the group already sits at the
- *  requested end stop, the travel command is dropped and a short double beep
- *  is played instead -- the same audible acknowledgement used when the balcony
- *  light button is pressed while its timed cycle is already running. The gate
- *  deliberately requires *all* shutters to be at the limit; a partially-open
- *  group is still commanded, and the per-device redundancy check in DeviceBase
- *  suppresses the shutters that have nothing to do.
- *
- *  Data source: cached shutter positions read through DeviceContainer
- *  (getStateLast()), i.e. the last payload zigbee2mqtt reported and Redis
- *  restored at startup. An unknown position never blocks a command -- the group
- *  is treated as "not provably at the limit" and the signal is sent.
- *
- *  Subclasses fix their identity and shutter list and may override
- *  {@link onOpened} / {@link onClosed} to attach side effects (see
- *  etc/interaction/bedroomRollersInteraction.js).
- *
+ * Shared travel logic for remote-controlled roller shutter groups: a single.
+ * button press runs the group fully open or fully closed, while a double.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -35,71 +14,46 @@ import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import InteractionBase from './interactionBase.js'
 import sound from '../../lib/sound.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Fully closed position reported by roller shutters.
- * @type {number}
- */
+/** Fully closed position reported by roller shutters.
+ * @type {number} */
 const POSITION_MIN = 0
 
-/**
- * Fully open position reported by roller shutters.
- * @type {number}
- */
+/** Fully open position reported by roller shutters.
+ * @type {number} */
 const POSITION_MAX = 100
 
-/**
- * Distance in percent a double press moves each shutter.
- * @type {number}
- */
+/** Distance in percent a double press moves each shutter.
+ * @type {number} */
 const STEP_PERCENT = 20
 
-/**
- * Tolerance in percent around each end stop that still counts as "at the
- * limit". Mirrors POSITION_NEARLY_CLOSED_THRESHOLD / POSITION_NEARLY_OPEN_
- * THRESHOLD in device/base/deviceBase.js so the beep and the command
- * suppression inside DeviceBase agree on what "already there" means.
- * @type {number}
- */
+/** Tolerance in percent around each end stop that still counts as "at the
+ * @type {number} */
 const END_STOP_TOLERANCE = 2
 
-/**
- * Duration of each beep in the end-stop acknowledgement, in milliseconds.
- * @type {number}
- */
+/** Duration of each beep in the end-stop acknowledgement, in milliseconds.
+ * @type {number} */
 const AT_LIMIT_BEEP_DURATION_MS = 150
 
 
-// ---------------------------------------------------------------------------
-// RollerShuttersBase (abstract)
-// ---------------------------------------------------------------------------
+//  RollerShuttersBase (abstract)
 
-/**
- * Abstract base class for remote-controlled roller shutter groups.
- */
+/** Abstract base class for remote-controlled roller shutter groups. */
 export default class RollerShuttersBase extends InteractionBase {
 
-    // -- Private state ----------------------------------------------------
+    //  -- Private state ----------------------------------------------------
 
-    /**
-     * Friendly names of the shutters this group drives.
-     * @type {ReadonlyArray<string>}
-     */
+    /** Friendly names of the shutters this group drives.
+     * @type {ReadonlyArray<string>} */
     #shutters = []
 
-    // -- Constructor ------------------------------------------------------
+    //  -- Constructor ------------------------------------------------------
 
-    /**
-     * Construct a roller shutter group interaction.
-     *
+    /** Construct a roller shutter group interaction.
      * @param {object} options - Constructor options
      * @param {string} options.name - Display name used in log context
      * @param {string[]} options.shutters - Friendly names of the shutters in the group
-     * @throws {Error} When no shutter list is supplied
-     */
+     * @throws {Error} When no shutter list is supplied */
     constructor({ name, shutters }) {
         super({ name })
 
@@ -112,28 +66,18 @@ export default class RollerShuttersBase extends InteractionBase {
         this.#shutters = Object.freeze([...shutters])
     }
 
-    // -- Accessors --------------------------------------------------------
+    //  -- Accessors --------------------------------------------------------
 
-    /**
-     * The shutter friendly names this group drives.
-     *
-     * @returns {ReadonlyArray<string>} Frozen copy of the configured shutter list
-     */
+    /** The shutter friendly names this group drives.
+     * @returns {ReadonlyArray<string>} Frozen copy of the configured shutter list */
     getShutters() {
         return this.#shutters
     }
 
-    // -- Public API -------------------------------------------------------
+    //  -- Public API -------------------------------------------------------
 
-    /**
-     * Main execution logic -- maps a remote button action onto a travel command.
-     *
-     * `1_single` / `3_single` run the group fully open / closed (unchanged
-     * behavior); `1_double` / `3_double` step it by STEP_PERCENT. Any other
-     * action is logged and ignored.
-     *
-     * @param {{action?: string}|null} [triggerData] - Data from the event trigger
-     */
+    /** Main execution logic -- maps a remote button action onto a travel command.
+     * @param {{action?: string}|null} [triggerData] - Data from the event trigger */
     execute(triggerData = null) {
         const action = triggerData?.action || null
 
@@ -147,40 +91,25 @@ export default class RollerShuttersBase extends InteractionBase {
         }
     }
 
-    /**
-     * Audible acknowledgement that a command was dropped because the group is
-     * already parked at the requested end stop.
-     *
-     * Overridable so tests can capture the feedback without spawning the
-     * system `beep` binary.
-     */
+    /** Audible acknowledgement that a command was dropped because the group. */
     notifyAtLimit() {
         sound.doubleBeep({ duration: AT_LIMIT_BEEP_DURATION_MS })
     }
 
-    // -- Extension points -------------------------------------------------
+    //  -- Extension points -------------------------------------------------
 
-    /**
-     * Called after an OPEN travel was actually dispatched to the group.
-     * Subclasses hook side effects here; the default does nothing.
-     */
+    /** Called after an OPEN travel was actually dispatched to the group. */
     onOpened() {}
 
-    /**
-     * Called after a CLOSE travel was actually dispatched to the group.
-     * Subclasses hook side effects here; the default does nothing.
-     */
+    /** Called after a CLOSE travel was actually dispatched to the group. */
     onClosed() {}
 
-    // -- Private helpers --------------------------------------------------
+    //  -- Private helpers --------------------------------------------------
 
-    /**
-     * Run the group open/closed, or step it when `stepPercent` is non-zero.
-     *
+    /** Run the group open/closed, or step it when `stepPercent` is non-zero.
      * @param {'up'|'down'} direction - Travel direction; "up" opens, "down" closes
      * @param {number} stepPercent - Percent to move by, or 0 for a full travel
-     * @private
-     */
+     * @private */
     #travel(direction, stepPercent) {
         const label = stepPercent > 0
             ? `double ${direction} (+/-${stepPercent}%)`
@@ -190,7 +119,7 @@ export default class RollerShuttersBase extends InteractionBase {
 
         this.log(`${label} -- positions: ${readout}`)
 
-        // Gate: only a group that is provably parked at the end stop is refused.
+        //  Gate: only a group that is provably parked at the end stop is refused.
         if (this.#isAllAtEndStop(positions, direction)) {
             this.log(`${label} ignored: every shutter is already at the ${direction} end stop -- beeping`)
             this.notifyAtLimit()
@@ -206,9 +135,7 @@ export default class RollerShuttersBase extends InteractionBase {
             return
         }
 
-        // Side effects belong to a full travel only. A double press is a 20%
-        // nudge, not "someone is opening up / closing up for the night", so it
-        // must not trigger the open/close hooks (see bedroomRollersInteraction).
+        //  Side effects belong to a full travel only. A double press is a 20%
         if (stepPercent > 0) return
 
         if (direction === 'up') {
@@ -218,14 +145,9 @@ export default class RollerShuttersBase extends InteractionBase {
         }
     }
 
-    /**
-     * Read the cached position of every shutter in the group.
-     * Missing devices and non-numeric positions are reported as `null` so the
-     * caller can distinguish "no data" from "at 0".
-     *
+    /** Read the cached position of every shutter in the group.
      * @returns {Array<{name: string, device: Object|null, position: (number|null)}>} One entry per configured shutter
-     * @private
-     */
+     * @private */
     #readPositions() {
         return this.#shutters.map((name) => {
             const device = DeviceContainer.findByName(name)
@@ -241,16 +163,11 @@ export default class RollerShuttersBase extends InteractionBase {
         })
     }
 
-    /**
-     * Whether every shutter in the group sits at the requested end stop.
-     * Returns false when any position is unknown -- an unprovable no-op must
-     * never swallow a real user command.
-     *
+    /** Whether every shutter in the group sits at the requested end stop.
      * @param {Array<{position: (number|null)}>} positions - Entries from #readPositions
      * @param {'up'|'down'} direction - Requested travel direction
      * @returns {boolean} true when all shutters are at that end stop
-     * @private
-     */
+     * @private */
     #isAllAtEndStop(positions, direction) {
         return positions.every(({ position }) => {
             if (position === null) return false
@@ -260,14 +177,11 @@ export default class RollerShuttersBase extends InteractionBase {
         })
     }
 
-    /**
-     * Send a full-travel command to every shutter in the group.
-     *
+    /** Send a full-travel command to every shutter in the group.
      * @param {Array<{name: string, device: Object|null}>} positions - Entries from #readPositions
      * @param {string} command - Travel command (OPEN | CLOSE)
      * @returns {number} Number of shutters the command was handed to
-     * @private
-     */
+     * @private */
     #sendToAll(positions, command) {
         let sent = 0
 
@@ -278,16 +192,11 @@ export default class RollerShuttersBase extends InteractionBase {
         return sent
     }
 
-    /**
-     * Step every shutter by `delta` percent from its cached position, clamped
-     * to the 0-100 range. Shutters without a usable cached position are
-     * skipped rather than guessed at.
-     *
+    /** Step every shutter by `delta` percent from its cached position, clamped.
      * @param {Array<{name: string, device: Object|null, position: (number|null)}>} positions - Entries from #readPositions
      * @param {number} delta - Signed percent to move by (positive opens, negative closes)
      * @returns {number} Number of shutters the command was handed to
-     * @private
-     */
+     * @private */
     #step(positions, delta) {
         let sent = 0
 
@@ -306,15 +215,12 @@ export default class RollerShuttersBase extends InteractionBase {
         return sent
     }
 
-    /**
-     * Hand a command to one shutter, tagging it as human-driven.
-     *
+    /** Hand a command to one shutter, tagging it as human-driven.
      * @param {Object|null} device - Resolved device, or null when it could not be found
      * @param {string} name - Shutter friendly name (for logging)
      * @param {string|Object} command - Travel command or `{position}` payload
      * @returns {boolean} true when the command was dispatched
-     * @private
-     */
+     * @private */
     #sendTo(device, name, command) {
         if (!device) return false
 

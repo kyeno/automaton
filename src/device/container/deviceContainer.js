@@ -1,10 +1,8 @@
 /**
  * Device container (singleton).
  *  Device repository and autoloader -- Bridge-first discovery.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -21,40 +19,22 @@ import EventBus from '../../service/eventBus.js'
 import Autoloader from '../../lib/autoloader.js'
 import LoggerService from '../../service/loggerService.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Path to the device type implementations directory.
- * @type {string}
- */
+/** Path to the device type implementations directory.
+ * @type {string} */
 const TYPE_DIR = './src/device/type'
 
-/**
- * Path to the Zigbee device configuration file.
- * Maps friendly names to semantic type categories.
- * @type {string}
- */
+/** Path to the Zigbee device configuration file.
+ * @type {string} */
 const DEVICES_CONFIG_PATH = './etc/device/zigbee.yaml'
 
-/**
- * Timeout in milliseconds for waiting the device list from the Zigbee2MQTT bridge.
- * @type {number}
- */
+/** Timeout in milliseconds for waiting the device list from the Zigbee2MQTT bridge.
+ * @type {number} */
 const BRIDGE_DEVICE_LIST_TIMEOUT_MS = 10_000
 
-// ---------------------------------------------------------------------------
-// SDeviceContainer (singleton)
-// ---------------------------------------------------------------------------
+//  SDeviceContainer (singleton)
 
-/**
- * Device repository and autoloader.
- *
- * Discovers Zigbee devices through the Bridge, resolves their type class
- * (instance override -> config category -> DummyDevice fallback), instantiates
- * them, wires MQTT communication, and initializes cached state.
- */
+/** Device repository and autoloader. */
 class SDeviceContainer {
 
     instance
@@ -65,44 +45,36 @@ class SDeviceContainer {
     #deviceTypeMap = {}
     #deviceParams = {}
 
-    // -- Singleton ----------------------------------------------------
 
-    /**
-     * Synchronous singleton constructor.
-     *
-     * @return {this}
-     */
+    /** Synchronous singleton constructor.
+     * @return {this} */
     constructor() {
         if (!SDeviceContainer.instance) SDeviceContainer.instance = this
         return SDeviceContainer.instance
     }
 
-    // -- Lifecycle ----------------------------------------------------
+    //  -- Lifecycle ----------------------------------------------------
 
-    /**
-     * Initialize the container: load types, create Bridge, discover devices,
-     * instantiate them, wire MQTT, and initialize cached state.
-     *
-     * @async
-     */
+    /** Initialize the container: load types, create Bridge, discover devices,
+     * @async */
     async init() {
-        // 1. Load available device type implementations
+        //  1. Load available device type implementations.
         await this.#loadTypeModules()
 
-        // 2. Load device type mappings from config (our semantic categories)
+        //  2. Load device type mappings from config (our semantic categories)
         this.#loadDeviceTypeConfig()
 
-        // 3. Create Bridge first -- it is the source of truth for device list
+        //  3. Create Bridge first -- it is the source of truth for device list.
         const bridge = new Bridge('bridge', 'bridge', { friendly_name: 'bridge' })
         this.#devices['bridge'] = bridge
 
-        // Wire MQTT into Bridge so it can subscribe & receive messages
+        //  Wire MQTT into Bridge so it can subscribe & receive messages.
         bridge.setMqttService(MqttService)
 
-        // 4. Request device list from zigbee2mqtt bridge
+        //  4. Request device list from zigbee2mqtt bridge.
         bridge.requestDeviceList()
 
-        // 5. Wait for bridge to receive and parse the device list
+        //  5. Wait for bridge to receive and parse the device list.
         LoggerService.info('Waiting for device list from Zigbee2MQTT bridge...', 'DeviceContainer')
         let deviceList
         try {
@@ -113,44 +85,39 @@ class SDeviceContainer {
             throw err
         }
 
-        // Filter out the bridge itself (ieee_address starts with "0x00124b..." or type === "Coordinator").
-        // The coordinator/bridge entry should not be instantiated as a regular device.
+        //  Filter out the bridge itself (ieee_address starts with "0x00124b..." or type === "Coordinator").
         const z2mDevices = deviceList.filter(d => d.type !== 'Coordinator')
 
-        // 6. Instantiate devices from Bridge's response
+        //  6. Instantiate devices from Bridge's response.
         this.#devices = { ...this.#instantiateFromBridge(z2mDevices) }
-        // Re-add bridge back (it was removed during instantiation since it's not in z2mDevices,
-        // but we keep it explicitly).
+        // Re-add bridge back.
         this.#devices['bridge'] = bridge
 
         LoggerService.info(`${Object.keys(this.#devices).length} devices instantiated`, 'DeviceContainer')
 
-        // 7. Wire up MQTT communication for all devices
+        //  7. Wire up MQTT communication for all devices.
         this.#setupDeviceCommunication()
 
-        // 8. Initialize each device (load state from Redis, etc.)
+        //  8. Initialize each device (load state from Redis, etc.)
         await this.#initDevices()
 
-        // Notify listeners that all devices are ready (used by DeviceWindow to subscribe)
+        //  Notify listeners that all devices are ready (used by DeviceWindow to subscribe)
         EventBus.emit('devices:ready')
     }
 
-    // -- Type resolution ----------------------------------------------
+    //  -- Type resolution ----------------------------------------------
 
-    /**
-     * Pre-load all device type modules from the type directory.
-     *
+    /** Pre-load all device type modules from the type directory.
      * @async
-     * @private
-     */
+     * @private */
     async #loadTypeModules() {
         try {
             const autoloader = new Autoloader()
             const typeModules = await autoloader.preloadPath(TYPE_DIR)
 
-            // Store type modules by category key (mechanism, sensor, remote, etc.)
+            //  Store type modules by category key (mechanism, sensor, remote, etc.)
             this.#typeModulesByCategory = typeModules
-            // Keep merged map for backward compatibility
+            //  Keep merged map for backward compatibility.
             this.#typeModules = { ...typeModules }
             LoggerService.info(`${Object.keys(typeModules).length} type(s) loaded`, 'DeviceContainer')
         } catch (error) {
@@ -158,12 +125,8 @@ class SDeviceContainer {
         }
     }
 
-    /**
-     * Load device type mappings from etc/device/zigbee.yaml.
-     * Builds an inverted map: friendly_name -> type category (mechanism, sensor, remote, etc.)
-     *
-     * @private
-     */
+    /** Load device type mappings from etc/device/zigbee.yaml.
+     * @private */
     #loadDeviceTypeConfig() {
         if (!fs.existsSync(DEVICES_CONFIG_PATH)) {
             LoggerService.warn(`Device config not found: ${DEVICES_CONFIG_PATH}`, 'DeviceContainer')
@@ -180,14 +143,7 @@ class SDeviceContainer {
                 return
             }
 
-            // Build inverted map: friendly_name -> effective type category.
-            // Entries may be plain strings ("Kitchen Socket") or objects carrying an
-            // optional subtype plus per-device parameters passed through to the
-            // device constructor's data bag (readable via getData()):
-            //   - name: "Salon Ambient"
-            //     type: dualDimmer          # resolved against loaded type modules
-            //     channels: [l1, l2]        # channel topology for multi-channel devices
-            //     brightness_range: {...}   # optional per-channel dimming bounds override
+            //  Build inverted map: friendly_name -> effective type category.
             let mappedCount = 0
             for (const [typeCategory, entries] of Object.entries(config)) {
                 if (!Array.isArray(entries)) continue
@@ -219,7 +175,7 @@ class SDeviceContainer {
 
                     this.#deviceTypeMap[friendlyName] = effectiveCategory
                     if (isObjectEntry) {
-                        // Keep the whole object so subclasses can read channels/type/etc. via getData().
+                        // Keep the whole object so subclasses can read channels/type/etc.
                         this.#deviceParams[friendlyName] = entry
                     }
                     mappedCount++
@@ -235,18 +191,12 @@ class SDeviceContainer {
         }
     }
 
-    /**
-     * Resolve the appropriate class for a device by its friendly name.
-     * Resolution order:
-     *   1. Type category from devices/zigbee.yaml config (mechanism, sensor, remote, etc.)
-     *   2. DummyDevice (fallback with warning)
-     *
+    /** Resolve the appropriate class for a device by its friendly name.
      * @param {string} name - Device friendly name
      * @returns {Class} Device class
-     * @private
-     */
+     * @private */
     #resolveDeviceType(name) {
-        // Try type category mapping from devices.yml config
+        //  Try type category mapping from devices.yml config.
         const typeCategory = this.#deviceTypeMap[name]
 
         if (typeCategory) {
@@ -258,7 +208,7 @@ class SDeviceContainer {
             }
         }
 
-        // Fallback to DummyDevice with warning
+        //  Fallback to DummyDevice with warning.
         const slugifiedName = slugify(name)
         LoggerService.warn(
             `No type found for "${name}" (slug: "${slugifiedName}") - using DummyDevice`,
@@ -268,16 +218,12 @@ class SDeviceContainer {
         return DummyDevice
     }
 
-    // -- Device instantiation -----------------------------------------
+    //  -- Device instantiation -----------------------------------------
 
-    /**
-     * Create Device instances from Bridge's device list response.
-     * Each entry has: ieee_address, friendly_name, type, supported, etc.
-     *
+    /** Create Device instances from Bridge's device list response.
      * @param {Array} deviceList - Array of device objects from zigbee2mqtt bridge
      * @returns {Object} Map of device name -> Device instance
-     * @private
-     */
+     * @private */
     #instantiateFromBridge(deviceList) {
         const devices = {}
 
@@ -285,15 +231,14 @@ class SDeviceContainer {
             const name = definition.friendly_name
             const deviceId = definition.ieee_address
 
-            // Skip unsupported devices
+            //  Skip unsupported devices.
             if (!definition.supported) {
                 LoggerService.warn(`Skipping unsupported device: ${name} (${deviceId})`, 'DeviceContainer')
                 continue
             }
 
             const DeviceClass = this.#resolveDeviceType(name)
-            // Merge declarative per-device parameters (channels, brightness_range, ...)
-            // on top of the zigbee2mqtt definition so they are readable via getData().
+            //  Merge declarative per-device parameters (channels, brightness_range, ...)
             const deviceData = { ...definition, id: deviceId, ...(this.#deviceParams[name] ?? {}) }
 
             devices[name] = new DeviceClass(name, deviceId, deviceData)
@@ -302,39 +247,30 @@ class SDeviceContainer {
         return devices
     }
 
-    // -- Communication setup ------------------------------------------
+    //  -- Communication setup ------------------------------------------
 
-    /**
-     * Wire MQTT service into every device, then register reconnect handler.
-     *
-     * @private
-     */
+    /** Wire MQTT service into every device, then register reconnect handler.
+     * @private */
     #setupDeviceCommunication() {
         for (const device of Object.values(this.#devices)) {
             device.setMqttService(MqttService)
         }
-        // Register reconnect callback so devices re-subscribe idempotently after broker reconnects.
+        //  Register reconnect callback so devices re-subscribe idempotently after broker reconnects.
         MqttService.onReconnect(() => this.reconnectAll())
     }
 
-    /**
-     * Wire MQTT into a single device (for dynamic runtime addition).
-     *
+    /** Wire MQTT into a single device (for dynamic runtime addition).
      * @param {Device} device - Device instance to wire
-     * @private
-     */
+     * @private */
     #wireDeviceMqtt(device) {
         device.setMqttService(MqttService)
     }
 
-    // -- Device initialization ----------------------------------------
+    //  -- Device initialization ----------------------------------------
 
-    /**
-     * Call async init on each device so they can load cached state from Redis.
-     *
+    /** Call async init on each device so they can load cached state from Redis.
      * @async
-     * @private
-     */
+     * @private */
     async #initDevices() {
         const inits = Object.values(this.#devices).map(async (device) => {
             try {
@@ -346,36 +282,27 @@ class SDeviceContainer {
         await Promise.all(inits)
     }
 
-    // -- Public API ---------------------------------------------------
+    //  -- Public API ---------------------------------------------------
 
-    /**
-     * Find a device by its friendly name.
-     *
+    /** Find a device by its friendly name.
      * @param {string} name - Device friendly name
-     * @returns {Device|null}
-     */
+     * @returns {Device|null} */
     findByName(name) {
         return this.#devices[name] ?? null
     }
 
-    /**
-     * Find a device by its internal ID.
-     *
+    /** Find a device by its internal ID.
      * @param {string} id - Device IEEE address or internal identifier
-     * @returns {Device|null}
-     */
+     * @returns {Device|null} */
     findByID(id) {
         return Object.values(this.#devices).find(d => d.getId() === id) ?? null
     }
 
-    /**
-     * Trigger an event on a device.
-     *
+    /** Trigger an event on a device.
      * @param {string} deviceName - Device friendly name
      * @param {string} eventType - Event type to emit
      * @param {Object} [data={}] - Payload to attach to the event
-     * @returns {boolean} True if device was found and event emitted
-     */
+     * @returns {boolean} True if device was found and event emitted */
     triggerEvent(deviceName, eventType, data = {}) {
         const device = this.findByName(deviceName)
         if (device) {
@@ -385,15 +312,12 @@ class SDeviceContainer {
         return false
     }
 
-    /**
-     * Send a command from one device to another.
-     *
+    /** Send a command from one device to another.
      * @param {string} fromDeviceName - Source device friendly name
      * @param {string} toDeviceName - Target device friendly name
      * @param {string} command - Command identifier
      * @param {Object} [data={}] - Command payload
-     * @returns {boolean} True if both devices exist and command was sent
-     */
+     * @returns {boolean} True if both devices exist and command was sent */
     sendCommand(fromDeviceName, toDeviceName, command, data = {}) {
         const fromDevice = this.findByName(fromDeviceName)
         const toDevice = this.findByName(toDeviceName)
@@ -405,13 +329,10 @@ class SDeviceContainer {
         return false
     }
 
-    /**
-     * Get all registered devices.
-     *
+    /** Get all registered devices.
      * @param {{includeBridge?: boolean}} [options={}] - Filtering options.
      * @param {boolean} [options.includeBridge=true] - When false, omit the Zigbee2MQTT bridge/coordinator entry.
-     * @returns {Object} Map of device name -> Device instance
-     */
+     * @returns {Object} Map of device name -> Device instance */
     getAll({ includeBridge = true } = {}) {
         if (includeBridge) return this.#devices
         const result = {}
@@ -422,62 +343,40 @@ class SDeviceContainer {
         return result
     }
 
-    /**
-     * Get all registered device names as a flat array -- an additive read-only view used by
-     * tab-completion and listing helpers. Delegates to getAll() so bridge filtering behaves
-     * identically in both places.
+    /** Get all registered device names as a flat array.
      * @param {{includeBridge?: boolean}} [options={}] - Same filtering options as getAll()
-     * @returns {string[]} Array of device names
-     */
+     * @returns {string[]} Array of device names */
     getNames({ includeBridge = true } = {}) {
         return Object.keys(this.getAll({ includeBridge }))
     }
 
-    /**
-     * Get every "known" device friendly name declared in etc/device/zigbee.yaml,
-     * regardless of whether it is currently instantiated.
-     *
-     * This is the source-of-truth set for distinguishing a device that has simply
-     * dropped off the Zigbee network (configured but not present -> offline) from a
-     * name we have never seen at all (unknown). Callers such as the AI tool layer use
-     * this to report "that light is offline" instead of a bare "not found".
-     *
-     * Note: reflects only names declared in config; a dynamically-paired device that was
-     * never added to zigbee.yaml is not considered "known" here.
-     *
-     * @returns {string[]} Array of configured device friendly names.
-     */
+    /** Get every "known" device friendly name declared in etc/device/zigbee.yaml,
+     * @returns {string[]} Array of configured device friendly names. */
     getKnownDeviceNames() {
         return Object.keys(this.#deviceTypeMap)
     }
 
-    // -- Dynamic device management ------------------------------------
+    //  -- Dynamic device management ------------------------------------
 
-    /**
-     * Add a new device at runtime (triggered by Bridge on device_announce).
-     * Resolves type, creates instance, wires MQTT, and initializes it.
-     *
+    /** Add a new device at runtime (triggered by Bridge on device_announce).
      * @param {string} friendlyName - Device friendly name
      * @param {string} ieeeAddr - IEEE address (device ID)
      * @param {Object} [data={}] - Additional device data
-     * @returns {Device|null} The created device or null if already exists
-     */
+     * @returns {Device|null} The created device or null if already exists */
     addDevice(friendlyName, ieeeAddr, data = {}) {
-        // Already registered? Skip.
         if (this.#devices[friendlyName]) {
             LoggerService.info(`Device "${friendlyName}" already registered, skipping`, 'DeviceContainer')
             return null
         }
 
         const DeviceClass = this.#resolveDeviceType(friendlyName)
-        // Merge declarative per-device parameters (channels, brightness_range, ...) so
-        // dynamically announced devices behave identically to boot-time ones.
+        // Merge declarative per-device parameters.
         const deviceData = { ...data, id: ieeeAddr, ieee_address: ieeeAddr, friendly_name: friendlyName, ...(this.#deviceParams[friendlyName] ?? {}) }
         const device = new DeviceClass(friendlyName, ieeeAddr, deviceData)
 
         this.#wireDeviceMqtt(device)
 
-        // Init asynchronously (don't await -- fire-and-forget for dynamic adds).
+        //  Init asynchronously (don't await -- fire-and-forget for dynamic adds).
         device.init().catch(err => {
             LoggerService.error(`Failed to init dynamically added device "${friendlyName}": ${err.message}`, 'DeviceContainer')
         })
@@ -485,18 +384,14 @@ class SDeviceContainer {
         this.#devices[friendlyName] = device
         LoggerService.info(`Dynamically added device: ${friendlyName} (${ieeeAddr})`, 'DeviceContainer')
 
-        // Notify listeners so UI can re-subscribe to the new device's channels
+        //  Notify listeners so UI can re-subscribe to the new device's channels.
         EventBus.emit('devices:ready', friendlyName)
         return device
     }
 
-    /**
-     * Remove a device at runtime (triggered by Bridge on device_leave).
-     * Cleans up subscriptions and removes from registry.
-     *
+    /** Remove a device at runtime (triggered by Bridge on device_leave).
      * @param {string} friendlyName - Device friendly name
-     * @returns {boolean} True if device was removed
-     */
+     * @returns {boolean} True if device was removed */
     removeDevice(friendlyName) {
         const device = this.#devices[friendlyName]
         if (!device) {
@@ -513,18 +408,14 @@ class SDeviceContainer {
         delete this.#devices[friendlyName]
         LoggerService.info(`Removed device: ${friendlyName}`, 'DeviceContainer')
 
-        // Notify listeners so monitors/UI can react to the departure (e.g., spoken
-        // offline warnings) -- mirrors the devices:ready event fired on dynamic adds.
+        // Notify listeners so monitors/UI can react to the departure.
         EventBus.emit('devices:removed', friendlyName)
         return true
     }
 
-    // -- Lifecycle helpers --------------------------------------------
+    //  -- Lifecycle helpers --------------------------------------------
 
-    /**
-     * Clean up all device MQTT subscriptions during graceful shutdown.
-     * Called from main.js before MqttService.disconnect().
-     */
+    /** Clean up all device MQTT subscriptions during graceful shutdown. */
     cleanupDevices() {
         LoggerService.info('Cleaning up device subscriptions...', 'DeviceContainer')
         const cleanups = Object.values(this.#devices).map((device) => {
@@ -537,9 +428,7 @@ class SDeviceContainer {
         return Promise.all(cleanups)
     }
 
-    /**
-     * Trigger idempotent re-subscription on all devices after MQTT reconnect.
-     */
+    /** Trigger idempotent re-subscription on all devices after MQTT reconnect. */
     reconnectAll() {
         for (const device of Object.values(this.#devices)) {
             try {
@@ -552,7 +441,7 @@ class SDeviceContainer {
     }
 }
 
-// Singletonize and export to Node.js.
+//  Singletonize and export to Node.js.
 const DeviceContainer = new SDeviceContainer()
 Object.freeze(DeviceContainer)
 export default DeviceContainer

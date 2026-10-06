@@ -1,25 +1,9 @@
 /**
  * Solar event helpers backed by the sunrise-sunset-js library.
- *
- * Wraps the NREL-based solar-position math so rule automations can reference real
- * dawn/dusk instants ("sundawn"/"sundusk") without each one re-implementing the
- * astronomy. Dawn/dusk are the civil-twilight boundaries (sun 6 degrees below the horizon
- * -- the point at which the outside is bright enough to work by), falling back to the
- * geometric sunrise/sunset on the polar days where civil twilight is undefined; daylight
- * gating wants civil twilight, not geometric sunrise, which runs up to ~25 minutes later
- * at mid-northern latitudes and far longer through the deep-twilight winter months.
- * The raw geometric sunrise/sunset are exposed separately by getSunriseSunset() for
- * displays and alarms that want the actual events, not the twilight boundaries.
- * Observer coordinates are read from the main configuration's
- * `locale.geo_latitude` / `locale.geo_longitude`; results are memoized per local calendar day +
- * coordinate pair so repeated ticks across many automations stay cheap. The module
- * degrades gracefully -- missing/invalid coordinates or polar no-rise/no-set days
- * yield nulls (never throw) so callers fail closed rather than crash a tick.
- *
+ * Wraps the NREL-based solar-position math so rule automations can reference real.
  * @module lib/sun
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -32,25 +16,15 @@ import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
 import temporal from './date.js'
 
-/**
- * Solar-event provider singleton.
- *
- * Reads observer coordinates lazily from the main config and resolves today's
- * dawn/dusk instants through sunrise-sunset-js, caching per day+location.
- */
+/** Solar-event provider singleton. */
 class SSolar {
-    /**
-     * Memoization slot for the most recent computation: `{key, sundawn, sundusk, sunrise, sunset}`.
-     * Keyed by local calendar day + coordinate pair; replaced whenever either changes.
-     * @type {{key: string, sundawn: Date|null, sundusk: Date|null, sunrise: Date|null, sunset: Date|null}|null}
-     */
+    /** Memoization slot for the most recent computation: `{key, sundawn, sundusk, sunrise, sunset}`.
+     * @type {{key: string, sundawn: Date|null, sundusk: Date|null, sunrise: Date|null, sunset: Date|null}|null} */
     #cache = null
 
-    /**
-     * Read and sanity-check the configured observer coordinates.
+    /** Read and sanity-check the configured observer coordinates.
      * @private
-     * @returns {{latitude: number, longitude: number}|null} Coordinates, or null when absent/invalid/out of range.
-     */
+     * @returns {{latitude: number, longitude: number}|null} Coordinates, or null when absent/invalid/out of range. */
     #getCoordinates() {
         const latitude = Number(ConfigService.get('locale.geo_latitude'))
         const longitude = Number(ConfigService.get('locale.geo_longitude'))
@@ -60,53 +34,26 @@ class SSolar {
         return { latitude, longitude }
     }
 
-    /**
-     * Resolve the dawn/dusk instants for a moment's calendar day at the configured location.
-     *
-     * Dawn/dusk are civil-twilight boundaries (start/end of civil twilight), each falling
-     * back to the geometric sunrise/sunset when civil twilight is undefined that day.
-     * Returns absolute-instant `Date` objects (compare via `.getTime()` against `new Date()`);
-     * each is null when the sun does not rise/set that day (polar conditions). Memoized per
-     * local-day + coordinate pair. Never throws -- unconfigured/invalid geo yields both-null.
-     *
+    /** Resolve the dawn/dusk instants for a moment's calendar day at the configured location.
      * @param {Date} [date=new Date()] - Moment whose calendar day to evaluate.
-     * @returns {{sundawn: Date|null, sundusk: Date|null}} Dawn and dusk instants (or nulls).
-     */
+     * @returns {{sundawn: Date|null, sundusk: Date|null}} Dawn and dusk instants (or nulls). */
     getSunTimes(date = new Date()) {
         const entry = this.#resolveDay(date)
         return { sundawn: entry.sundawn, sundusk: entry.sundusk }
     }
 
-    /**
-     * Resolve the raw sunrise/sunset instants for a moment's calendar day at the configured location.
-     *
-     * The geometric upper-edge sunrise and sunset -- what a sunrise alarm or a "sun is up"
-     * display wants. Dawn/dusk (see {@link getSunTimes}) are the civil-twilight boundaries
-     * used for daylight gating and run up to ~25 minutes earlier than sunrise at
-     * mid-northern latitudes, so the two must not be confused. Each value is null when the
-     * sun does not rise/set that day (polar conditions). Shares the per-local-day +
-     * coordinate-pair memoization with {@link getSunTimes}, so asking for both costs one
-     * computation. Never throws -- unconfigured/invalid geo yields both-null.
-     *
+    /** Resolve the raw sunrise/sunset instants for a moment's calendar day at the configured location.
      * @param {Date} [date=new Date()] - Moment whose calendar day to evaluate.
-     * @returns {{sunrise: Date|null, sunset: Date|null}} Sunrise and sunset instants (or nulls).
-     */
+     * @returns {{sunrise: Date|null, sunset: Date|null}} Sunrise and sunset instants (or nulls). */
     getSunriseSunset(date = new Date()) {
         const entry = this.#resolveDay(date)
         return { sunrise: entry.sunrise, sunset: entry.sunset }
     }
 
-    /**
-     * Compute (or return the memoized) solar instants for one calendar day.
-     *
-     * Single computation shared by {@link getSunTimes} and {@link getSunriseSunset}: civil
-     * twilight boundaries with a fallback to the geometric events, plus the raw geometric
-     * events themselves.
-     *
+    /** Compute (or return the memoized) solar instants for one calendar day.
      * @private
      * @param {Date} date - Moment whose calendar day to evaluate.
-     * @returns {{sundawn: Date|null, sundusk: Date|null, sunrise: Date|null, sunset: Date|null}} Solar instants (nulls where undefined).
-     */
+     * @returns {{sundawn: Date|null, sundusk: Date|null, sunrise: Date|null, sunset: Date|null}} Solar instants (nulls where undefined). */
     #resolveDay(date) {
         const coords = this.#getCoordinates()
         if (coords === null) return { sundawn: null, sundusk: null, sunrise: null, sunset: null }
@@ -133,11 +80,7 @@ class SSolar {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Export frozen singleton
-// ---------------------------------------------------------------------------
+//  Export frozen singleton.
 
-/**
- * Frozen singleton providing solar-event lookups for rule automations.
- */
+/** Frozen singleton providing solar-event lookups for rule automations. */
 export default Object.freeze(new SSolar())

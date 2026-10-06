@@ -1,13 +1,8 @@
 /**
  * OpenAI-compatible API provider.
- *
- * Thin HTTP wrapper around any OpenAI-compatible chat completions endpoint
- * (OpenAI, Ollama, llama.cpp, LM Studio, etc.). Supports tool calling and
- * streaming responses.
- *
+ * Thin HTTP wrapper around any OpenAI-compatible chat completions endpoint.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -17,46 +12,26 @@ import ConfigService from '../../service/configService.js'
 import LoggerService from '../../service/loggerService.js'
 import temporal from '../../lib/date.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Default number of retries for transient HTTP errors.
- * @type {number}
- */
+/** Default number of retries for transient HTTP errors.
+ * @type {number} */
 const DEFAULT_MAX_RETRIES = 3
 
-/**
- * Base retry delay in milliseconds (exponential backoff).
- * @type {number}
- */
+/** Base retry delay in milliseconds (exponential backoff).
+ * @type {number} */
 const DEFAULT_RETRY_DELAY_MS = 1000
 
-/**
- * Maximum delay between retries.
- * @type {number}
- */
+/** Maximum delay between retries.
+ * @type {number} */
 const MAX_RETRY_DELAY_MS = 10_000
 
-/**
- * Default HTTP fetch timeout in milliseconds.
- * Local LLM inference can take significant time depending on context size,
- * model complexity, and hardware -- successful completions against small local
- * models have been observed above 100 s, so a tighter budget fails under load.
- * Override per installation with the main-config key `fetch_timeout_ms`
- * (human-readable duration like "5m" or plain ms).
- * @type {number}
- */
+/** Default HTTP fetch timeout in milliseconds.
+ * @type {number} */
 const DEFAULT_FETCH_TIMEOUT_MS = 300_000
 
-// ---------------------------------------------------------------------------
-// OpenAiProvider
-// ---------------------------------------------------------------------------
+//  OpenAiProvider.
 
-/**
- * Client for OpenAI-compatible chat completion APIs with tool calling support.
- */
+/** Client for OpenAI-compatible chat completion APIs with tool calling support. */
 class OpenAiProvider {
 
     /** @type {string} */ #apiUrl
@@ -69,11 +44,9 @@ class OpenAiProvider {
     /** @type {boolean} */ #initialized = false
     /** @type {number} */ #fetchTimeoutMs
 
-    // -- Constructor --------------------------------------------------------
+    //  -- Constructor --------------------------------------------------------
 
-    /**
-     * Create a new provider instance.
-     *
+    /** Create a new provider instance.
      * @param {Object} [config={}] - Provider configuration
      * @param {string} [config.apiUrl] - Base URL for the API (e.g. http://host:port/v1)
      * @param {string} [config.model] - Model name to use
@@ -82,14 +55,13 @@ class OpenAiProvider {
      * @param {number} [config.temperature=0.1] - Sampling temperature
      * @param {number} [config.maxRetries=3] - Retry attempts on failure
      * @param {number} [config.retryDelayMs=1000] - Initial retry delay
-     * @param {number} [config.fetchTimeoutMs] - Per-request HTTP timeout in ms (default from main config)
-     */
+     * @param {number} [config.fetchTimeoutMs] - Per-request HTTP timeout in ms (default from main config) */
     constructor(config = {}) {
-        // API connection secrets remain in .env
+        //  API connection secrets remain in .env.
         this.#apiUrl = config.apiUrl || process.env['AI_API_URL'] || ''
         this.#apiKey = config.apiKey || process.env['AI_API_KEY'] || null
 
-        // Provider settings loaded from ConfigService (config param overrides everything)
+        //  Provider settings loaded from ConfigService (config param overrides everything)
         const model       = config.model      ?? ConfigService.get('ai.model')
         const maxTokens   = config.maxTokens  ?? ConfigService.get('ai.max_tokens', 2048)
         const temperature = config.temperature ?? ConfigService.get('ai.temperature', 0.1)
@@ -103,12 +75,10 @@ class OpenAiProvider {
         this.#fetchTimeoutMs = config.fetchTimeoutMs ?? this.#resolveFetchTimeoutMs()
     }
 
-    // -- Lifecycle ----------------------------------------------------------
+    //  -- Lifecycle ----------------------------------------------------------
 
-    /**
-     * Validate configuration and mark as initialized.
-     * @throws {Error} If required configuration is missing
-     */
+    /** Validate configuration and mark as initialized.
+     * @throws {Error} If required configuration is missing */
     init() {
         if (!this.#apiUrl) {
             throw new Error('AI_API_URL is required (e.g. http://host:port/v1)')
@@ -124,33 +94,25 @@ class OpenAiProvider {
         )
     }
 
-    /**
-     * Check if the provider has been initialized.
-     * @returns {boolean}
-     */
+    /** Check if the provider has been initialized.
+     * @returns {boolean} */
     isInitialized() {
         return this.#initialized
     }
 
-    /**
-     * Effective per-request HTTP timeout in milliseconds (config override or default).
-     * Exposed for diagnostics and unit tests of the resolution logic.
-     * @returns {number} Timeout in whole ms (> 0)
-     */
+    /** Effective per-request HTTP timeout in milliseconds (config override or default).
+     * @returns {number} Timeout in whole ms (> 0) */
     getFetchTimeoutMs() {
         return this.#fetchTimeoutMs
     }
 
-    // -- Public API ---------------------------------------------------------
+    //  -- Public API ---------------------------------------------------------
 
-    /**
-     * Send a chat completion request with optional tool definitions.
-     *
+    /** Send a chat completion request with optional tool definitions.
      * @param {Array<Object>} messages - Chat messages array (role + content, or role + tool_calls)
      * @param {Array<Object>} [tools] - Optional OpenAI function-format tool definitions
      * @returns {Promise<Object>} The assistant's response message
-     * @throws {Error} On persistent API failures
-     */
+     * @throws {Error} On persistent API failures */
     async chat(messages, tools) {
         this.#assertInitialized()
 
@@ -160,7 +122,7 @@ class OpenAiProvider {
             temperature: this.#temperature
         }
 
-        // max_tokens: -1 means unlimited -- omit from request to let provider use its default
+        //  max_tokens: -1 means unlimited -- omit from request to let provider use its default.
         if (this.#maxTokens !== -1) {
             body.max_tokens = this.#maxTokens
         }
@@ -183,7 +145,7 @@ class OpenAiProvider {
             } catch (error) {
                 lastError = error
 
-                // Do not retry on 4xx errors (bad request, auth issues, etc.)
+                //  Do not retry on 4xx errors (bad request, auth issues, etc.)
                 if (error.status >= 400 && error.status < 500) {
                     LoggerService.error(
                         `API returned ${error.status}: ${error.message} (not retried)`,
@@ -213,39 +175,28 @@ class OpenAiProvider {
         throw new Error(`All ${this.#maxRetries} attempts failed. Last error: ${lastError.message}`)
     }
 
-    /**
-     * Send a simple chat request without tools and return only the text content.
-     * Convenience wrapper around chat().
-     *
+    /** Send a simple chat request without tools and return only the text content.
      * @param {Array<Object>} messages - Chat messages array
-     * @returns {Promise<string>} The assistant's text response
-     */
+     * @returns {Promise<string>} The assistant's text response */
     async chatText(messages) {
         const response = await this.chat(messages)
         return response.content || ''
     }
 
-    // -- Private helpers ----------------------------------------------------
+    //  -- Private helpers ----------------------------------------------------
 
-    /**
-     * Assert that init() was called.
+    /** Assert that init() was called.
      * @throws {Error} 'OpenAiProvider not initialized -- call init() first'
-     * @private
-     */
+     * @private */
     #assertInitialized() {
         if (!this.#initialized) {
             throw new Error('OpenAiProvider not initialized -- call init() first')
         }
     }
 
-    /**
-     * Resolve the per-request HTTP timeout from main config (`fetch_timeout_ms`).
-     * Accepts plain milliseconds or a human-readable duration ("5m", "1h") via
-     * temporal.parseDurationMs(); missing values fall back silently, present-but-invalid
-     * ones warn first (fail-open) so a typo never takes the assistant down.
+    /** Resolve the per-request HTTP timeout from main config (`fetch_timeout_ms`).
      * @returns {number} Timeout in whole ms (> 0)
-     * @private
-     */
+     * @private */
     #resolveFetchTimeoutMs() {
         let raw
         try {
@@ -265,20 +216,11 @@ class OpenAiProvider {
         return DEFAULT_FETCH_TIMEOUT_MS
     }
 
-    /**
-     * POST a JSON payload to an API endpoint and return the parsed response.
-     * Handles authentication headers and extracts error details from non-OK responses.
-     *
-     * The AbortController and its deadline live for exactly one call: concurrent
-     * requests each own their timer, so overlapping turns can no longer clear or
-     * abort each other's in-flight request (the old shared-instance state let a late
-     * first request kill an already-running second one).
-     *
+    /** POST a JSON payload to an API endpoint and return the parsed response.
      * @param {string} path - Endpoint path (e.g. '/chat/completions')
      * @param {Object} body - Request body to serialize as JSON
      * @returns {Promise<Object>} Parsed JSON response
-     * @private
-     */
+     * @private */
     async #post(path, body) {
         const url = `${this.#apiUrl.replace(/\/+$/, '')}${path}`
 
@@ -303,8 +245,7 @@ class OpenAiProvider {
 
             return await this.#handleResponse(res)
         } catch (error) {
-            // Mapped into the 4xx band on purpose: chat() treats it as final, so a slow
-            // but alive backend does not trigger a retry storm of identical requests.
+            //  Mapped into the 4xx band on purpose: chat() treats it as final, so a slow.
             if (error.name === 'AbortError') {
                 const err = new Error(`Fetch timed out after ${this.#fetchTimeoutMs}ms`)
                 err.status = 408
@@ -316,14 +257,11 @@ class OpenAiProvider {
         }
     }
 
-    /**
-     * Handle the HTTP response: parse errors on non-OK status, return parsed JSON on success.
-     *
+    /** Handle the HTTP response: parse errors on non-OK status, return parsed JSON on success.
      * @param {Response} res - The fetch Response object
      * @returns {Promise<Object>} Parsed JSON response body
      * @throws {Error} On non-OK HTTP status
-     * @private
-     */
+     * @private */
     async #handleResponse(res) {
         if (!res.ok) {
             let errorMessage = `HTTP ${res.status}: ${res.statusText}`
@@ -334,7 +272,7 @@ class OpenAiProvider {
                 try {
                     errorMessage = await res.text()
                 } catch {
-                    // Use default message
+                    //  Use default message.
                 }
             }
             const err = new Error(errorMessage)
@@ -345,15 +283,11 @@ class OpenAiProvider {
         return await res.json()
     }
 
-    /**
-     * Parse the API response and extract the assistant message.
-     * Extracts text content and any tool_call requests from the first choice.
-     *
+    /** Parse the API response and extract the assistant message.
      * @param {Object} data - Raw JSON response from the API
      * @returns {Object} Message object with role, content, and optional tool_calls
      * @throws {Error} If no choices present in the response
-     * @private
-     */
+     * @private */
     #parseResponse(data) {
         const choice = data.choices?.[0]
         if (!choice) {
@@ -384,14 +318,10 @@ class OpenAiProvider {
         return result
     }
 
-    /**
-     * Delay execution for a given number of milliseconds.
-     * Used for exponential-backoff retries between failed API calls.
-     *
+    /** Delay execution for a given number of milliseconds.
      * @param {number} ms - Milliseconds to sleep
      * @returns {Promise<void>}
-     * @private
-     */
+     * @private */
     #sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms))
     }

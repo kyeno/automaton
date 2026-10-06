@@ -1,13 +1,8 @@
 /**
  * Temperature Slot Widget.
- *
- * Reads the current temperature value from a Zigbee sensor device's cache
- * and renders it according to the configured format string. Also manages
- * event-driven subscriptions so the status bar re-renders when device data changes.
- *
+ * Reads the current temperature value from a Zigbee sensor device's cache.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -20,14 +15,10 @@ import { round } from '../../../lib/math.js'
 
 const mgr = createSubscriptionManager()
 
-// -- Render -----------------------------------------------------------------
 
-/**
- * Render a temperature reading for the status bar.
- * Uses synchronous last-state access via the device instance.
+/** Render a temperature reading for the status bar.
  * @param {object} config -- { device: string, format: string, label?: string }
- * @returns {{label: string, value: string}} Object with separate label and value parts for independent styling
- */
+ * @returns {{label: string, value: string}} Object with separate label and value parts for independent styling */
 export default function renderTemp(config = {}) {
     const { device, format } = config
     if (!device) return ''
@@ -35,13 +26,13 @@ export default function renderTemp(config = {}) {
     const dev = DeviceContainer.findByName(device)
     if (!dev) return ''
 
-    // getStateLast() returns the most recent MQTT payload synchronously.
+    //  getStateLast() returns the most recent MQTT payload synchronously.
     const cached = dev.getStateLast()
     if (!cached || cached.temperature === undefined || cached.temperature == null) return ''
 
     const value = cached.temperature
 
-    // Smart formatting: round to 1 decimal; drop trailing ".0" for whole values
+    //  Smart formatting: round to 1 decimal; drop trailing ".0" for whole values.
     let displayValue
     if (typeof value === 'number') {
         const rounded = round(value, 1)
@@ -50,7 +41,7 @@ export default function renderTemp(config = {}) {
         displayValue = String(value)
     }
 
-    // Return structured object so statusBar can style label vs value independently
+    //  Return structured object so statusBar can style label vs value independently.
     const formattedValue = format ? format.replace('{value}', displayValue) : displayValue
     return {
         label: config.label ? `${config.label}: ` : '',
@@ -58,15 +49,11 @@ export default function renderTemp(config = {}) {
     }
 }
 
-// -- Subscriptions ----------------------------------------------------------
+//  -- Subscriptions ----------------------------------------------------------
 
-/**
- * Subscribe to Zigbee device events and devices:ready for all configured temp widgets.
- * Call from StatusBar.init() with the list of temp widget configs and a refresh callback.
- *
+/** Subscribe to Zigbee device events and devices:ready for all configured temp widgets.
  * @param {Array<object>} widgetConfigs - Array of temp widget configs from automaton.yaml
- * @param {Function} refreshCallback - Called when any subscribed event fires
- */
+ * @param {Function} refreshCallback - Called when any subscribed event fires */
 export function subscribe(widgetConfigs, refreshCallback) {
     mgr.destroy() // clear stale subscriptions
 
@@ -75,13 +62,11 @@ export function subscribe(widgetConfigs, refreshCallback) {
         mgr.addUnsubscribe(EventBus.subscribe(`zigbee:${cfg.device}`, refreshCallback))
     }
 
-    // Also react to initial device load
+    //  Also react to initial device load.
     mgr.addUnsubscribe(EventBus.subscribe('devices:ready', refreshCallback))
 }
 
-/**
- * Tear down all temp widget subscriptions.
- */
+/** Tear down all temp widget subscriptions. */
 export function unsubscribe() {
     mgr.destroy()
 }

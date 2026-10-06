@@ -1,9 +1,7 @@
 /**
  * Status Command -- dumps StateService contents to the active window.
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -16,11 +14,8 @@ class StatusCmd extends CommandBase {
     static description = 'Show system status dump'
     static takesArgs = false
 
-    /**
-     * Dump StateService contents into the active window as indented key = value rows.
-     * Null and empty entries are filtered out so only live state is shown.
-     * @param {string} args - Raw argument string after the verb (unused)
-     */
+    /** Dump StateService contents into the active window as indented key = value rows.
+     * @param {string} args - Raw argument string after the verb (unused) */
     async execute(args) {
         const dump = this.ctx.stateService.dump()
         const entries = Object.entries(dump)

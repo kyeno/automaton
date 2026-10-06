@@ -1,10 +1,8 @@
 /**
  * Bridge device type.
  *  Handles Zigbee2MQTT bridge topics (logging, health, state, events, devices).
- *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -16,85 +14,52 @@ import CacheService from '../../service/cacheService.js'
 import DeviceContainer from '../container/deviceContainer.js'
 import LoggerService from '../../service/loggerService.js'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
-/**
- * Default timeout in milliseconds for waiting the device list response.
- * @type {number}
- */
+/** Default timeout in milliseconds for waiting the device list response.
+ * @type {number} */
 const DEFAULT_DEVICE_LIST_TIMEOUT_MS = 10_000
 
-// ---------------------------------------------------------------------------
-// Bridge class
-// ---------------------------------------------------------------------------
 
-/**
- * Bridge class.
- *  Extends DeviceBase with bridge-specific message handling.
- */
+/** Bridge class. */
 export default class Bridge extends DeviceBase {
 
-    // -- Private state ----------------------------------------------------
+    //  -- Private state ----------------------------------------------------
 
-    /**
-     * Cached device list received from zigbee2mqtt/bridge/devices.
-     * @type {Array|null}
-     */
+    /** Cached device list received from zigbee2mqtt/bridge/devices.
+     * @type {Array|null} */
     #deviceList = null
 
-    /**
-     * Promise that resolves once the device list is populated.
-     * Used by DeviceContainer to wait for bridge discovery before bootstrapping devices.
-     * @type {Promise<Array>|null}
-     */
+    /** Promise that resolves once the device list is populated.
+     * @type {Promise<Array>|null} */
     #deviceListReady = null
 
-    /**
-     * Resolve function for #deviceListReady promise.
-     * @type {Function|null}
-     */
+    /** Resolve function for #deviceListReady promise.
+     * @type {Function|null} */
     #deviceListResolve = null
 
-    // -- Constructor ------------------------------------------------------
+    //  -- Constructor ------------------------------------------------------
 
-    /**
-     * Create Bridge object.
-     *
+    /** Create Bridge object.
      * @constructor
      * @param {string} name - Device name
      * @param {string} id - Device ID
-     * @param {Object} data - Device data
-     */
+     * @param {Object} data - Device data */
     constructor(name, id, data) {
         super(name, id, data)
     }
 
-    // -- Topic subscription override --------------------------------------
+    //  -- Topic subscription override --------------------------------------
 
-    /**
-     * Override: subscribe to all bridge sub-topics via MQTT wildcard.
-     *
-     *   zigbee2mqtt/bridge/#   --  catches /devices, /event, /health, /state, etc.
-     *   zigbee2mqtt/bridge/+   --  single-level fallback (redundant but safe)
-     *
-     * The wildcard "#" matches any number of levels, so a single subscription
-     * covers every bridge topic we care about.
-     *
+    /** Override: subscribe to all bridge sub-topics via MQTT wildcard.
      * @param {string} prefix - MQTT topic prefix (e.g., "zigbee2mqtt")
-     * @returns {string[]} Array of topic strings to subscribe to
-     */
+     * @returns {string[]} Array of topic strings to subscribe to */
     getSubscribedTopics(prefix) {
         return [`${prefix}/bridge/#`]
     }
 
-    // -- Public API for device discovery -----------------------------------
+    //  -- Public API for device discovery -----------------------------------
 
-    /**
-     * Request the full device list from zigbee2mqtt bridge.
-     * Publishes `{ "get": "devices" }` to the request topic.
-     */
+    /** Request the full device list from zigbee2mqtt bridge. */
     requestDeviceList() {
         const prefix = process.env['MQTT_PREFIX'] || 'zigbee2mqtt'
         const topic = `${prefix}/bridge/request/devices/set`
@@ -102,35 +67,29 @@ export default class Bridge extends DeviceBase {
         this.info(`Requested device list via ${topic}`)
     }
 
-    /**
-     * Get the cached device list (populated when bridge publishes on /devices).
-     * @returns {Array|null} Device array or null if not yet received.
-     */
+    /** Get the cached device list (populated when bridge publishes on /devices).
+     * @returns {Array|null} Device array or null if not yet received. */
     getDevices() {
         return this.#deviceList
     }
 
-    /**
-     * Wait for the device list to be populated by the bridge response.
-     * Returns a Promise that resolves with the device array once received.
-     *
+    /** Wait for the device list to be populated by the bridge response.
      * @param {number} [timeoutMs=10000] - Maximum wait time in milliseconds
-     * @returns {Promise<Array>} Resolved device list
-     */
+     * @returns {Promise<Array>} Resolved device list */
     waitForDeviceList(timeoutMs = DEFAULT_DEVICE_LIST_TIMEOUT_MS) {
-        // Already have it? Return immediately.
+        //  Already have it? Return immediately.
         if (this.#deviceList !== null) {
             return Promise.resolve(this.#deviceList)
         }
 
-        // Reuse existing promise if one is already pending.
+        //  Reuse existing promise if one is already pending.
         if (!this.#deviceListReady) {
             this.#deviceListReady = new Promise((resolve) => {
                 this.#deviceListResolve = resolve
             })
         }
 
-        // Set up a timeout guard.
+        //  Set up a timeout guard.
         const timeout = new Promise((_, reject) => {
             setTimeout(() => reject(new Error('Bridge device list request timed out after ' + timeoutMs + 'ms')), timeoutMs)
         })
@@ -138,14 +97,10 @@ export default class Bridge extends DeviceBase {
         return Promise.race([this.#deviceListReady, timeout])
     }
 
-    // -- Private helpers --------------------------------------------------
+    //  -- Private helpers --------------------------------------------------
 
-    /**
-     * Resolve the #deviceListReady promise with the current device list.
-     * Called internally when /devices message arrives.
-     *
-     * @private
-     */
+    /** Resolve the #deviceListReady promise with the current device list.
+     * @private */
     #notifyDeviceListReady() {
         if (this.#deviceListResolve && this.#deviceList !== null) {
             this.#deviceListResolve(this.#deviceList)
@@ -154,27 +109,19 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    /**
-     * Extract the bridge sub-path from a topic.
-     *  e.g. "zigbee2mqtt/bridge/logging" -> "logging"
-     *       "zigbee2mqtt/bridge/devices" -> "devices"
-     *
+    /** Extract the bridge sub-path from a topic.
      * @param {string} topic - Full MQTT topic
      * @returns {string|null} Bridge sub-path or null
-     * @private
-     */
+     * @private */
     #extractBridgePath(topic) {
         const parts = topic.split('/')
         return parts.length >= 3 ? parts[2] : null
     }
 
-    // -- Overrides --------------------------------------------------------
+    //  -- Overrides --------------------------------------------------------
 
-    /**
-     * Override default MQTT message handling to route bridge sub-topics.
-     *
-     * @param {Object} data - Event data containing topic and message
-     */
+    /** Override default MQTT message handling to route bridge sub-topics.
+     * @param {Object} data - Event data containing topic and message */
     handleMqttMessage(data) {
         const bridgePath = this.#extractBridgePath(data.topic)
         if (!bridgePath) {
@@ -184,7 +131,7 @@ export default class Bridge extends DeviceBase {
 
         switch (bridgePath) {
             case 'logging':
-                // Bridge logging is just Zigbee2MQTT echoing published messages.
+                //  Bridge logging is just Zigbee2MQTT echoing published messages.
                 break
             case 'health':
                 this.#handleBridgeHealth(data.message)
@@ -212,15 +159,11 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    // -- Bridge sub-topic handlers ----------------------------------------
+    //  -- Bridge sub-topic handlers ----------------------------------------
 
-    /**
-     * Handle zigbee2mqtt/bridge/health messages.
-     * Stores the health payload directly in Redis under the "zigbee_health" key.
-     *
+    /** Handle zigbee2mqtt/bridge/health messages.
      * @param {string} message - Raw JSON health message
-     * @private
-     */
+     * @private */
     async #handleBridgeHealth(message) {
         try {
             const health = JSON.parse(message)
@@ -231,14 +174,9 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    /**
-     * Handle zigbee2mqtt/bridge/state messages.
-     * If the payload is not {"state":"online"}, the bridge is considered offline
-     * and the process terminates gracefully.
-     *
+    /** Handle zigbee2mqtt/bridge/state messages.
      * @param {string} message - Raw JSON state message
-     * @private
-     */
+     * @private */
     #handleBridgeState(message) {
         try {
             const parsed = JSON.parse(message)
@@ -252,13 +190,9 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    /**
-     * Handle zigbee2mqtt/bridge/event messages.
-     * Processes bridge events such as device_announce, device_remove, etc.
-     *
+    /** Handle zigbee2mqtt/bridge/event messages.
      * @param {string} message - Raw JSON event message
-     * @private
-     */
+     * @private */
     #handleBridgeEvent(message) {
         try {
             const parsed = JSON.parse(message)
@@ -281,14 +215,9 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    /**
-     * Handle zigbee2mqtt/bridge/devices  --  the full device list response.
-     * Parses the array of devices and stores it internally. Notifies any
-     * waiters (DeviceContainer during init) that the list is ready.
-     *
+    /** Handle zigbee2mqtt/bridge/devices  --  the full device list response.
      * @param {string} message - Raw JSON device list (array)
-     * @private
-     */
+     * @private */
     #handleDeviceList(message) {
         try {
             const devices = JSON.parse(message)
@@ -304,14 +233,9 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    /**
-     * Handle device_announce events.
-     * Logs when a previously unknown Zigbee device attempts to join the network.
-     * Triggers dynamic device addition via DeviceContainer.
-     *
+    /** Handle device_announce events.
      * @param {Object} data - Event data with friendly_name and ieee_address
-     * @private
-     */
+     * @private */
     #handleDeviceAnnounce(data) {
         const friendlyName = data?.friendly_name
         const ieeeAddress = data?.ieee_address
@@ -321,7 +245,7 @@ export default class Bridge extends DeviceBase {
             if (existing) {
                 this.info(`Device announced: ${friendlyName} (${ieeeAddress}) - already registered`)
             } else {
-                // Dynamic discovery  --  add the device at runtime.
+                //  Dynamic discovery  --  add the device at runtime.
                 this.info(`New device detected: ${friendlyName} (${ieeeAddress})  --  adding dynamically`)
                 try {
                     DeviceContainer.addDevice(friendlyName, ieeeAddress || `0x${Date.now().toString(16)}`, {})
@@ -334,13 +258,9 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    /**
-     * Handle device_leave events.
-     * Logs when a device leaves the Zigbee network and removes it from the container.
-     *
+    /** Handle device_leave events.
      * @param {Object} data - Event data with friendly_name and ieee_address
-     * @private
-     */
+     * @private */
     #handleDeviceLeave(data) {
         const friendlyName = data?.friendly_name
         const ieeeAddress = data?.ieee_address
@@ -357,31 +277,22 @@ export default class Bridge extends DeviceBase {
         }
     }
 
-    // -- Logging helpers --------------------------------------------------
+    //  -- Logging helpers --------------------------------------------------
 
-    /**
-     * Log a warning-level message with uppercase BRIDGE context.
-     *
-     * @param {string} message - Message to log
-     */
+    /** Log a warning-level message with uppercase BRIDGE context.
+     * @param {string} message - Message to log */
     warn(message) {
         LoggerService.warn(message, `${this.getLogPrefix()}:${this.getName().toUpperCase()}`)
     }
 
-    /**
-     * Override logging to use uppercase "BRIDGE" in log context.
-     *
-     * @param {string} message - Message to log
-     */
+    /** Override logging to use uppercase "BRIDGE" in log context.
+     * @param {string} message - Message to log */
     log(message) {
         LoggerService.debug(message, `${this.getLogPrefix()}:${this.getName().toUpperCase()}`)
     }
 
-    /**
-     * Log an info-level message with uppercase BRIDGE context.
-     *
-     * @param {string} message - Message to log
-     */
+    /** Log an info-level message with uppercase BRIDGE context.
+     * @param {string} message - Message to log */
     info(message) {
         LoggerService.info(message, `${this.getLogPrefix()}:${this.getName().toUpperCase()}`)
     }

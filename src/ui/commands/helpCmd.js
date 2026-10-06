@@ -1,12 +1,8 @@
 /**
  * Help Command -- lists all available slash commands with descriptions.
- *
- * Dynamically queries the command container for every registered command,
- * showing primary names, aliases, argument indicators, and descriptions.
- *
+ * Dynamically queries the command container for every registered command.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
- *
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
@@ -19,21 +15,18 @@ class HelpCmd extends CommandBase {
     static description = 'Show available commands'
     static takesArgs = false
 
-    /**
-     * List every registered slash command with aliases and descriptions, skipping
-     * /help itself in its own output to avoid confusion.
-     * @param {string} args - Raw argument string after the verb (unused)
-     */
+    /** List every registered slash command with aliases and descriptions, skipping
+     * @param {string} args - Raw argument string after the verb (unused) */
     async execute(args) {
         const lines = []
 
-        // All registered commands from container
+        //  All registered commands from container.
         const cmdInfo = this.ctx.commandContainer?.getAllInfo?.() ?? []
 
         if (cmdInfo.length > 0) {
             lines.push('Commands:')
             for (const info of cmdInfo) {
-                // Skip help itself in its own output to avoid confusion
+                //  Skip help itself in its own output to avoid confusion.
                 if (info.name === 'help') continue
 
                 let entry = `  /${info.name}`
