@@ -17,6 +17,8 @@ config()
  *   F) identical back-to-back prompts both get answered (dedupe opt-out end to end)
  *   G) ai:deviceInteraction events mirror onto <base>/event when forward_events is on
  *   H) stop() tears everything down cleanly
+ *   I) the turn is surfaced on the EventBus transcript channels the AI window renders, and
+ *      UI-originated turns are mirrored back onto <base>/message without looping
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -102,6 +104,19 @@ let aiAvailableFlag = true
 assistantProto.isAvailable = function () { return aiAvailableFlag }
 assistantProto.processMessage = async function (text) { return `ECHO: ${text}` }
 
+// Capture the EventBus transcript the AI window renders (src/ui/windows/aiWindow.js subscribes
+// to exactly these two channels: <remote>/<you> for the prompt, <AI> for the reply).
+const transcript = []
+const unsubTranscript = [
+    EventBus.subscribe('ai:userMessage', (p) => transcript.push({ channel: 'user', ...p })),
+    EventBus.subscribe('ai:assistantMessage', (p) => transcript.push({ channel: 'assistant', ...p }))
+]
+
+/** Transcript events recorded since index `from`. */
+function transcriptSince(from) {
+    return transcript.slice(from)
+}
+
 async function main() {
     console.log('=== AiBridgeMonitor Tests (real MqttService dispatcher + stubbed AI) ===\n')
 
@@ -112,6 +127,7 @@ async function main() {
     try {
         // A) JSON prompt -> user echo then assistant reply --------------------------
         console.log('-- A) JSON prompt produces ordered transcript frames --')
+        const beforeA = transcript.length
         deliver(fake, 'automaton/ai/request', JSON.stringify({ text: 'hello bridge' }))
         await sleep(80)
         let messages = framesFor(fake, 'automaton/ai/message')
@@ -120,6 +136,12 @@ async function main() {
         assert(messages[1]?.role === 'assistant' && messages[1]?.content === 'ECHO: hello bridge', 'second frame carries the assistant reply')
         assert(typeof messages[0]?.ts === 'number' && typeof messages[1]?.ts === 'number', 'frames carry epoch-ms timestamps')
         assert((messages[1]?.ts ?? 0) >= (messages[0]?.ts ?? 0), 'assistant frame never precedes its user echo')
+        assert(messages.every((f) => f.source === 'mqtt'), 'frames carry mqtt provenance')
+
+        const uiA = transcriptSince(beforeA)
+        assert(uiA.length === 2, `prompt and reply surfaced on the UI transcript channels (got ${uiA.length})`)
+        assert(uiA[0]?.channel === 'user' && uiA[0]?.text === 'hello bridge' && uiA[0]?.source === 'mqtt', 'prompt emitted as ai:userMessage with mqtt provenance')
+        assert(uiA[1]?.channel === 'assistant' && uiA[1]?.text === 'ECHO: hello bridge' && uiA[1]?.source === 'mqtt', 'reply emitted as ai:assistantMessage with mqtt provenance')
 
         // B) plain-string payload ----------------------------------------------------
         console.log('-- B) plain string payloads accepted verbatim --')
@@ -143,30 +165,36 @@ async function main() {
         // D) empty prompts skipped -----------------------------------------------------
         console.log('-- D) empty / whitespace-only prompts produce nothing --')
         const beforeEmpty = fake.published.length
+        const beforeEmptyEvents = transcript.length
         deliver(fake, 'automaton/ai/request', '')
         deliver(fake, 'automaton/ai/request', '{"text":"   "}')
         deliver(fake, 'automaton/ai/request', '[1,2,3]')
         await sleep(80)
         assert(fake.published.length === beforeEmpty, `no frames for empty payloads (published ${fake.published.length - beforeEmpty})`)
+        assert(transcript.length === beforeEmptyEvents, 'no UI transcript events for empty payloads')
 
         // E) AI unavailable -> dropped ---------------------------------------------------
         console.log('-- E) prompt dropped while the AI assistant is unavailable --')
         aiAvailableFlag = false
         const beforeUnavailable = fake.published.length
+        const beforeUnavailableEvents = transcript.length
         deliver(fake, 'automaton/ai/request', JSON.stringify({ text: 'anyone there?' }))
         await sleep(80)
         assert(fake.published.length === beforeUnavailable, 'unavailable AI never fabricates a reply frame')
+        assert(transcript.length === beforeUnavailableEvents, 'unavailable AI never surfaces a dropped prompt in the UI')
         aiAvailableFlag = true
 
         // F) identical back-to-back prompts both answered (dedupe opt-out end to end) ---
         console.log('-- F) repeated identical prompts are NOT deduped away --')
         fake.published.length = 0
+        const beforeF = transcript.length
         deliver(fake, 'automaton/ai/request', JSON.stringify({ text: 'same prompt' }))
         deliver(fake, 'automaton/ai/request', JSON.stringify({ text: 'same prompt' }))
         await sleep(150)
         messages = framesFor(fake, 'automaton/ai/message')
         assert(messages.filter((f) => f.role === 'user').length === 2, `both user echoes delivered despite identical signature (got ${messages.filter((f) => f.role === 'user').length})`)
         assert(messages.filter((f) => f.role === 'assistant').length === 2, 'both assistant replies published')
+        assert(transcriptSince(beforeF).length === 4, 'both turns surfaced in the UI transcript')
 
         // G) device-interaction events mirrored onto the event topic ---------------------
         console.log('-- G) ai:deviceInteraction mirrors onto <base>/event --')
@@ -178,18 +206,65 @@ async function main() {
         assert(events[0]?.type === 'interaction' && events[0]?.device === 'Salon Light' && events[0]?.action === 'OFF' && events[0]?.ok === true, 'event frame carries interaction payload')
         assert(typeof events[0]?.ts === 'number', 'event frame carries a timestamp')
 
+        // I) UI-originated turns mirror onto the message topic ---------------------------
+        console.log('-- I) UI turns mirror onto <base>/message, bridge echoes never loop --')
+        fake.published.length = 0
+        transcript.length = 0
+        EventBus.emit('ai:userMessage', { text: 'typed at the keyboard', source: 'ui' })
+        EventBus.emit('ai:assistantMessage', { text: 'typed reply', source: 'ui' })
+        await sleep(80)
+        messages = framesFor(fake, 'automaton/ai/message')
+        assert(messages.length === 2, `both UI frames published (got ${messages.length})`)
+        assert(messages[0]?.role === 'user' && messages[0]?.source === 'ui' && messages[0]?.content === 'typed at the keyboard', 'UI prompt published as a user frame')
+        assert(messages[1]?.role === 'assistant' && messages[1]?.source === 'ui', 'UI reply published as an assistant frame')
+
+        deliver(fake, 'automaton/ai/request', JSON.stringify({ text: 'no loop please' }))
+        await sleep(80)
+        messages = framesFor(fake, 'automaton/ai/message')
+        assert(messages.length === 4, `bridge turn adds exactly its own two frames (got ${messages.length})`)
+        assert(messages.filter((f) => f.source === 'mqtt').length === 2, 'bridge echoes are never re-published by the UI mirror')
+        assert(transcript.filter((e) => e.source === 'ui').length === 2, 'mirror consumes UI events only')
+
+        EventBus.emit('ai:userMessage', { text: '   ', source: 'ui' })
+        EventBus.emit('ai:assistantMessage', { text: 'boom', source: 'ui', error: true })
+        await sleep(80)
+        assert(framesFor(fake, 'automaton/ai/message').length === 4, 'blank and error UI lines are never published')
+
+        // G) inbound prompts are sanitized before they reach the transcript ----------
+        console.log('-- G) hostile prompt text is sanitized on the way in --')
+        {
+            // Emoji, CJK, an ANSI clear-screen sequence, a bidi isolate mark, forged
+            // line breaks and Cyrillic: everything outside the language allowlist must
+            // be gone, the allowed script must survive, and the result must be one line.
+            const hostile = 'turn \u001B[2J on \u{1F600} the \u4F60 lamp\u202E\n\tsilently \u041F\u0440\u0438\u0432\u0435\u0442'
+            deliver(fake, 'automaton/ai/request', JSON.stringify({ text: hostile }))
+            await sleep(80)
+
+            const sanitized = framesFor(fake, 'automaton/ai/message').at(-2)?.content ?? ''
+            assert(sanitized.length > 0, 'sanitized prompt still delivered')
+            assert(!sanitized.includes('\u001B'), 'terminal control sequence stripped')
+            assert(!sanitized.includes('\u{1F600}'), 'emoji stripped')
+            assert(!sanitized.includes('\u4F60'), 'out-of-alphabet script stripped')
+            assert(!sanitized.includes('\u202E'), 'bidi isolate mark stripped')
+            assert(!sanitized.includes('\n') && !sanitized.includes('\t'), 'forged line breaks collapsed')
+            assert(sanitized.includes('\u041F\u0440\u0438\u0432\u0435\u0442'), 'allowed script survives')
+            assert(sanitized.startsWith('turn on the lamp'), 'remaining words kept in order')
+        }
+
         // H) stop() tears down -------------------------------------------------------------
         console.log('-- H) stop() silences both directions --')
         AiBridgeMonitor.stop()
         const beforeStop = fake.published.length
         deliver(fake, 'automaton/ai/request', JSON.stringify({ text: 'too late now' }))
         EventBus.emit('ai:deviceInteraction', { device: 'X', action: 'ON', tool: 'native', ok: true })
+        EventBus.emit('ai:userMessage', { text: 'typed after stop', source: 'ui' })
         await sleep(80)
-        assert(fake.published.length === beforeStop, 'no frames after stop()')
+        assert(fake.published.length === beforeStop, 'no frames after stop() (inbound, events and UI mirror all silent)')
     } catch (err) {
         console.error(`\nFatal error in test suite: ${err.message}\n${err.stack}`)
         process.exitCode = 1
     } finally {
+        for (const unsub of unsubTranscript) unsub()
         assistantProto.isAvailable = originalIsAvailable
         assistantProto.processMessage = originalProcessMessage
         try { await MqttService.disconnect() } catch { /* best-effort teardown */ }
