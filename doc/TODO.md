@@ -1,11 +1,6 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Comments .yaml and .yaml.dist comments often differ (f.e. automaton.yaml).
-  Make sure they all remain the same + try to compact them all to minimal state.
-  Remove all the information about "how things changed" or "logic reasoning"
-  behind those choices, or any other forms of elaborates. Keep it to the minimum
-  required for human to comprehend certain setting or a file.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
   pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
@@ -20,6 +15,7 @@
 - Add WiFi and WiFi devices support
 - Integrate cleaning robot
 - Integrate A/C
+- Integrate automated IR remote
 
 ## Architecture
 - BUG: Many config entries have something_timeout or something_cooldown _ms, while they
@@ -28,8 +24,10 @@
   then add it as an option to tool calling for AI - so it could open the rollers
   for certain amount of time.
 - Intoduce crontab.js and move many automations from purely timer based, to cron-alike configs
-- LATER: Postpone automations so they don't fire all at once
-- Lift shared TTS pipeline into RuleBasedAutomationBase: availability guard, AI->TTS routing fallback, i18n sentence resolution + interpolation, silent-period gate deduplication; drop parity-only loadDevices()/resolveCommand() overrides from both TTS classes afterwards
+- LATER: Postpone automations so they don't fire all at once (together with crontab.js)
+- Lift shared TTS pipeline into RuleBasedAutomationBase: availability guard, AI->TTS routing fallback, 
+  i18n sentence resolution + interpolation, silent-period gate deduplication; drop parity-only 
+  loadDevices()/resolveCommand() overrides from both TTS classes afterwards
 - Support per-rule speech/action alongside targets: and invoke_automation, enabling one rule to drive devices AND speak
 - CONSIDER: naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
 - Same about monitor names. networkPresence doesn't have the Monitor suffix. Decide if we want those there or not.
