@@ -95,6 +95,24 @@ class SNetworkPresence {
      */
     #warnedAddresses = new Set()
 
+    /**
+     * Last presence label observed per device during this process run
+     * (lowercased device name -> 'online' | 'offline'). Synchronous record for
+     * consumers that must not await the store -- getLastLabel(); refreshed on
+     * every sweep, so it always reflects the most recent completed check.
+     * @type {Map<string, 'online'|'offline'>}
+     */
+    #lastLabel = new Map()
+
+    /**
+     * Re-entrancy guard for the periodic sweep. A sweep is serial and each arping
+     * can burn its full timeout, so a few unreachable hosts make one pass outlast
+     * the interval; without this guard passes would overlap and pile up child
+     * processes (and duplicate transitions) behind the timer.
+     * @type {boolean}
+     */
+    #sweepInFlight = false
+
     // -- Singleton --------------------------------------------------------
 
     /**
@@ -196,11 +214,17 @@ class SNetworkPresence {
 
     /**
      * Check all devices in the configuration for presence.
-     * Iterates through categories and dispatches each IP check.
-     *
+     * Iterates through categories and dispatches each IP check. Serial, so a sweep
+     * that outlasts the interval (unreachable hosts burning their arping timeouts)
+     * makes the next timer tick a no-op instead of stacking overlapping passes.
      * @private
      */
     async #checkDevices() {
+        if (this.#sweepInFlight) {
+            LoggerService.debug('Presence sweep skipped -- previous sweep still running', 'NetworkPresence')
+            return
+        }
+        this.#sweepInFlight = true
         try {
             for (const [category, devices] of Object.entries(this.#config)) {
                 if (typeof devices !== 'object' || devices === null) continue
@@ -214,6 +238,8 @@ class SNetworkPresence {
             }
         } catch (error) {
             LoggerService.error(`Error during device check: ${error.message}`, 'NetworkPresence')
+        } finally {
+            this.#sweepInFlight = false
         }
     }
 
@@ -266,6 +292,8 @@ class SNetworkPresence {
      * EventBus event when it is a genuine change. Publishing is driven by the store's
      * dedupe result so repeated identical sweeps stay silent; while the database is
      * temporarily unavailable we still notify (matching prior fail-open behaviour).
+     * The label is also kept in the in-memory #lastLabel record on every call --
+     * online sweeps included -- so getLastLabel() always describes the latest sweep.
      *
      * @param {string} deviceName - Human-readable device name
      * @param {string} ipAddress - IP address of the device
@@ -273,6 +301,7 @@ class SNetworkPresence {
      * @private
      */
     async #markDevice(deviceName, ipAddress, newLabel) {
+        this.#lastLabel.set(String(deviceName).toLowerCase(), newLabel)
         const result = await DatabaseService.recordTransition({ domain: 'network', subject: deviceName, toState: newLabel })
 
         if (result.changed || !DatabaseService.isAvailable()) {
@@ -332,6 +361,19 @@ class SNetworkPresence {
         if (!match) return null
         const label = await DatabaseService.getCurrent('network', match.name)
         return label === 'online' || label === 'offline' ? label : null
+    }
+
+    /**
+     * Most recent presence label observed for a device during this process run, read
+     * from the in-memory sweep record. Synchronous and store-independent on purpose:
+     * the spoken offline alerts must work while Redis is down, and they need the label
+     * the sweep just computed (the event payload carries none). Returns null for a
+     * device that has not been swept yet.
+     * @param {string} name - Device name as configured in network.yaml
+     * @returns {'online'|'offline'|null} Last observed label, or null when unknown
+     */
+    getLastLabel(name) {
+        return this.#lastLabel.get(String(name ?? '').toLowerCase()) ?? null
     }
 }
 

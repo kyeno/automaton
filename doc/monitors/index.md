@@ -1,6 +1,6 @@
 # Monitors
 
-> **In this section:** [Network Presence](./network-presence.md) · [Video Player](./video-player.md)
+> **In this section:** [Network Presence](./network-presence.md) · [Video Player](./video-player.md) · [Offline Alerts](./offline-alerts.md)
 
 Monitors are singletons that watch the world outside Zigbee — network hosts, HTTP APIs, and (in the future) anything else worth polling. Each one sweeps its targets on a short interval, normalizes what it sees into a small vocabulary, caches the result in Redis, and publishes an EventBus event **only when something actually changed**. Automations consume that state through rule conditions and re-evaluate immediately on transitions.
 
@@ -10,6 +10,8 @@ Monitors are singletons that watch the world outside Zigbee — network hosts, H
 | [Video Player](./video-player.md) | Media players answering HTTP (VLC, MPC-HC) | `videoPlayer` |
 
 More monitors will be added over time. Both current ones live in `src/monitor/` and follow the same shape: a `checkNow()` sweep, a `get…()` reader for rules, and a `network:` / `videoPlayer:` EventBus topic per target.
+
+Two more monitors watch for things going *away* and speak a warning instead of driving rules: [Offline Alerts](./offline-alerts.md) covers Zigbee devices leaving the mesh and mission-critical LAN hosts dropping offline.
 
 ---
 

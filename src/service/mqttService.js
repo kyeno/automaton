@@ -464,14 +464,21 @@ class SMQTTService {
             const message = payload.toString()
             const now = Date.now()
 
-            // Build a semantic signature from the payload (ignores volatile fields).
-            const sig = this.#extractSignature(message)
-            const last = this.#lastSemanticByTopic.get(topic)
+            // Semantic deduplication is skipped when at least one matching subscriber opted out via
+            // subscribe(topic, cb, { dedupe:false }). Chat-style channels need this because their payloads
+            // are non-idempotent user input whose "semantic signature" collapses to a constant (no SEMANTIC_KEYS
+            // present), so the 300ms window would drop real prompts as duplicates. Topics with NO such
+            // subscriber take EXACTLY the original code path below -- pre-existing behavior is unchanged.
+            if (!this.#hasNoDedupeSubscriber(topic)) {
+                // Build a semantic signature from the payload (ignores volatile fields).
+                const sig = this.#extractSignature(message)
+                const last = this.#lastSemanticByTopic.get(topic)
 
-            if (last && last.signature === sig && now - last.timestamp < DEDUPE_WINDOW_MS) {
-                return // Semantic duplicate -- skip silently
+                if (last && last.signature === sig && now - last.timestamp < DEDUPE_WINDOW_MS) {
+                    return // Semantic duplicate -- skip silently
+                }
+                this.#lastSemanticByTopic.set(topic, { signature: sig, timestamp: now })
             }
-            this.#lastSemanticByTopic.set(topic, { signature: sig, timestamp: now })
 
             for (const sub of this.#subscriptions) {
                 if (this.#topicMatches(sub.topic, topic)) {
@@ -486,6 +493,23 @@ class SMQTTService {
                 }
             }
         })
+    }
+
+    /**
+     * Whether any registered subscription that matches an incoming topic has opted out of semantic
+     * deduplication via subscribe(..., { dedupe:false }). The dispatcher uses this to decide whether to
+     * apply the 300ms duplicate window for a given delivery. Wildcard patterns are honored because matching
+     * reuses {@link #topicMatches}. Returns false when no such subscriber exists, which keeps every
+     * pre-existing code path byte-for-byte identical to the original always-dedupe behavior.
+     * @param {string} topic - The exact received MQTT topic
+     * @returns {boolean} true only when at least one matching subscriber disabled dedupe
+     * @private
+     */
+    #hasNoDedupeSubscriber(topic) {
+        for (const sub of this.#subscriptions) {
+            if (sub.dedupe === false && this.#topicMatches(sub.topic, topic)) return true
+        }
+        return false
     }
 
     /**
@@ -714,9 +738,11 @@ class SMQTTService {
      *
      * @param {string} topic - MQTT topic pattern (e.g., "zigbee2mqtt/bridge/#")
      * @param {Function} [callback] - Optional callback invoked on each matching message
+     * @param {Object} [options] - Subscription options
+     * @param {boolean} [options.dedupe=true] - When false, messages for topics matched by THIS subscriber bypass the 300ms semantic-deduplication window. Intended for non-idempotent channels such as AI chat input, where distinct prompts can share an identical (empty) semantic signature and must never be dropped as duplicates. Defaults to true -- every existing caller is unaffected.
      * @return {Function|undefined} Unsubscribe function to remove the listener, or undefined if no callback provided
      */
-    subscribe(topic, callback) {
+    subscribe(topic, callback, options = {}) {
         if (!this.#client || !this.#client.connected) {
             LoggerService.warn(
                 `Cannot subscribe to "${topic}": MQTT client not connected`,
@@ -736,7 +762,10 @@ class SMQTTService {
 
         if (!callback) return
 
-        const entry = { topic, callback }
+        // Dedupe defaults to ON so pre-existing callers keep byte-for-byte behavior; only an explicit
+        // { dedupe:false } opts this subscription out of the duplicate window (see #hasNoDedupeSubscriber).
+        const dedupe = !(options && options.dedupe === false)
+        const entry = { topic, callback, dedupe }
         this.#subscriptions.push(entry)
 
         // Return unsubscribe function to prevent memory leaks.

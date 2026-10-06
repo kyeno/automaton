@@ -9,6 +9,15 @@ computers:
   my-pc: 0.0.0.0
   laptop: 0.0.0.0
 
+# Mission-critical hosts: NetworkPresence polls them like every other entry and the
+# NetworkDeviceOfflineMonitor speaks a warning when one stops answering. The names to
+# announce are listed in etc/automaton.yaml -> alerts.network_offline_devices, and the
+# sentences live in etc/i18n/<locale>/alerts.yaml (see doc/monitors/offline-alerts.md).
+servers:
+  # core-server: 0.0.0.0
+  # dns-server: 0.0.0.0
+  # wifi-router: 0.0.0.0
+
 routers:
   # - "Router Name": 0.0.0.0
 

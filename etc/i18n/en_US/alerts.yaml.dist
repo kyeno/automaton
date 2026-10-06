@@ -1,7 +1,19 @@
 # Alert Sentences -- English Locale (distribution template)
 # ----------------------------------------------------------
-# Spoken warnings for notable system events (see src/monitor/deviceOfflineMonitor.js).
-# The {device} placeholder is replaced with the removed device's friendly name.
+# Spoken warnings for notable system events (see doc/monitors/offline-alerts.md).
+# The {device} placeholder is replaced with the device's friendly name.
+# Keys may be plain sentences, or per-device maps with a `default` entry -- the
+# per-device entries below are examples; keep only the hosts you watch.
 
 # A configured Zigbee device left the network
-device_offline: "Attention, device {device} has left the Zigbee network."
+zigbee_device_offline: "Attention, device {device} has left the Zigbee network."
+
+# A mission-critical network host went offline (names from etc/device/network.yaml)
+network_device_offline:
+  default: "Attention, {device} is offline."
+  # core-server: "Attention, the core server is offline."
+
+# A watched host came back (spoken only with alerts.network_offline_announce_recovery: true)
+network_device_online:
+  default: "{device} is back online."
+  # core-server: "The core server is back online."

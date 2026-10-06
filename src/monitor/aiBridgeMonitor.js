@@ -9,6 +9,16 @@
  * `forward_events` is enabled, tool/device interactions mirror the internal
  * `ai:deviceInteraction` EventBus event onto `<topic_base>/event`.
  *
+ * The transcript is mirrored on the shared EventBus channels in BOTH directions, each frame
+ * carrying a `source` provenance tag:
+ *   - bridge turn  -> `ai:userMessage` / `ai:assistantMessage` with `{source:'mqtt'}`, which
+ *     the AI window renders as `<remote>` / `<AI>` lines;
+ *   - UI turn      -> `{source:'ui'}` events published back onto `<topic_base>/message`, so
+ *     every MQTT subscriber's live copy covers the whole shared conversation, not just the
+ *     prompts that subscriber typed itself.
+ * Events carrying our own `source:'mqtt'` tag are never re-published, so the mirror cannot
+ * feed its own echoes back.
+ *
  * The request subscription opts out of semantic deduplication (`{dedupe:false}`) because
  * chat input is non-idempotent: two distinct prompts share an empty semantic signature
  * and must never be dropped as duplicates. We only subscribe to `request` and only publish
@@ -29,6 +39,7 @@ import LoggerService from '../service/loggerService.js'
 import MqttService from '../service/mqttService.js'
 import EventBus from '../service/eventBus.js'
 import AiAssistant from '../ai/aiAssistant.js'
+import { sanitizeText } from '../lib/string.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,6 +47,12 @@ import AiAssistant from '../ai/aiAssistant.js'
 
 /** Default MQTT topic base for the AI bridge channel (kept OUTSIDE zigbee2mqtt/* on purpose). */
 const DEFAULT_TOPIC_BASE = 'automaton/ai'
+
+/** Provenance tag on every transcript frame/event this monitor originates (prompts from MQTT). */
+const BRIDGE_SOURCE = 'mqtt'
+
+/** Provenance tag of turns typed in the terminal UI; those are mirrored onto the message topic. */
+const UI_SOURCE = 'ui'
 
 // ---------------------------------------------------------------------------
 // SAiBridgeMonitor (singleton)
@@ -96,6 +113,16 @@ class SAiBridgeMonitor {
             }))
         }
 
+        // Turns typed in the terminal UI belong in the shared transcript too: without this the
+        // web clients' "live copy" would be missing every prompt answered from the keyboard.
+        // #mirrorUiTurn() ignores our own source:'mqtt' events, so this cannot loop.
+        this.#eventUnsubs.push(EventBus.subscribe('ai:userMessage', (payload) => {
+            this.#mirrorUiTurn('user', payload)
+        }))
+        this.#eventUnsubs.push(EventBus.subscribe('ai:assistantMessage', (payload) => {
+            this.#mirrorUiTurn('assistant', payload)
+        }))
+
         LoggerService.info(
             `AI bridge listening on ${base}/request (replies -> ${base}/message${this.#forwardEvents ? `, events -> ${base}/event` : ''})`,
             'AiBridgeMonitor'
@@ -148,7 +175,10 @@ class SAiBridgeMonitor {
 
         // Echo the user frame first so web clients see the prompt immediately while the
         // (potentially slow) inference runs; the assistant frame follows when it lands.
-        this.#publishMessageFrame({ role: 'user', content: text })
+        // The same echo goes out on the EventBus so the terminal UI renders the prompt as a
+        // <remote> line: publishing over MQTT and typing at the keyboard yield one transcript.
+        this.#publishMessageFrame({ role: 'user', content: text, source: BRIDGE_SOURCE })
+        this.#emitTranscript('ai:userMessage', { text, source: BRIDGE_SOURCE })
 
         let reply
         try {
@@ -156,11 +186,15 @@ class SAiBridgeMonitor {
             reply = await AiAssistant.processMessage(text)
         } catch (error) {
             LoggerService.error(`AI bridge turn failed for "${this.#truncate(text)}": ${error.message}`, 'AiBridgeMonitor')
+            // Mirror the UI submit path: a failed turn shows up in chat as a red <AI> error
+            // line instead of vanishing into the logs.
+            this.#emitTranscript('ai:assistantMessage', { text: error.message, source: BRIDGE_SOURCE, error: true })
             return
         }
 
         if (typeof reply === 'string' && reply.trim()) {
-            this.#publishMessageFrame({ role: 'assistant', content: reply })
+            this.#publishMessageFrame({ role: 'assistant', content: reply, source: BRIDGE_SOURCE })
+            this.#emitTranscript('ai:assistantMessage', { text: reply, source: BRIDGE_SOURCE })
         } else {
             LoggerService.debug('AI bridge got an empty reply -- no assistant frame published', 'AiBridgeMonitor')
         }
@@ -169,8 +203,13 @@ class SAiBridgeMonitor {
     /**
      * Extract a usable prompt string from a raw payload. Accepts plain strings and JSON
      * objects with `.text` / `.prompt` / `.message` field aliases; anything else yields ''.
+     *
+     * The extracted text passes through sanitizeText(): a payload arriving on the request
+     * topic is fully external, so terminal control sequences, emoji, out-of-alphabet code
+     * points and forged line breaks are stripped and the prompt is length-capped before it
+     * reaches the LLM, the transcript mirror and the logs.
      * @param {string} raw - Raw MQTT payload
-     * @returns {string} Trimmed prompt text, or '' when nothing usable was found
+     * @returns {string} Sanitized prompt text, or '' when nothing usable was found
      * @private
      */
     #extractPromptText(raw) {
@@ -189,18 +228,49 @@ class SAiBridgeMonitor {
         } catch {
             // Not JSON -- treat the whole payload as the prompt verbatim.
         }
-        return String(candidate).trim()
+        return sanitizeText(String(candidate)).trim()
     }
 
     // -- Outbound frames ------------------------------------------------------
 
     /**
-     * Publish one transcript frame to the message topic: `{ role, content, ts }`.
-     * @param {{role:'user'|'assistant', content:string}} frame - Frame body without timestamp
+     * Publish one transcript frame to the message topic: `{ role, content, source, ts }`.
+     * @param {{role:'user'|'assistant', content:string, source:string}} frame - Frame body without timestamp
      * @private
      */
     #publishMessageFrame(frame) {
         MqttService.publish(`${this.#topicBase}/message`, JSON.stringify({ ...frame, ts: Date.now() }))
+    }
+
+    /**
+     * Publish one transcript line on the shared EventBus channels so the terminal UI's AI
+     * window renders it. Guarded by hasSubscribers() exactly like the periodic automations, so
+     * a --no-ui run stays silent and no payload is built for a listener that never exists.
+     * @param {'ai:userMessage'|'ai:assistantMessage'} channel - Transcript channel
+     * @param {{text:string, source:string, error?:boolean}} payload - Transcript payload
+     * @private
+     */
+    #emitTranscript(channel, payload) {
+        if (!EventBus.hasSubscribers(channel)) return
+        EventBus.emit(channel, payload)
+    }
+
+    /**
+     * Mirror a turn that originated in the terminal UI onto the message topic so every MQTT
+     * subscriber's transcript covers the whole shared conversation. Anything that is not a UI
+     * turn -- in particular our own source:'mqtt' echoes -- is ignored, which is what keeps
+     * this mirror from feeding itself back. Failed UI turns (error:true) stay in the terminal.
+     * @param {'user'|'assistant'} role - Transcript role for the frame
+     * @param {{text?: string, source?: string, error?: boolean}} payload - EventBus transcript payload
+     * @private
+     */
+    #mirrorUiTurn(role, payload = {}) {
+        if (payload.source !== UI_SOURCE || payload.error === true) return
+
+        const content = String(payload.text ?? '').trim()
+        if (!content) return
+
+        this.#publishMessageFrame({ role, content, source: UI_SOURCE })
     }
 
     /**

@@ -30,7 +30,8 @@ import InteractionContainer from './interaction/container/interactionContainer.j
 
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
-import DeviceOfflineMonitor from './monitor/deviceOfflineMonitor.js'
+import ZigbeeDeviceOfflineMonitor from './monitor/zigbeeDeviceOfflineMonitor.js'
+import NetworkDeviceOfflineMonitor from './monitor/networkDeviceOfflineMonitor.js'
 import AiBridgeMonitor from './monitor/aiBridgeMonitor.js'
 
 import AiAssistant     from './ai/aiAssistant.js'
@@ -233,9 +234,14 @@ async function gracefulDeath(reason, errorLevel = 0) {
             VideoPlayerMonitor.stop()
         }
 
-        if (initialized.has('DeviceOfflineMonitor')) {
-            LoggerService.debug('Stopping DeviceOfflineMonitor...', 'Main')
-            DeviceOfflineMonitor.stop()
+        if (initialized.has('ZigbeeDeviceOfflineMonitor')) {
+            LoggerService.debug('Stopping ZigbeeDeviceOfflineMonitor...', 'Main')
+            ZigbeeDeviceOfflineMonitor.stop()
+        }
+
+        if (initialized.has('NetworkDeviceOfflineMonitor')) {
+            LoggerService.debug('Stopping NetworkDeviceOfflineMonitor...', 'Main')
+            NetworkDeviceOfflineMonitor.stop()
         }
 
         if (initialized.has('AiBridgeMonitor')) {
@@ -404,8 +410,11 @@ async function bootstrap() {
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('NetworkPresence', () => NetworkPresence.init())
     await initService('VideoPlayerMonitor', () => VideoPlayerMonitor.init())
-    // Spoken warning when a device leaves the Zigbee network (config-gated per event).
-    await initService('DeviceOfflineMonitor', () => DeviceOfflineMonitor.init(), true)
+    // Spoken warnings for devices leaving the Zigbee mesh and for mission-critical
+    // network hosts going offline (both config-gated per event). Initialized after
+    // NetworkPresence so their startup sweep sees a running presence monitor.
+    await initService('NetworkDeviceOfflineMonitor', () => NetworkDeviceOfflineMonitor.init(), true)
+    await initService('ZigbeeDeviceOfflineMonitor', () => ZigbeeDeviceOfflineMonitor.init(), true)
 
     // AI Assistant -- optional; skipped entirely when unconfigured so startup logs
     // reflect reality instead of claiming a disabled service initialized.
