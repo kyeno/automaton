@@ -37,10 +37,16 @@ video_player_suppression:
   laptop: [playing]
 
 rules:
+  # Sunrise guard: a pre-dawn tick must not switch the lamps off just because the street
+  # sensor already reads daytime. Civil dawn (`sunrise`/`sundawn` resolve to civil twilight)
+  # lands up to ~35 minutes ahead of geometric sunrise at mid-latitudes, and the 20 lux
+  # threshold is crossed inside that gap -- without the guard the lamps go dark while the
+  # room is still in pre-dawn darkness.
   - name: 'Bright morning - turn off leftover lights'
     once: true
     conditions:
       time_of_day: [morning]
+      hour: { gte: sunrise }
       illuminance: { gte: 20 }
     targets:
       Kitchen_Outlet: OFF

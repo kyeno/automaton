@@ -514,6 +514,85 @@ class STemporal {
         const range = typeof period === 'string' ? DAY_PERIODS[period] : undefined
         return Array.isArray(range) ? range[0] : null
     }
+    // -- Clock-bound parsing ------------------------------------------------
+
+    /**
+     * Parse one clock-bound token into a fractional hour on the 0-24 axis.
+     *
+     * Every "what time is it" bound in the system funnels through here so the three
+     * spellings mean the same thing everywhere: a plain hour (`22`, `12.5`), the
+     * colon clock time used by silence windows (`"22:00"`, `"22:00:30"`) and the
+     * NATO-style HHMM spelling used in rule conditions (`1230` is 12:30, `2359` is
+     * 23:59, `0030` is 00:30). The split is unambiguous because a plain hour can
+     * never reach three digits, so a bare `1200` is 12:00 and never a minute count.
+     *
+     * @param {number|string} value - Raw clock-bound token.
+     * @returns {number|null} Fractional hour (0 <= h < 24), or null when the token is
+     *   not a valid clock time (e.g. 24, 1299, "half past six").
+     */
+    parseClockHour(value) {
+        const text = (typeof value === 'string') ? value.trim() : null
+        if (text !== null && !/^(\d{1,2}:\d{2}(:\d{2})?|\d+(\.\d+)?)$/.test(text)) return null
+
+        const colon = (text !== null) ? text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) : null
+        if (colon) {
+            const hour = Number(colon[1])
+            const minute = Number(colon[2])
+            const second = colon[3] ? Number(colon[3]) : 0
+            if (hour > 23 || minute > 59 || second > 59) return null
+            return hour + minute / 60 + second / 3600
+        }
+
+        const numeric = (text !== null) ? Number(text) : value
+        if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return null
+
+        // Three digits or more can only be a HHMM clock time; leading zeros are kept
+        // for strings so "0030" reads as 00:30 rather than as the hour 30.
+        const digits = (text !== null) ? text : String(Math.trunc(numeric))
+        if (/^\d+$/.test(digits) && digits.length >= 3) {
+            const hour = Number(digits.slice(0, -2))
+            const minute = Number(digits.slice(-2))
+            if (hour > 23 || minute > 59) return null
+            return hour + minute / 60
+        }
+
+        return (numeric >= 0 && numeric < 24) ? numeric : null
+    }
+
+    /**
+     * Whether a clock-bound token is written in the NATO-style HHMM spelling, i.e. the
+     * form that carries sub-hour precision. Rule gates compare integer hours on the fast
+     * path; a bound written as `1230` has to be resolved to a fractional hour first, so
+     * callers use this to pick the precise path.
+     *
+     * @param {number|string} value - Raw clock-bound token.
+     * @returns {boolean} True when the token is a valid HHMM clock time (100 and up).
+     */
+    isNatoClockBound(value) {
+        const text = (typeof value === 'string') ? value.trim() : null
+        if (text !== null) return /^\d{3,}$/.test(text)
+        return (typeof value === 'number' && Number.isFinite(value) && Math.trunc(value) >= 100)
+    }
+
+    /**
+     * Render a fractional hour as a zero-padded "HH:MM" clock string.
+     *
+     * Inverse of {@link parseClockHour}, used in rule-evaluation logs so a resolved sun
+     * instant (17.4819...) reads back as the clock time an author would have written
+     * (17:29) instead of a raw float.
+     *
+     * @param {number} hour - Fractional hour on the 0-24 axis.
+     * @returns {string} Zero-padded "HH:MM", or "invalid" for a non-finite / out-of-range hour.
+     */
+    formatClockHour(hour) {
+        if (!Number.isFinite(hour) || hour < 0 || hour >= 24) return 'invalid'
+        const totalMinutes = Math.min(Math.round(hour * 60), 1439)
+        const h = String(Math.floor(totalMinutes / 60)).padStart(2, '0')
+        const m = String(totalMinutes % 60).padStart(2, '0')
+        return `${h}:${m}`
+    }
+
+
 
     /**
      * Return a human-readable string for the current season.

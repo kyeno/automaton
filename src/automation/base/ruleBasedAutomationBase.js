@@ -736,10 +736,12 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 // which applies uniformly to every listed device -- fall back to it when no
                 // target-specific command was found.
                 const commands = []
+                const contributions = []
                 for (const rule of matchingRules) {
                     const cmd = rule.targets?.[tk]
                     if (cmd !== undefined) {
                         commands.push(cmd)
+                        contributions.push(`${rule.name ?? 'unnamed rule'}=${cmd}`)
                     }
                 }
 
@@ -753,13 +755,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
                 if (commands.length === 0) return
 
-                // Log which rules contributed to this device's decision
-                if (commands.length > 1) {
-                    this.log(
-                        `${dev.getName()}: ${commands.length} rules matched, resolving: [${commands.join(', ')}]`,
-                        'debug'
-                    )
-                }
+                // Log every rule that contributed to this device's decision, by name. The
+                // merge is most-closed-wins, so one CLOSE from a park rule silently outranks
+                // every OPEN in the same tick; naming the contributors is what makes that
+                // outcome traceable from the log instead of guessable.
+                this.log(
+                    `${dev.getName()}: merged ${contributions.length} contribution(s) [${contributions.join(', ')}]`,
+                    'debug'
+                )
 
                 // Resolve via subclass hook - e.g., blinds use "lowest position wins"
                 const result = this.resolveCommand(dev, tk, matchingRules)
@@ -1080,13 +1083,16 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
     /**
      * Epoch-ms instant for the given local clock hour on the current calendar day.
+     * Accepts fractional hours (12.5 -> 12:30) so NATO-style and sun-derived bounds land on
+     * their exact minute instead of being truncated to the top of the hour.
      * @private
-     * @param {number} hour - Hour of day (0-23).
-     * @returns {number} Epoch milliseconds at HH:00:00 today.
+     * @param {number} hour - Hour of day (0-24, fractional allowed).
+     * @returns {number} Epoch milliseconds at that clock time today.
      */
     #todayAtHour(hour) {
         const now = new Date()
-        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0).getTime()
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+            + Math.round(hour * 3_600_000)
     }
 
     /**
@@ -1112,8 +1118,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         if (typeof spec === 'number' && Number.isFinite(spec)) {
-            const hour = Math.trunc(spec)
-            return (hour >= 0 && hour <= 23) ? this.#todayAtHour(hour) : null
+            const hour = temporal.parseClockHour(spec)
+            return hour !== null ? this.#todayAtHour(hour) : null
         }
 
         if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
@@ -1136,9 +1142,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /**
-     * Resolve a single `hour:` bound (number or sun shorthand) to a finite number on the hour axis.
-     * Sun shorthands map to today's dawn/dusk fractional hour derived from the context instants; plain
-     * numbers pass through unchanged. Returns NaN for anything unresolvable so callers fail closed.
+     * Resolve a single `hour:` bound to a finite number on the hour axis.
+     *
+     * Sun shorthands map to today's dawn/dusk fractional hour derived from the context
+     * instants; every other spelling (plain hour, fractional hour, "HH:MM", NATO-style HHMM
+     * such as 1230) goes through temporal.parseClockHour() so the same token means the same
+     * moment as it does in a silence window. Returns NaN for anything unresolvable so
+     * callers fail closed.
+     *
      * @private
      * @param {*} value - Bound value from an `hour:` condition object.
      * @param {{}} context - Evaluation context carrying sundawn/sundusk epoch-ms (or null).
@@ -1146,20 +1157,28 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @returns {number} Resolved numeric hour, or NaN when the value cannot be resolved.
      */
     #resolveHourValue(value, context, startOfTodayMs) {
-        if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
-        const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
-        let instantMs = null
-        if (normalized === 'sunrise' || normalized === 'sundawn') instantMs = context.sundawn ?? null
-        else if (normalized === 'sunset' || normalized === 'sundusk') instantMs = context.sundusk ?? null
-        if (instantMs === null || !Number.isFinite(instantMs)) return NaN
-        return (instantMs - startOfTodayMs) / 3_600_000
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase()
+            let instantMs = null
+            if (normalized === 'sunrise' || normalized === 'sundawn') instantMs = context.sundawn ?? null
+            else if (normalized === 'sunset' || normalized === 'sundusk') instantMs = context.sundusk ?? null
+            if (instantMs !== null) {
+                return Number.isFinite(instantMs) ? (instantMs - startOfTodayMs) / 3_600_000 : NaN
+            }
+        }
+        const clockHour = temporal.parseClockHour(value)
+        return (clockHour !== null) ? clockHour : NaN
     }
 
     /**
-     * Evaluate an `hour:` bounds object against the current time, supporting sun-event shorthands.
-     * Plain-numeric bounds keep the legacy integer-hour semantics exactly; when any bound is a sun
-     * shorthand every bound resolves to a fractional hour and comparison runs on sub-hour precision so
-     * e.g. `{ gte: sunrise }` fires at/after the real sunrise moment rather than the next whole hour.
+     * Evaluate an `hour:` bounds object against the current time.
+     *
+     * Plain-integer bounds keep the legacy whole-hour semantics on the fast path. The moment
+     * any bound is a sun shorthand ("sunrise"/"sundusk") or a NATO-style HHMM clock time
+     * ("1230"), every bound is resolved to a fractional hour and compared against the exact
+     * current time-of-day, so `{ gte: sunrise }` fires at the real dawn moment and
+     * `{ lte: 1230 }` stops at 12:30 rather than at 12:00.
+     *
      * @private
      * @param {number} nowHour - Current local clock hour (integer 0-23).
      * @param {{lt?: number|string, lte?: number|string, gt?: number|string, gte?: number|string}} constraints - Hour bounds object.
@@ -1168,8 +1187,12 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      */
     #matchesHourBounds(nowHour, constraints, context) {
         const ops = ['lt', 'lte', 'gt', 'gte']
-        const usesSun = ops.some((op) => constraints[op] !== undefined && this.#isSunShorthand(constraints[op]))
-        if (!usesSun) return this.#matchesNumericRange(nowHour, constraints)
+        const precise = ops.some((op) => {
+            const bound = constraints[op]
+            if (bound === undefined) return false
+            return this.#isSunShorthand(bound) || temporal.isNatoClockBound(bound)
+        })
+        if (!precise) return this.#matchesNumericRange(nowHour, constraints)
 
         // At least one sun shorthand -> precise path: resolve every bound to a fractional hour and
         // compare against the exact current time-of-day (sub-hour granularity).

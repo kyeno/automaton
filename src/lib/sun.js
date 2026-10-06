@@ -3,7 +3,12 @@
  *
  * Wraps the NREL-based solar-position math so rule automations can reference real
  * dawn/dusk instants ("sundawn"/"sundusk") without each one re-implementing the
- * astronomy. Observer coordinates are read from the main configuration's
+ * astronomy. Dawn/dusk are the civil-twilight boundaries (sun 6 degrees below the horizon
+ * -- the point at which the outside is bright enough to work by), falling back to the
+ * geometric sunrise/sunset on the polar days where civil twilight is undefined; daylight
+ * gating wants civil twilight, not geometric sunrise, which runs up to ~25 minutes later
+ * at mid-northern latitudes and far longer through the deep-twilight winter months.
+ * Observer coordinates are read from the main configuration's
  * `locale.geo_latitude` / `locale.geo_longitude`; results are memoized per local calendar day +
  * coordinate pair so repeated ticks across many automations stay cheap. The module
  * degrades gracefully -- missing/invalid coordinates or polar no-rise/no-set days
@@ -56,6 +61,8 @@ class SSolar {
     /**
      * Resolve the dawn/dusk instants for a moment's calendar day at the configured location.
      *
+     * Dawn/dusk are civil-twilight boundaries (start/end of civil twilight), each falling
+     * back to the geometric sunrise/sunset when civil twilight is undefined that day.
      * Returns absolute-instant `Date` objects (compare via `.getTime()` against `new Date()`);
      * each is null when the sun does not rise/set that day (polar conditions). Memoized per
      * local-day + coordinate pair. Never throws -- unconfigured/invalid geo yields both-null.
@@ -74,8 +81,8 @@ class SSolar {
         try {
             const times = getSunTimes(coords.latitude, coords.longitude, date)
             result = {
-                sundawn: times?.sunrise ?? null,
-                sundusk: times?.sunset ?? null,
+                sundawn: times?.twilight?.civilDawn ?? times?.sunrise ?? null,
+                sundusk: times?.twilight?.civilDusk ?? times?.sunset ?? null,
             }
         } catch (error) {
             LoggerService.warn(`Failed to compute sun times for ${coords.latitude},${coords.longitude}: ${error.message}`, 'Solar')

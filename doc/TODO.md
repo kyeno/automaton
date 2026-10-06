@@ -1,6 +1,26 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- DONE: FIXME: Is using hours (sunrise/sunset) in home-office-rolers automation
+  fucking things up?! -- Yes, it was, and it is fixed. The sun gates now resolve to
+  civil twilight (not the geometric disc edge), the roller open rule is gated behind
+  dawn *and* behind the park rule's illuminance floor, and `hour:` bounds accept
+  minute-precision clock times (`1230` == 12:30) so the 12:30 shading boundary is
+  writeable at all. See doc/architecture/time-of-day-periods.md and
+  tests/test-roller-morning-darkness.js.
+
+- Add safety validation for incoming MQTT messages with texts. Remove unwanted
+  characters like emoji, remove special characters, leave just UTF8 responsible
+  for basic languages (slavic, germanic, hispanic, etc)
+- Always display date and sunrise+sunset hours for the day in UI's sensors window (2)
+  Remember to refresh it (as everything) so it doesn't get stale
+- Add a UI window for "last matched rule(s)" for each RuleBasedAutomation
+  (easier rules debugging)
+- Implement simple personalization by adding a config option allowing to name
+  the AI; then in the main prompts it should replace "Nazywasz się Gerwazy" with
+  interpolation, "Nazywasz się {% name %}" (or something). Also, the UI chat
+  window (3) should then rename "AI" to the assistant's name in both "join"
+  message, chat messages and actions.
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
   pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
   lamps come back mid-browse whenever it's already dark enough (parity with the old
@@ -63,7 +83,22 @@
 - Keep goodbyes distinct from greetings: separate bundle buckets/sentences per host, so "see you later" never reads like a welcome-back and vice versa.
 - Guard against chatter: a quick step-away must not trigger both a greeting and a goodbye; consider suppressing the next-day welcome right after an already-said goodbye (and deduping repeat offline events).
 
-### LATER: Assistant personalization
+## BitchX UI
+- BUG: When detaching screen in a bigger terminal window and reattaching in a
+  smaller one - automaton crashes with deadlock/livelock (CPU spike)
+- BUG: Try to fix the re-render flicker (not sure if possible with termkit)
+- LATER: Improve how things are redrawn by statusbar; it seems to be constantly reading files
+- LATER: Consistent color palette across all windows (status bar, device window)
+- MAYBELATER: Proper nick highlighting (own messages emphasized in chat)
+- MAYBELATER: Nicer slash commands output, some color formatting etc.
+- VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
+
+### Slash commands
+- MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
+- MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
+- LATER: Debug timers (LATER)
+
+## MAYBE LATER: AI Assistant personalization
 - Dynamic model temperature settings per persona!
 - Example:
 personas:
@@ -86,21 +121,6 @@ personas:
     voice_model: "en_US-vctk-medium.onnx"
     speaker_id: 42
     sox_effects: "pitch 300 speed 1.1 tempo 1.05"
-
-## BitchX UI
-- BUG: When detaching screen in a bigger terminal window and reattaching in a
-  smaller one - automaton crashes with deadlock/livelock (CPU spike)
-- BUG: Try to fix the re-render flicker (not sure if possible with termkit)
-- LATER: Improve how things are redrawn by statusbar; it seems to be constantly reading files
-- LATER: Consistent color palette across all windows (status bar, device window)
-- MAYBELATER: Proper nick highlighting (own messages emphasized in chat)
-- MAYBELATER: Nicer slash commands output, some color formatting etc.
-- VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
-
-### Slash commands
-- MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
-- MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
-- LATER: Debug timers (LATER)
 
 ---
 

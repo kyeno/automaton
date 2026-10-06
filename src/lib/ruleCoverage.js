@@ -262,10 +262,28 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
         if (typeof constraint === 'number') {
             if (!Number.isInteger(ctx.hour) || Math.trunc(constraint) !== ctx.hour) return false
         } else if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
+            const ops = ['lt', 'lte', 'gt', 'gte']
             // Sun-event shorthands ('sunrise'/'sunset', ...) depend on real dawn/dusk instants that are not part
             // of the static clock grid -- treat them as satisfied (like after_latest_of/after_earliest_of).
-            const usesSunShorthand = ['lt', 'lte', 'gt', 'gte'].some((op) => SUN_HOUR_SHORTHANDS.has(String(constraint[op] ?? '').trim().toLowerCase()))
-            if (!usesSunShorthand && !matchesNumericRange(ctx.hour ?? null, constraint)) return false
+            const usesSunShorthand = ops.some((op) => SUN_HOUR_SHORTHANDS.has(String(constraint[op] ?? '').trim().toLowerCase()))
+            if (!usesSunShorthand) {
+                // NATO-style HHMM bounds (1230 == 12:30) carry minute precision and must be resolved to
+                // fractional hours before comparing: the raw 1230 dwarfs every swept hour, which would make
+                // the bound look always-satisfied and hide the gap it actually creates.
+                const resolved = {}
+                for (const op of ops) {
+                    const bound = constraint[op]
+                    if (bound === undefined) continue
+                    if (temporal.isNatoClockBound(bound)) {
+                        const clockHour = temporal.parseClockHour(bound)
+                        if (clockHour === null) return false // malformed clock time -> fail closed
+                        resolved[op] = clockHour
+                    } else {
+                        resolved[op] = bound
+                    }
+                }
+                if (!matchesNumericRange(ctx.hour ?? null, resolved)) return false
+            }
         } else {
             return false
         }

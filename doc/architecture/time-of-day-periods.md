@@ -32,6 +32,23 @@ That made rule behavior hard to reason about ("why did this fire at 7am in June 
 - **`once:` scoping.** A per-rule daily marker (`once: true`) is scoped per time window when the rule carries a `time_of_day:` condition — see [Configuration Guide → once](../configuration.md). In practice: a morning-only cleanup rule re-arms automatically after its window ends, while an all-day rule fires at most once until midnight.
 - **Priority & overlap.** When several rules match simultaneously, higher `priority` wins (ties keep config order); the losing rules' targets are still merged under most-closed-wins semantics where applicable. `/automation debug <name>` shows each rule's condition summary so overlaps stay visible.
 
+## Sun-Aware Gates On Top Of The Clock
+
+Because the periods are pure clock labels, anything that must follow the real sky is written explicitly. Three mechanisms compose with `time_of_day:` (all of them AND with it):
+
+| Mechanism | What it gates on |
+|-----------|------------------|
+| `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | Today's **civil** dawn / dusk, at sub-hour precision |
+| `after_latest_of: [sundusk, { hour: 19 }]` | The later of several candidate instants |
+| `after_earliest_of: [sundawn, 'morning']` | The earlier of several candidate instants |
+
+**Why civil twilight, not sunrise/sunset.** These gates exist to answer "is it day outside?" for rules that also read an illuminance sensor. The geometric disc edge is *not* that boundary: at 52°N the sky is already bright enough for a street sensor to report daytime values ~33 minutes before sunrise, and stays bright ~34 minutes after sunset. A rule gated on the geometric instant therefore fires in pre-dawn darkness. `sundawn`/`sundusk` (and the `sunrise`/`sunset` tokens, which resolve to the same instants) therefore map to civil twilight -- the sun 6° below the horizon -- computed by `sunrise-sunset-js` from `locale.geo_latitude`/`locale.geo_longitude` (see [`src/lib/sun.js`](../../src/lib/sun.js)). The geometric instants are computed alongside and exposed to automations as the `sunrise`/`sunset` context fields.
+
+**Minute-precision clock bounds.** `hour:` bounds accept clock times, not just whole hours: `1230` (NATO-style `HHMM`), `'12:30'`, and `12.5` all mean half past twelve. Values `0..23` stay plain hours, so existing rules are unaffected. This is what makes a mid-day boundary like "the sun clears the building at 12:30" writeable at all -- the hour axis tops out at 23, so a bare `1230` used to be a silent no-op. Malformed clock times (`24`, `99`, `1299`) fail closed.
+
+**The pre-dawn desync this fixed.** On 2026-10-06 in Warsaw civil dawn was 06:11 and geometric sunrise 06:45. The street illuminance sensor crossed the 20 lux daytime threshold before 06:06, so the ambient-lights morning rule switched the lamps off in pitch darkness while the roller rules -- gated on geometric sunrise -- kept the windows shaded. Both automations are now gated behind civil dawn, and the roller open rule is additionally gated behind the park rule's illuminance floor so a partial shading position out-votes `OPEN` in the same tick. See [`tests/test-roller-morning-darkness.js`](../../tests/test-roller-morning-darkness.js).
+
+
 ## History: What Changed in c1e8c6f
 
 | Season group | Old scheme (sun-derived averages) | New fixed partition |

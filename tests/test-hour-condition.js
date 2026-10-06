@@ -267,6 +267,34 @@ console.log('')
 }
 
 console.log('')
+console.log('-- NATO-style HHMM bounds carry minute precision --')
+console.log('')
+
+{
+    // The office shading bound: released at 12:30, when the sun sits over the building.
+    // Written as a plain hour this was a silent no-op (the hour axis tops out at 23).
+    const lteRules = [{ name: 'before 12:30', conditions: { hour: { lte: 1230 }, illuminance: { lt: 11000 } }, targets: { Roller_Left: 'CLOSE' } }]
+    let d = await runAt(11, lteRules, 500)
+    assertCalls(d, 'Roller_Left', ['CLOSE'], 'lte: 1230 at 11:30 -> dispatches')
+    d = await runAt(12, lteRules, 500)
+    assertCalls(d, 'Roller_Left', ['CLOSE'], 'lte: 1230 at 12:30 -> dispatches (inclusive at the minute)')
+    d = await runAt(13, lteRules, 500)
+    assertCalls(d, 'Roller_Left', [], 'lte: 1230 at 13:30 -> inert (bound is 12:30, not 12:00)')
+
+    const gteRules = [{ name: 'after 12:30', conditions: { hour: { gte: 1230 } }, targets: { Roller_Left: 'OPEN' } }]
+    d = await runAt(12, gteRules, 500)
+    assertCalls(d, 'Roller_Left', ['OPEN'], 'gte: 1230 at 12:30 -> dispatches')
+    d = await runAt(11, gteRules, 500)
+    assertCalls(d, 'Roller_Left', [], 'gte: 1230 at 11:30 -> inert')
+
+    // A HHMM spelling that is not a clock time fails closed instead of passing silently.
+    const bogusRules = [{ name: 'bogus clock', conditions: { hour: { lte: 1299 } }, targets: { Roller_Left: 'CLOSE' } }]
+    d = await runAt(12, bogusRules, 500)
+    assertCalls(d, 'Roller_Left', [], 'lte: 1299 (not a clock time) -> fails closed')
+}
+
+
+console.log('')
 console.log('-- Static analyzer mirrors runtime semantics --')
 console.log('')
 
@@ -281,6 +309,13 @@ console.log('')
     assert(evaluateRule({ hour: { gte: 23 } }, {}) === false, 'evaluateRule: absent clock context fails closed')
     // Malformed values fail closed too.
     assert(evaluateRule({ hour: 'late' }, { hour: 23 }) === false, 'evaluateRule: malformed value fails closed')
+    // NATO-style HHMM bounds resolve to fractional hours before the swept hour compares.
+    assert(evaluateRule({ hour: { lte: 1230 } }, { hour: 12 }) === true, 'evaluateRule: lte 1230 covers hour 12')
+    assert(evaluateRule({ hour: { lte: 1230 } }, { hour: 13 }) === false, 'evaluateRule: lte 1230 rejects hour 13')
+    assert(evaluateRule({ hour: { gte: 1230 } }, { hour: 13 }) === true, 'evaluateRule: gte 1230 covers hour 13')
+    assert(evaluateRule({ hour: { gte: 1230 } }, { hour: 12 }) === false, 'evaluateRule: gte 1230 rejects hour 12')
+    assert(evaluateRule({ hour: { lte: 1299 } }, { hour: 12 }) === false, 'evaluateRule: malformed NATO bound fails closed')
+
 
     // 'hour' is reserved -- never collected as a sensor dimension for scenario grids.
     const keys = collectSensorKeys([{ conditions: { hour: { gte: 23 }, illuminance: { lte: 15 } } }])
@@ -303,6 +338,29 @@ console.log('')
     assert(at(22).coveredScenarios === 0, 'sweep: 22h uncovered')
     assert(at(16).coveredScenarios === 0, 'sweep: afternoon uncovered')
     assert(at(2).coveredScenarios === 0, 'sweep: early morning uncovered')
+}
+
+{
+    // Full sweep: the office shading bound releases at 12:30, so the rule must stop
+    // covering the day at 13h. Comparing the raw 1230 against swept hours would have
+    // made it look like it covered every hour of the day.
+    const NATO_RULES = [
+        {
+            name: 'Shaded until 12:30',
+            conditions: { hour: { lte: 1230 }, illuminance: { gte: 200 } },
+            targets: { Roller_Left: 'CLOSE' }
+        }
+    ]
+    const report = analyzeRules({
+        rules: NATO_RULES,
+        periodMap: temporal.getHourToPeriodMap(),
+        scenarios: [{ label: 'daylight', context: { illuminance: 500 }, sensors: { illuminance: 500 } }]
+    })
+    const at = (h) => report.hours.find((x) => x.hour === h)
+    assert(at(11).coveredScenarios === 1, 'sweep: lte 1230 covers 11h')
+    assert(at(12).coveredScenarios === 1, 'sweep: lte 1230 covers 12h')
+    assert(at(13).coveredScenarios === 0, 'sweep: lte 1230 stops covering at 13h (NATO resolved to 12.5)')
+    assert(at(20).coveredScenarios === 0, 'sweep: lte 1230 covers the evening (raw 1230 would have covered it)')
 }
 
 console.log('')

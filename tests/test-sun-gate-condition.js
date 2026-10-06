@@ -34,6 +34,9 @@ import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
 import solar from '../src/lib/sun.js'
+import { getSunTimes as astroTimes } from 'sunrise-sunset-js'
+import temporal from '../src/lib/date.js'
+
 import { evaluateRule, collectSensorKeys } from '../src/lib/ruleCoverage.js'
 
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
@@ -209,6 +212,48 @@ console.log('')
         'mixed sun + numeric hour bound treated as satisfied statically')
     assert(evaluateRule({ hour: { gte: 6 } }, { hour: 5 }) === false,
         'plain numeric hour bound still evaluated statically (no regression)')
+}
+
+console.log('')
+console.log('-- sundawn/sundusk resolve to civil twilight, not geometric sunrise/sunset --')
+console.log('')
+{
+    // Warsaw, 6 October 2026 -- the morning the ambient lamps went dark in pre-dawn
+    // darkness. Civil dawn leads geometric sunrise by ~33 minutes there, and that gap is
+    // exactly where daylight-gated rules used to misfire.
+    const WARSAW_LAT = 52.2307
+    const WARSAW_LON = 21.0122
+    const OCT6 = new Date(2026, 9 /* October */, 6, 12, 0, 0, 0)
+    const oct6Midnight = new Date(2026, 9, 6).setHours(0, 0, 0, 0)
+    const clockOf = (d) => temporal.formatClockHour((d.getTime() - oct6Midnight) / 3_600_000)
+
+    const restore = stubEpoch(OCT6.getTime())
+    let gate, astro
+    try {
+        gate = solar.getSunTimes(OCT6)
+        astro = astroTimes(WARSAW_LAT, WARSAW_LON, OCT6)
+    } finally { restore() }
+
+    assert(gate.sundawn.getTime() === astro.twilight.civilDawn.getTime(),
+        `sundawn == twilight.civilDawn (${clockOf(gate.sundawn)})`)
+    assert(gate.sundusk.getTime() === astro.twilight.civilDusk.getTime(),
+        `sundusk == twilight.civilDusk (${clockOf(gate.sundusk)})`)
+    assert(gate.sundawn.getTime() < astro.sunrise.getTime(),
+        `sundawn (${clockOf(gate.sundawn)}) precedes geometric sunrise (${clockOf(astro.sunrise)})`)
+    assert(gate.sundusk.getTime() > astro.sunset.getTime(),
+        `sundusk (${clockOf(gate.sundusk)}) trails geometric sunset (${clockOf(astro.sunset)})`)
+
+    // What a rule sees at the clock: the dawn bound is satisfied just after civil dawn,
+    // and stays inert in the pre-dawn darkness that used to trigger the lights-off.
+    const dawnMs = gate.sundawn.getTime()
+    assert(await match({ hour: { gte: 'sunrise' } }, { sundawn: dawnMs }, new Date(2026, 9, 6, 6, 20).getTime()) === true,
+        'gte sunrise fires at 06:20 -- civil dawn (06:11) already passed')
+    assert(await match({ hour: { gte: 'sunrise' } }, { sundawn: dawnMs }, new Date(2026, 9, 6, 6, 6).getTime()) === false,
+        'gte sunrise stays inert at 06:06 -- pre-dawn darkness is not daylight')
+    assert(await match({ hour: { gte: 'sunset' } }, { sundusk: gate.sundusk.getTime() }, new Date(2026, 9, 6, 18, 20).getTime()) === false,
+        'gte sunset stays inert at 18:20 -- civil dusk (18:36) has not ended the day')
+    assert(await match({ hour: { gte: 'sunset' } }, { sundusk: gate.sundusk.getTime() }, new Date(2026, 9, 6, 18, 40).getTime()) === true,
+        'gte sunset fires at 18:40 -- civil dusk passed')
 }
 
 console.log('')

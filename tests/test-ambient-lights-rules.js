@@ -32,6 +32,8 @@ import { createClient } from 'redis'
 import ConfigService from '../src/service/configService.js'
 import CacheService from '../src/service/cacheService.js'
 import LoggerService from '../src/service/loggerService.js'
+import solar from '../src/lib/sun.js'
+
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
 import AmbientLightsAutomation from '../etc/automation/ambientLightsAutomation.js'
@@ -138,6 +140,7 @@ writeFileSync(TEST_CONFIG_PATH, [
     '    once: true',
     '    conditions:',
     '      time_of_day: [morning]',
+    "      hour: { gte: 'sunrise' }",
     '      illuminance: { gte: 20 }',
     '    targets:',
     '      Kitchen_Outlet: OFF',
@@ -182,7 +185,13 @@ class TestAmbient extends AmbientLightsAutomation {
  */
 async function runScenario(context, triggerData = {}) {
     const devices = new Map(ALL_IDS.map(id => [id, makeStubDevice(id)]))
-    const auto = new TestAmbient(devices, context)
+    const auto = new TestAmbient(devices, {
+        // Sun gates resolve against the stubbed clock's own day, so dawn-gated rules stay
+        // satisfied in scenarios that are not specifically about the dawn boundary.
+        sundawn: solar.getSunTimes(new Date()).sundawn.getTime(),
+        sundusk: solar.getSunTimes(new Date()).sundusk.getTime(),
+        ...context,
+    })
     await auto.execute({ trigger: 'test', ...triggerData })
     return devices
 }
@@ -343,6 +352,51 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     assert(await auto.conditionsMatch({ season: ['summer', 'autumn'] }, {}), 'multi-value season list matches on one hit')
     restoreJul()
 }
+// Pre-dawn guard (regression): the "Bright morning" rule is gated behind civil dawn via
+// `hour: { gte: 'sunrise' }`. On an October morning the street sensor crossed the daytime
+// lux threshold before dawn, and the 06:06 tick switched the lamps off in pitch darkness
+// while the windows stayed shaded. With the gate in force the same tick must stay inert,
+// and the first tick past dawn must run the morning routine.
+{
+    const RealDate = global.Date
+    const stubClock = (hour, minute) => {
+        class FakeDate extends RealDate {
+            constructor(...args) { if (args.length === 0) super(2026, 9, 6, hour, minute, 0, 0); else super(...args) }
+            static now() { return new RealDate(2026, 9, 6, hour, minute, 0, 0).getTime() }
+        }
+        global.Date = FakeDate
+        return () => { global.Date = RealDate }
+    }
+    const civilDawn = new Date(2026, 9, 6, 6, 11, 43, 0).getTime()
+
+    // Fresh once-markers per tick so the gate, not a consumed daily slot, decides the outcome.
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    cacheProto.get = async () => undefined
+    cacheProto.set = async () => true
+
+    // 06:06 -- daytime lux, still in pre-dawn darkness -> the morning rule must not run.
+    const restore = stubClock(6, 6)
+    let devices
+    try {
+        devices = await runScenario({ illuminance: 20, timeOfDay: 'morning', sundawn: civilDawn })
+    } finally { restore() }
+    for (const id of ALL_IDS) expectPayload(devices, id, null)
+
+    // 06:20 -- the first tick past civil dawn -> the morning routine runs and clears the lamps.
+    const restore2 = stubClock(6, 20)
+    try {
+        devices = await runScenario({ illuminance: 20, timeOfDay: 'morning', sundawn: civilDawn })
+    } finally { restore2() }
+    for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
+
+    cacheProto.get = origGet
+    cacheProto.set = origSet
+}
+
+
+
 
 console.log(`\n${'═'.repeat(50)}`)
 console.log(`  Results: ${passed}/${passed + failed} passed${failed > 0 ? `, ${failed} failed` : ''}`)

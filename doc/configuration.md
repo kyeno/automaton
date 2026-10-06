@@ -85,7 +85,7 @@ locale:
   geo_longitude: 21.0122  # WGS84 decimal degrees; positive = east  (-180..180)
 ```
 
-- **`locale.geo_latitude`** / **`locale.geo_longitude`** -- Your site's position (decimal degrees, WGS84). Both are optional numbers; when missing/invalid the sun shorthands resolve to nothing and any gate relying on them fails closed (the rule simply never fires) rather than guessing. The values feed `sunrise-sunset-js`, which computes real dawn/dusk instants for the current calendar day.
+- **`locale.geo_latitude`** / **`locale.geo_longitude`** -- Your site's position (decimal degrees, WGS84). Both are optional numbers; when missing/invalid the sun shorthands resolve to nothing and any gate relying on them fails closed (the rule simply never fires) rather than guessing. The values feed `sunrise-sunset-js`, which computes today's **civil** dawn/dusk instants -- the sun 6° below the horizon, when the sky is effectively day -- for the current calendar day. Geometric sunrise/sunset are computed alongside them and exposed to automations as the `sunrise`/`sunset` context fields for the rare rule that wants the disc edge itself.
 
 ### TTS Configuration
 
@@ -325,9 +325,22 @@ The optional `hour:` condition gates rules against the **actual local clock hour
 | `hour: 4` | Exactly 04:00-04:59 |
 | `hour: { gt: 22 }` / `{ gte: 23 }` | After / at-or-after that hour |
 | `hour: { lt: 5 }` / `{ lte: 2 }` | Before / up-to-and-including that hour |
-| `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | At/after real sunrise, before/at real sunset (also `sundawn`/`sundusk`) |
+| `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | At/after real first light, before/at real end of day (also `sundawn`/`sundusk`) |
+| `hour: { gte: 1230 }` / `{ lte: '12:30' }` | At/after 12:30, before/at 12:30 -- minute-precision clock bounds |
 
 Unlike `time_of_day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
+
+**Minute-precision clock bounds.** A plain hour bound tops out at 23, so a mid-day boundary such as "the sun is over the building from 12:30" was previously unwriteable. Bounds now also accept clock times, accepted as integers or strings in three spellings:
+
+| Spelling | Example | Resolves to |
+|----------|---------|-------------|
+| NATO-style `HHMM` | `1230`, `'0030'`, `2359` | 12:30, 00:30, 23:59 |
+| Colon clock time | `'12:30'`, `'22:00:30'` | 12:30, 22:00:30 |
+| Fractional hour | `12.5` | 12:30 |
+
+Values in `0..23` stay plain hours, so `hour: { gte: 23 }` keeps its existing meaning. A number that parses as a clock time is always read as a clock time: `100` is `01:00`, not 100 o'clock. Anything outside both readings (`24`, `99`, `1299`, `'abc'`) is malformed and fails closed. The static analyzer resolves these bounds to fractional hours before sweeping the clock grid, so a `lte: 1230` bound correctly stops covering the day at 13h.
+
+**Sun tokens are civil twilight.** `sundawn`/`sunrise` and `sundusk`/`sunset` resolve to the *civil* twilight boundaries -- the sun 6° below the horizon, when the sky is effectively day -- not the geometric disc edge. At 52°N that is roughly 33 minutes earlier than sunrise in the morning and 34 minutes later than sunset in the evening, and the gap widens with latitude. This is deliberate: rules gated on "daylight" that read a street illuminance sensor must not fire in pre-dawn darkness, and civil twilight is the boundary that matches what the sensor reports. The geometric instants stay available in the automation context as `sunrise`/`sunset` for rules that genuinely want the disc edge.
 
 The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports; a sun-token bound is treated as satisfied there since real dawn/dusk times are not part of the static clock grid.
 
@@ -344,9 +357,10 @@ Each candidate resolves to an absolute instant on the current day:
 
 | Candidate form | Resolves to |
 |----------------|-------------|
-| `"sundusk"` / `"sunset"` | today's real sunset (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
-| `"sundawn"` / `"sunrise"` | today's real sunrise |
+| `"sundusk"` / `"sunset"` | today's civil dusk (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
+| `"sundawn"` / `"sunrise"` | today's civil dawn |
 | `19` or `{ hour: 19 }` | today at 19:00 local |
+| `1230` / `'12:30'` | today at 12:30 local (minute-precision clock time, same spellings as `hour:` bounds) |
 | `'morning'` / `{ 'time_of_day': 'morning' }` | the start-of-day hour of that period (e.g. morning -> 05:00) |
 
 Examples:

@@ -354,6 +354,36 @@ console.log('── day-period boundaries ──\n')
 }
 
 // ---------------------------------------------------------------------------
+// I. Clock-bound parsing -- plain hours, colon clock times, NATO-style HHMM
+// ---------------------------------------------------------------------------
+console.log('── clock-bound parsing ──\n')
+{
+    const cases = [
+        [1230, 12.5, 'NATO HHMM integer'],
+        ['1230', 12.5, 'NATO HHMM string'],
+        ['0030', 0.5, 'leading-zero HHMM keeps its hour'],
+        [2359, 23 + 59 / 60, 'last minute of the day'],
+        [100, 1, 'three digits read as 01:00'],
+        [22, 22, 'plain hour passes through'],
+        ['22', 22, 'numeric string hour passes through'],
+        [12.5, 12.5, 'fractional hour passes through'],
+        ['12.5', 12.5, 'fractional hour string passes through'],
+        ['22:00', 22, 'colon clock time'],
+        ['22:00:30', 22 + 30 / 3600, 'colon clock time with seconds'],
+    ]
+    for (const [input, expected, label] of cases) {
+        const got = temporal.parseClockHour(input)
+        assert(got !== null && Math.abs(got - expected) < 1e-9, `parseClockHour(${JSON.stringify(input)}) == ${expected} (${label})`)
+    }
+
+    const rejected = [24, 99, 1299, '2400', -5, 'abc', null, undefined, {}, '22:99', 12345678]
+    for (const input of rejected) {
+        assert(temporal.parseClockHour(input) === null, `parseClockHour(${JSON.stringify(input)}) rejected as not a clock time`)
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${'═'.repeat(50)}\n  Results: ${passed}/${passed + failed} passed` + (failed ? `, ${failed} FAILED` : '') + `\n${'═'.repeat(50)}\n`)
