@@ -26,6 +26,7 @@ locale:
 ai:
   model: gemma-4-E2B-it      # required for chat requests
   #model: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_P   # recommended for more interesting interaction
+  name: Gerwazy           # the assistant's own name: fills {% name %} in the system prompt and signs the AI window
   max_tokens: -1            # -1 = omit from request, let the provider default apply
   temperature: 1.0          # sampling 0.0-1.0 (lower=deterministic, higher=creative)
   fetch_timeout_ms: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models
@@ -47,12 +48,44 @@ ai_bridge:
 # ALERTS -- spoken notifications for notable system events
 # ----------------------------------------------------------------
 alerts:
+  # Spoken warnings for notable system events (doc/monitors/offline-alerts.md).
+  # Sentences live in etc/i18n/<locale>/alerts.yaml; jingle framing comes from a
+  # profile in etc/i18n/<locale>/tts.yaml `profiles:` or an explicit *_tts_options block.
+
+  # --- Zigbee devices leaving the mesh -------------------------------------
   # Speak a warning when a configured Zigbee device leaves the network
-  device_offline_tts: true
+  zigbee_offline_tts: true
   # Per-device re-warning cooldown ("90s","15m", or ms); 0 = warn on every leave event
-  device_offline_cooldown_ms: "30m"
+  zigbee_offline_cooldown_ms: "30m"
   # Device names never announced (e.g., intentionally removed sensors)
-  device_offline_ignore: []
+  zigbee_offline_ignore: []
+  # Jingle framing profile name from the locale tts.yaml `profiles:` (empty = none)
+  zigbee_offline_tts_profile: ''
+  # Explicit framing wins over the profile, key by key:
+  # zigbee_offline_tts_options:
+  #   intro: 'alarm.wav'
+  #   outro: 'end.wav'
+  #   intro_spacing: -1.5
+
+  # --- Mission-critical network hosts going offline ------------------------
+  # Hosts are polled by NetworkPresence; the names below must exist in
+  # etc/device/network.yaml (IPs live there, never in this file).
+  network_offline_tts: true
+  network_offline_cooldown_ms: "30m"
+  network_offline_ignore: []
+  network_offline_tts_profile: ''
+  # Announce hosts NetworkPresence already found down at startup
+  network_offline_announce_boot: true
+  # Speak the recovery sentence when a watched host comes back
+  network_offline_announce_recovery: false
+  # Allow-list of watched hosts; per-host overrides optional (null = defaults).
+  # Overrides accept cooldown_ms, tts_profile and a tts_options block:
+  # network_offline_devices:
+  #   core-server:                        # name from network.yaml
+  #   dns-server:
+  #     cooldown_ms: "5m"
+  #   wifi-router:
+  #     tts_profile: 'alarm'
 
 # ----------------------------------------------------------------
 # LOGGER -- Winston console/file transports & log file paths
@@ -98,6 +131,9 @@ automation:
 # UI -- terminal interface. See doc/ui/index.md for widget/channel reference.
 # ----------------------------------------------------------------
 ui:
+  # Jingle framing profile for text typed into the TTS window (window 3): a name
+  # from etc/i18n/<locale>/tts.yaml `profiles:`; empty = plain speech
+  tts_profile: ''
   status_bar:
     lines:
       # Line 1 -- time + time-of-day (left); activity indicator follows the left side
@@ -151,3 +187,8 @@ ui:
       title: "TTS"
       shortcut: 4
       readonly: false
+    - id: rules
+      channel: "!rules"
+      title: "Rules"
+      shortcut: 5
+      readonly: true

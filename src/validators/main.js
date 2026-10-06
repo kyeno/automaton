@@ -48,6 +48,7 @@ export default {
         required: true,
         properties: {
             model:                 { type: 'string', required: true },
+            name:                  { type: 'string', required: false },
             max_tokens:            { type: 'number', required: true },
             temperature:           { type: 'number', required: true },
             fetch_timeout_ms:      { type: ['number', 'string'], required: false },
@@ -70,13 +71,31 @@ export default {
     },
 
     // Alerts section -- spoken notifications for notable system events
+    // (src/monitor/zigbeeDeviceOfflineMonitor.js + src/monitor/networkDeviceOfflineMonitor.js)
     alerts: {
         type: 'object',
         required: false,
         properties: {
+            // Zigbee devices leaving the mesh; legacy family (device_offline_*) is
+            // honoured by the monitor with a deprecation warning, so it stays valid here
             device_offline_tts:         { type: 'boolean' },
             device_offline_cooldown_ms: { type: ['number', 'string'] },
-            device_offline_ignore:      { type: 'array' }
+            device_offline_ignore:      { type: 'array' },
+            zigbee_offline_tts:         { type: 'boolean' },
+            zigbee_offline_cooldown_ms: { type: ['number', 'string'] },
+            zigbee_offline_ignore:      { type: 'array' },
+            zigbee_offline_tts_profile: { type: 'string' },
+            zigbee_offline_tts_options: { type: 'object' },
+            // Mission-critical network hosts going offline
+            network_offline_tts:              { type: 'boolean' },
+            network_offline_cooldown_ms:      { type: ['number', 'string'] },
+            network_offline_ignore:           { type: 'array' },
+            network_offline_tts_profile:      { type: 'string' },
+            network_offline_tts_options:      { type: 'object' },
+            network_offline_announce_boot:    { type: 'boolean' },
+            network_offline_announce_recovery:{ type: 'boolean' },
+            // Per-device overrides keyed by device name -- dynamic keys, validated as a map
+            network_offline_devices:          { type: 'object' }
         }
     },
 
@@ -142,6 +161,8 @@ export default {
         type: 'object',
         required: true,
         properties: {
+            // Jingle framing profile for text typed into the UI TTS window
+            tts_profile: { type: 'string' },
             status_bar: {
                 type: 'object',
                 required: true,

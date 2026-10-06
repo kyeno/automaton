@@ -59,13 +59,43 @@ Windows are the primary content area displayed in the main slot. Each window ext
 | `DeviceWindow` | `device` | command | Zigbee device status monitor |
 | `AiWindow` | `ai` | chat | LLM conversation interface |
 | `TtsWindow` | `tts` | chat | Live TTS monitor and direct speak input |
+| `RulesWindow` | `rules` | command | Recent automation rule matches |
 
 > The `ai` and `tts` windows are created only when their backing services are configured (`AI_API_URL` + model for AI, `TTS_API_URL` for TTS). When a service is disabled or unconfigured its window simply does not exist in the UI.
+
+**Device window header:** the `device` window opens with a line carrying the localized current date (the `date_sentence` template of the active locale's date bundle) plus today's sunrise and sunset, rendered `HH:MM` from the configured coordinates. The times are the raw sunrise/sunset, not the civil-twilight instants used for daylight gating in rules; a location without coordinates shows `--:--`. The header is part of the window's 5-second refresh, so the midnight date rollover and the next day's solar times appear by themselves.
+
+**Rules window:** the `rules` window is a read-only table of the most recent automation rule matches — time, automation, rule name, what triggered the run (`timer`, a device topic, `manual`, and `!` for forced runs) and the outcome: `matched` in grey when the rule fired but produced no action, `acted` in green when it led to a device command, a human-interaction deferral or a delegated automation. The newest match is at the bottom, where the live tail is. Opening the window seeds the table from each automation's own history (the last 25 matches per automation), and rows then arrive live on the `automation:ruleMatched` / `automation:ruleActed` EventBus channels published by `RuleBasedAutomationBase`. `/automation debug <name>` prints the same history for one automation.
+
+**Spoken framing in the TTS window:** text you type into the `tts` window is spoken through the same shared framing rules as every other speaker, using the profile named by `ui.tts_profile` (see [TTS Integration](../installation/tts-integration.md)). Unset or unknown means a plain `{ text }` utterance — no jingle is invented for typed input.
 
 The input mode determines how the bottom line is interpreted:
 
 - **command** — typed text logs to the buffer and triggers slash-command dispatch if it starts with `/`
 - **chat** — typed text sent silently to AI without logging to the visible buffer
+
+### AI Transcript Prefixes
+
+The `ai` window keeps one transcript of the whole shared conversation, whoever authored each line. Every
+line is rendered from the same EventBus channels (`ai:userMessage` / `ai:assistantMessage`), so a prompt
+typed at the keyboard and one published on the MQTT AI bridge (`src/monitor/aiBridgeMonitor.js`, topics
+`automaton/ai/*`) take the identical path to the screen:
+
+| Prefix | Meaning |
+|--------|---------|
+| `<you>` | prompt typed in this window (`source: 'ui'`) |
+| `<remote>` | prompt from an external client — MQTT web client / STT backend (`source: 'mqtt'`) |
+| `<system>` | periodic system prompt (weatherman, greeter, gardener) |
+| `<NAME>` | assistant reply — the name is `ai.name` (`<AI>` when unset); rendered red as `[ERROR: …]` when the turn failed |
+
+Lines starting with `*` are status notes rather than conversation: `* AI is thinking...` and
+`* AI thought for N seconds` around each turn, and `* AI turned ON Salon Light` for every device
+interaction the assistant performs.
+
+**Assistant name:** `ai.name` in `etc/automaton.yaml` is the single source of truth for how the
+assistant is named. It fills the `{% name %}` token in the i18n system prompt (`etc/i18n/<locale>/ai.yaml`),
+signs the transcript prefix above, and appears in the device-interaction action lines. Change it and
+`/config reload` picks it up on the next turn; leave it blank and every naming site falls back to `AI`.
 
 ## Channels
 
@@ -91,6 +121,11 @@ ui:
       title: 'TTS'
       shortcut: 4
       readonly: false
+    - id: rules
+      channel: '!rules'
+      title: 'Rules'
+      shortcut: 5
+      readonly: true
 ```
 
 ### Channel Prefixes

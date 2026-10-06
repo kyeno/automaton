@@ -93,13 +93,14 @@ TTS is configured entirely through environment variables and locale-specific i18
 
 - **`TTS_API_URL`** (`.env`) — TTS server API endpoint; service auto-enables when set
 - **`TTS_TCP_ENDPOINT`** (`.env`) — Global audio playback destination (`ip:port`). Can also be overridden per-request via EventBus event payloads or per-locale in `etc/i18n/{locale}/tts.yaml`
-- **Per-request extras** — Components emitting `tts:speak` events may attach extra TTS server parameters to individual utterances (e.g., intro/outro jingle waves); they merge into that request only, with runtime values winning over locale template defaults. Shipped example: the weatherman automation's optional `tts_options` block. See [Weather Man](automations/weatherman.md) and [TTS Integration](installation/tts-integration.md).
+- **Per-request extras** — Components emitting `tts:speak` events may attach extra TTS server parameters to individual utterances (e.g., intro/outro jingle waves); they merge into that request only, with runtime values winning over locale template defaults. Framing is resolved for every speaker by one shared owner (`src/lib/ttsProfiles.js`) from two optional keys -- `tts_profile:` (a named entry of the locale `tts.yaml` `profiles:` registry) and `tts_options:` (explicit fields, winning over the profile field by field). Wired speakers: the weatherman, greeter and gardener automations, the [spoken offline alerts](monitors/offline-alerts.md) and the UI speak window (`ui.tts_profile`). See [TTS Integration](installation/tts-integration.md).
 
 ### AI Section
 
 ```yaml
 ai:
   model: your-model-name
+  name: Gerwazy               # Assistant's own name: fills {% name %} in the system prompt, signs the AI window; blank = "AI"
   max_tokens: -1              # -1 = unlimited (provider default)
   temperature: 1.0            # 0.0 (deterministic) to 1.0 (creative)
   fetch_timeout_ms: "5m"      # Per-request LLM HTTP timeout ("45s"/"5m"/... or plain ms); final, not retried
@@ -170,9 +171,46 @@ ui:
       shortcut: 3
       readonly: false        # Accepts user input
     # ... device (!sensors) and tts (#tts) windows follow the same shape
+    - id: rules
+      channel: "!rules"
+      title: "Rules"
+      shortcut: 5
+      readonly: true         # Read-only: the rule-match table is written by the automations
 ```
 
-Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows exist only when their backing services are configured.
+Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows exist only when their backing services are configured. The `rules` window lists recent automation rule matches (see [UI Windows](ui/index.md)).
+
+```yaml
+ui:
+  tts_profile: ''            # Optional: framing profile for text typed into the TTS speak window
+```
+
+`ui.tts_profile` names an entry of the active locale's `tts.yaml` `profiles:` registry; unset (the default) means typed utterances are spoken plain, with no jingle. See [UI Windows](ui/index.md).
+
+### Alerts Section
+
+Spoken warnings for notable system events -- Zigbee devices leaving the mesh and mission-critical LAN hosts dropping offline. Every key is read per event, so `/config reload` applies changes without a restart.
+
+```yaml
+alerts:
+  zigbee_offline_tts: true            # master switch (default ON)
+  zigbee_offline_cooldown_ms: "30m"   # per-device re-warning window ("90s"/"15m"/plain ms; 0 disables)
+  zigbee_offline_ignore: []           # device names never announced
+  zigbee_offline_tts_profile: ''      # framing profile from the locale tts.yaml profiles: registry
+  # zigbee_offline_tts_options: { intro: 'alarm.wav' }   # explicit framing, wins over the profile
+
+  network_offline_tts: true
+  network_offline_cooldown_ms: "30m"
+  network_offline_ignore: []
+  network_offline_tts_profile: ''
+  network_offline_announce_boot: true       # announce hosts already down at startup
+  network_offline_announce_recovery: false  # speak the way back (opt-in)
+  network_offline_devices:                  # allow-list; names from etc/device/network.yaml
+    core-server:                            # null = family defaults
+    wifi-router: { cooldown_ms: "5m", tts_profile: 'alarm' }   # per-host overrides
+```
+
+Sentences live in the locale's `alerts.yaml` bundle. Full key reference, cooldown semantics and the legacy `device_offline_*` key family: [Offline Alerts](monitors/offline-alerts.md).
 
 ### Logger Section
 
@@ -284,6 +322,13 @@ silence_between: "0500-0900"   # Optional: suppress execution between these loca
 
 video_player_suppression:       # Optional: stand-down guard -- suppress all rules while any listed
   hostname1: [playing, paused, stopped]   # player is in one of the listed statuses (OR across hosts)
+
+tts_profile: 'report'           # Optional (TTS-speaking automations): framing profile from the
+                                # active locale's tts.yaml profiles: registry
+tts_options:                    # Optional: explicit framing, wins over the profile field by field
+  intro: 'intro.wav'            # wave played before the synthesized speech
+  outro: 'outro.wav'            # wave played after the synthesized speech
+  intro_spacing: -2.5           # seconds between intro end and speech start; negative = overlap
 
 rules:
   - name: 'Human-readable rule name'
@@ -532,6 +577,10 @@ Adding `once: true` to a rule makes it act **at most once per local calendar day
 
 Adding `forced_only: true` to a rule makes it participate **only in forced or delegated runs** -- `/automation force <n>` or another automation's forced `invoke_automation`. Natural timer/sensor ticks skip such rules entirely, even when their conditions hold and no once-marker is set. This is useful for rules that should only act when explicitly poked by another automation (e.g., a restore rule that answers a hand-off) without ever firing on their own. Because forced runs neither check nor write once-markers, an invoke-only rule can re-fire on every delegation.
 
+### Rule Match History
+
+Every rule that matches is recorded by the automation that evaluated it: the last 25 matches per automation, newest first, each carrying the automation name, rule name, timestamp, what triggered the run (`timer`, a device topic, `manual`), the forced flag and whether the match led to an action. Matches are published live on the EventBus (`automation:ruleMatched`, then `automation:ruleActed` when the run dispatches a command, defers a device to recent human interaction, or delegates), which is what feeds the [UI rules window](ui/index.md). `/automation debug <name>` prints the same history for one automation. Recording is in-memory only -- a restart starts from an empty history, and a match is recorded even when it produced nothing, which is exactly the case the rules window shows as `matched` rather than `acted`.
+
 ### Season Conditions
 
 The optional `season` condition restricts a rule to specific meteorological seasons:
@@ -592,12 +641,13 @@ Create `<Name>Interaction.js` in `etc/interaction/`, extending `InteractionBase`
 
 ## 6. i18n Bundles
 
-Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains an AI bundle, a TTS bundle, and (for the weatherman automation) a speech bundle, a date bundle, and a proverb list:
+Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains an AI bundle, a TTS bundle, an alerts bundle, and (for the weatherman automation) a speech bundle, a date bundle, and a proverb list:
 
 | File | Purpose | Tracked as |
 |------|---------|-----------|
 | `ai.yaml` | LLM system prompt, tool descriptions, device roles, UI strings | `.yaml` + `.yaml.dist` |
-| `tts.yaml` | Voice model and audio effect settings per locale | `.yaml` + `.yaml.dist` |
+| `tts.yaml` | Voice model and audio effect settings per locale, plus the named `profiles:` framing registry | `.yaml` + `.yaml.dist` |
+| `alerts.yaml` | Spoken sentences for system events (offline alerts) | `.yaml` + `.yaml.dist` |
 | `weatherman.yaml` | Weather announcement sentence templates | `.yaml` + `.yaml.dist` |
 | `date.yaml` | Day/month names, period words, duration units (date helper) | system file, no template |
 | `proverbs.txt.dist` | Starter list to copy to `proverbs.txt`; one proverb per line, drawn at random by the weatherman proverb segment | `.dist` template |
@@ -637,7 +687,22 @@ ui:
 
 ### TTS Bundle (`tts.yaml`)
 
-Defines voice model settings and audio effects per locale. Referenced by the TTS service when generating speech output.
+Defines voice model settings and audio effects per locale. Referenced by the TTS service when generating speech output. It also carries the optional `profiles:` registry of named framing sets (`intro` / `outro` / `intro_spacing`) that speakers reference by name through `tts_profile:`; profiles never carry `output_endpoint`. See [TTS Integration](installation/tts-integration.md).
+
+### Alerts Bundle (`alerts.yaml`)
+
+Sentences spoken by the [offline alert monitors](monitors/offline-alerts.md). A key is either a plain sentence with a `{device}` placeholder, or a per-device map with a `default` entry:
+
+```yaml
+zigbee_device_offline: "Attention, device {device} has left the Zigbee network."
+
+network_device_offline:
+  default: "Attention, {device} is offline."
+  core-server: "Attention, the core server is offline."
+
+network_device_online:
+  default: "{device} is back online."
+```
 
 ### Date Bundle (`date.yaml`)
 

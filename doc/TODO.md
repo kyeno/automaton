@@ -1,14 +1,11 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- DONE: FIXME: Is using hours (sunrise/sunset) in home-office-rolers automation
-  fucking things up?! -- Yes, it was, and it is fixed. The sun gates now resolve to
-  civil twilight (not the geometric disc edge), the roller open rule is gated behind
-  dawn *and* behind the park rule's illuminance floor, and `hour:` bounds accept
-  minute-precision clock times (`1230` == 12:30) so the 12:30 shading boundary is
-  writeable at all. See doc/architecture/time-of-day-periods.md and
-  tests/test-roller-morning-darkness.js.
-
+- Comments .yaml and .yaml.dist comments often differ (f.e. automaton.yaml).
+  Make sure they all remain the same + try to compact them all to minimal state.
+  Remove all the information about "how things changed" or "logic reasoning"
+  behind those choices, or any other forms of elaborates. Keep it to the minimum
+  required for human to comprehend certain setting or a file.
 - Add safety validation for incoming MQTT messages with texts. Remove unwanted
   characters like emoji, remove special characters, leave just UTF8 responsible
   for basic languages (slavic, germanic, hispanic, etc)
@@ -21,6 +18,7 @@
   interpolation, "Nazywasz się {% name %}" (or something). Also, the UI chat
   window (3) should then rename "AI" to the assistant's name in both "join"
   message, chat messages and actions.
+- VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
   pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
   lamps come back mid-browse whenever it's already dark enough (parity with the old
@@ -29,7 +27,6 @@
   semantics in src/monitor/videoPlayerMonitor.js #observe(): pausing after settling does
   NOT reset the dwell clock (resume re-darkens immediately), while switching titles or
   stopping clears the session entirely.
-- LATER (when WiFi is here): Consider monitoring WiFi devices so you can greet our friends by their mobile phone presence
 
 ## HUGE MILESTONES
 - Add WiFi and WiFi devices support
@@ -37,6 +34,8 @@
 - Integrate A/C
 
 ## Architecture
+- BUG: Many config entries have something_timeout or something_cooldown _ms, while they
+  take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
   then add it as an option to tool calling for AI - so it could open the rollers
   for certain amount of time.
@@ -66,17 +65,19 @@
   share the same state with CLI, so that non-tech house dwellers would be able to interact with it.
 
 ## AI & TTS
-- LATER: Add crypto price monitor and TTS automation
-- Allow multiple AI engines configuration and a monitor checking which is online, so we 
-  can route from best to worst
+- Add internet connection online/offline monitor and TTS warning
 - Absurd anecdote generator (driver for AI) -- note: a first iteration already lives inside
   WeatherMan's `ai_prefix` prompt hook (drunken-weather one-liner); the bigger intended
   feature is NOT done yet, do not treat as complete
+- LATER (when WiFi support is here): Monitor WiFi devices so you can greet our friends by their mobile phone presence
+- LATER: Add crypto price monitor and TTS automation
+- LATER: Allow multiple AI engines configuration and a monitor checking which is online, so we 
+  can route from best to worst
 - CONSIDER: Modifying AI so it does not use the same *system prompt* for everything; f.e., 
   Weatherman overrides the system prompt instead of appending the user message. Consider pros vs cons when it comes to inference engine caching
 - CONSIDER: Add quotes database?
-- VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
-- LATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
+- MAYBELATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
+  Maybe build-in a small MCP server?
 
 ### TTS Greeter "Goodbye" enhance ideas
 - Greet only when someone comes back -- extend the greeter to also say goodbye when their computer goes OFFLINE after being up for a while (measure online duration via priorStateDurationMs() on the offline event, symmetric to today's windows).
@@ -84,21 +85,19 @@
 - Guard against chatter: a quick step-away must not trigger both a greeting and a goodbye; consider suppressing the next-day welcome right after an already-said goodbye (and deduping repeat offline events).
 
 ## BitchX UI
+- Consistent color palette across all windows (status bar, device window)
 - BUG: When detaching screen in a bigger terminal window and reattaching in a
   smaller one - automaton crashes with deadlock/livelock (CPU spike)
 - BUG: Try to fix the re-render flicker (not sure if possible with termkit)
 - LATER: Improve how things are redrawn by statusbar; it seems to be constantly reading files
-- LATER: Consistent color palette across all windows (status bar, device window)
 - MAYBELATER: Proper nick highlighting (own messages emphasized in chat)
 - MAYBELATER: Nicer slash commands output, some color formatting etc.
 - VERY LATER: Do something with how ugly DeviceWindow is written. Consider some libs/ANSI helpers?
-
-### Slash commands
 - MAYBELATER: Add slash commands to debug state and eventbus(?); probably rewrite /status command
-- MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
-- LATER: Debug timers (LATER)
+- VERY MAYBELATER: Debug timers (LATER)
+- VERY MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 
-## MAYBE LATER: AI Assistant personalization
+## OBSOLETE: AI Assistant personalization; TODO: Rewrite the idea! Some of it's parts were moved to TTS config, others to naming.
 - Dynamic model temperature settings per persona!
 - Example:
 personas:
