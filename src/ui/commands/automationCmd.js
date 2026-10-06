@@ -43,6 +43,9 @@ import * as ruleCoverage from '../../lib/ruleCoverage.js'
 // Constants
 // ---------------------------------------------------------------------------
 
+/** How many recent rule matches `/automation debug <name>` lists per automation. */
+const DEBUG_RECENT_MATCHES = 8
+
 /** Trigger reason passed to execute() for manual runs -- shown as "Triggered by: manual". */
 const MANUAL_TRIGGER_REASON = 'manual'
 
@@ -259,6 +262,23 @@ class AutomationCmd extends CommandBase {
             && Object.keys(automation.config).length > 0
         if (rules.length === 0 && hasConfigKeys) {
             props.push(['config keys', Object.keys(automation.config).join(', ')])
+        }
+
+        // Recent rule matches this automation recorded -- the same history the UI rules
+        // window renders, scoped to the automation being inspected.
+        if (typeof automation.getRecentRuleMatches === 'function') {
+            const recent = automation.getRecentRuleMatches().slice(0, DEBUG_RECENT_MATCHES)
+            if (recent.length === 0) {
+                props.push(['recent matches', 'none recorded'])
+            } else {
+                recent.forEach((match, index) => {
+                    const forcedTag = match.forced ? ', forced' : ''
+                    props.push([
+                        `match ${index + 1}`,
+                        `${temporal.formatClockTime(new Date(match.at))} "${match.rule}" <- ${match.trigger}${forcedTag} (${match.acted ? 'acted' : 'matched'})`,
+                    ])
+                })
+            }
         }
 
         this.printTree([{ name: automation.name ?? rawName, props }])

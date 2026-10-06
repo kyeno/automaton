@@ -217,6 +217,20 @@ export default class AutomationBase {
         return legacy
     }
 
+    /**
+     * This automation's most recent rule matches, newest first.
+     *
+     * Plain automations have no rule engine, so the default answer is an empty
+     * history; RuleBasedAutomationBase overrides it with its real match log. The
+     * UI rules window seeds its table from every registered automation through
+     * this one call, so a subclass without rules simply contributes no rows.
+     *
+     * @returns {Array<Object>} Recent matches (always empty for non-rule automations)
+     */
+    getRecentRuleMatches() {
+        return []
+    }
+
     // -- Abstract method ----------------------------------------------------
 
     /**

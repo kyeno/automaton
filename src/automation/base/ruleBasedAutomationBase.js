@@ -26,6 +26,7 @@ import solar from '../../lib/sun.js'
 import CacheService from '../../service/cacheService.js'
 import DatabaseService from '../../service/databaseService.js'
 import LoggerService from '../../service/loggerService.js'
+import EventBus from '../../service/eventBus.js'
 import { parseDocument as yamlParseDocument } from 'yaml'
 import { slugify, toTargetKey } from '../../lib/string.js'
 
@@ -50,6 +51,14 @@ const CONTEXT_FAILURE_ESCALATION_THRESHOLD = 5
  * @type {number}
  */
 const ONCE_MARKER_TTL_SECONDS = 172_800
+
+/**
+ * How many recent rule matches one automation keeps for the UI rules window.
+ * A bounded ring: a busy automation fires on every timer tick, and the window only
+ * needs the tail of that history, not the whole day.
+ * @type {number}
+ */
+const RULE_MATCH_HISTORY_SIZE = 25
 
 /**
  * Enumerated status meaning "no usable player signal" (host offline, player not answering, or
@@ -135,6 +144,15 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @type {{rules?: unknown}|null}
      */
     #monitoredConfigRef = null
+
+    /**
+     * Most recent rule matches performed by this automation, newest first, capped at
+     * RULE_MATCH_HISTORY_SIZE entries. Published on the EventBus as they happen so the
+     * UI rules window can show them live; read back through getRecentRuleMatches() so a
+     * window opened later still shows what already fired.
+     * @type {Array<{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean}>}
+     */
+    #recentRuleMatches = []
 
     /**
      * Construct a rule-based automation.
@@ -557,6 +575,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         // Collect all matching rules
         const matchingRules = []
+        // Match records created by this run, so the outcome (acted / no action) can be
+        // published once dispatch finishes -- see #recordRuleMatch().
+        const runRecords = []
         for (const rule of rules) {
             // Stand-down guard active: only rules that opted out participate.
             if (suppressionActive && rule.ignore_video_player_suppression !== true) continue
@@ -585,6 +606,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 }
 
                 matchingRules.push(rule)
+                runRecords.push(this.#recordRuleMatch(rule, triggerSource, forced))
                 this.log(`Rule matched: "${rule.name}"`, 'debug')
             } catch (error) {
                 this.log(`Error evaluating rule "${rule.name}": ${error.message}`, 'error')
@@ -648,6 +670,72 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 }
             }
         }
+
+        this.#publishRuleMatchOutcome(runRecords, dispatchedCount > 0 || humanSkippedCount > 0 || invokedCount > 0)
+    }
+
+    /**
+     * Record one rule match in this automation's recent-match history and publish it.
+     *
+     * The record is kept newest-first and capped in length, and a copy goes out on the
+     * `automation:ruleMatched` EventBus channel so the UI rules window renders matches
+     * as they happen. `acted` starts false; {@link #publishRuleMatchOutcome} flips it
+     * once the run's dispatch is known.
+     *
+     * @private
+     * @param {{name?: string}} rule - The rule whose conditions matched
+     * @param {string} triggerSource - What started the run ('timer', an EventBus topic, ...)
+     * @param {boolean} forced - True for forced/delegated runs (`/automation force` and friends)
+     * @returns {{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean}} The live record
+     */
+    #recordRuleMatch(rule, triggerSource, forced) {
+        const record = {
+            automation: this.name,
+            rule: (rule && typeof rule.name === 'string' && rule.name) ? rule.name : '(unnamed)',
+            at: Date.now(),
+            trigger: triggerSource,
+            forced: forced === true,
+            acted: false,
+        }
+
+        this.#recentRuleMatches.unshift(record)
+        if (this.#recentRuleMatches.length > RULE_MATCH_HISTORY_SIZE) {
+            this.#recentRuleMatches.length = RULE_MATCH_HISTORY_SIZE
+        }
+
+        EventBus.emit('automation:ruleMatched', { ...record })
+        return record
+    }
+
+    /**
+     * Publish the outcome of a finished run's matches on the `automation:ruleActed`
+     * channel. Only matches that led to a real action are re-published: a run whose
+     * matched rules produced no device command, no human-interaction deferral and no
+     * invoked automation leaves the records marked as matched-only, which is exactly
+     * what the rules window needs to show the difference.
+     *
+     * @private
+     * @param {Array<Object>} records - Records created by this run (see #recordRuleMatch)
+     * @param {boolean} acted - True when the run produced at least one action
+     */
+    #publishRuleMatchOutcome(records, acted) {
+        if (acted !== true) return
+        for (const record of records) {
+            record.acted = true
+            EventBus.emit('automation:ruleActed', { ...record })
+        }
+    }
+
+    /**
+     * This automation's most recent rule matches, newest first.
+     *
+     * Returned copies are detached from the live history, so callers (the UI rules
+     * window seeding its table at startup) can sort and render them freely.
+     *
+     * @returns {Array<{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean}>} Recent matches (empty when none yet)
+     */
+    getRecentRuleMatches() {
+        return this.#recentRuleMatches.map((record) => ({ ...record }))
     }
 
     /**

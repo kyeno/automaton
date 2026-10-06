@@ -47,6 +47,7 @@ import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
 import AiWindow from './windows/aiWindow.js'
 import TtsWindow from './windows/ttsWindow.js'
+import RulesWindow from './windows/rulesWindow.js'
 
 // Widgets
 import StatusBar from './widgets/statusBar.js'
@@ -109,6 +110,7 @@ class Ui {
             device: DeviceWindow,
             ai: AiWindow,
             tts: TtsWindow,
+            rules: RulesWindow,
         }
 
         // Windows backed by optional services are only created when that service is
