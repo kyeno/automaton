@@ -114,6 +114,7 @@ const testScripts = [
   'test-rule-coverage.js',
   'test-hour-condition.js',
   'test-sun-gate-condition.js',
+  'test-night-window-restore.js',
   'test-composite-conditions.js',
   'test-legacy-condition-keys.js',
   'test-interaction-cmd.js',

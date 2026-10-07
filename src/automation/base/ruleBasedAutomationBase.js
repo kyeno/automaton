@@ -44,6 +44,27 @@ const RULE_MATCH_HISTORY_SIZE = 25
 /** Enumerated status meaning "no usable player signal" */
 const VIDEO_PLAYER_OFFLINE = 'offline'
 
+/** Condition keys handled by dedicated gates in #checkScalarConditions() (and mirrored by
+ * the miss explainer); anything else is a dynamic numeric sensor range check.
+ * @type {Readonly<Set<string>>} */
+const SCALAR_CONDITION_KEYS = Object.freeze(new Set([
+    'time_of_day',
+    'hour',
+    'season',
+    'presence',
+    'video_player',
+    'state_changed_ago_minutes',
+    'after_latest_of',
+    'after_earliest_of',
+    'any_of',
+    'all_of'
+]))
+
+/** Rule-miss explanations cost a few cache lookups per unmatched rule, so they run only
+ * where DEBUG logs are actually routed (mirrors LoggerService.debug visibility).
+ * @type {boolean} */
+const RULE_MISS_EXPLANATION_ENABLED = process.env.NODE_ENV !== 'production'
+
 /** Legacy kebab-case condition keys that were unified to snake_case.
  * @type {Readonly<Record<string,string>>} */
 const LEGACY_CONDITION_KEY_RENAMES = Object.freeze({
@@ -329,7 +350,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         //  Dynamic: any remaining condition key -> numeric range check against context.
         for (const [key, constraint] of Object.entries(conditions)) {
-            if (key === 'time_of_day' || key === 'hour' || key === 'season' || key === 'presence' || key === 'video_player' || key === 'state_changed_ago_minutes' || key === 'after_latest_of' || key === 'after_earliest_of' || key === 'any_of' || key === 'all_of') continue // handled above / by the group evaluator
+            if (SCALAR_CONDITION_KEYS.has(key)) continue // handled above / by the group evaluator
 
             if (constraint && typeof constraint === 'object') {
                 const value = context[key]
@@ -340,6 +361,138 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         }
 
         return true
+    }
+
+    /** Explain, for debug logs only, which gate rejected a rule's conditions.
+     *
+     * Mirrors the gate order and the evaluators of #checkScalarConditions() and
+     * #evaluateConditionGroup(), and reports the concrete values involved. Sun/clock gates
+     * leave no trace in the logs today, which is why a pre-dawn pause rejected by
+     * `hour: { gte: sunset }` looks like a silently missing rule: this names the gate and
+     * prints the resolved hours (e.g. "hour 4.59 fails gte sunset 18.44").
+     *
+     * Diagnostic only -- never changes a match outcome, and never throws. Mirrors the public
+     * conditionsMatch() so tests and callers can ask the same question the matcher answers.
+     * @param {Record<string, unknown>|null|undefined} conditions - Rule conditions to explain
+     * @param {{illuminance?: number|null, temperature?: number|null, timeOfDay: string, sundawn: number|null, sundusk: number|null}} context
+     * @returns {Promise<string>} Human-readable reason for the miss */
+    async explainRuleMiss(conditions, context) {
+        if (!conditions || typeof conditions !== 'object') return 'no conditions'
+
+        try {
+            const asList = (value) => Array.isArray(value) ? value : [value]
+
+            //  Day-period gate.
+            if (conditions['time_of_day'] !== undefined) {
+                const periods = asList(conditions['time_of_day'])
+                if (!periods.includes(context.timeOfDay)) {
+                    return `time_of_day '${context.timeOfDay ?? 'none'}' not in [${periods.join(', ')}]`
+                }
+            }
+
+            //  Clock/sun gate -- resolve sun shorthands to the same fractional hours the matcher used.
+            if (conditions.hour !== undefined) {
+                const constraint = conditions.hour
+                const nowHour = new Date().getHours()
+                if (typeof constraint === 'number') {
+                    if (Math.trunc(constraint) !== nowHour) return `hour ${nowHour} != ${constraint}`
+                } else if (constraint && typeof constraint === 'object' && !Array.isArray(constraint)) {
+                    if (!this.#matchesHourBounds(nowHour, constraint, context)) {
+                        const startOfTodayMs = new Date().setHours(0, 0, 0, 0)
+                        const nowFractional = (Date.now() - startOfTodayMs) / 3_600_000
+                        const bounds = Object.entries(constraint).map(([op, bound]) => {
+                            const value = this.#resolveHourValue(bound, context, startOfTodayMs)
+                            const label = this.#isSunShorthand(bound)
+                                ? `${bound} ${Number.isFinite(value) ? value.toFixed(2) : 'unresolved'}`
+                                : String(value)
+                            return `${op} ${label}`
+                        })
+                        return `hour ${nowFractional.toFixed(2)} fails ${bounds.join(', ')}`
+                    }
+                } else {
+                    return `hour ${JSON.stringify(constraint)} malformed`
+                }
+            }
+
+            //  Season gate.
+            if (conditions.season) {
+                const seasons = asList(conditions.season)
+                const season = temporal.getCurrentSeason()
+                if (!seasons.includes(season)) return `season '${season}' not in [${seasons.join(', ')}]`
+            }
+            //  Presence gate.
+            if (conditions.presence !== undefined) {
+                for (const [host, shouldBeOnline] of Object.entries(this.#normalizePresenceCondition(conditions.presence))) {
+                    const isOnline = await networkPresence.isOnline(host)
+                    if (isOnline !== shouldBeOnline) {
+                        return `presence '${host}' is ${isOnline ? 'online' : 'offline'}, required ${shouldBeOnline ? 'online' : 'offline'}`
+                    }
+                }
+            }
+
+            //  Video-player status gate.
+            if (conditions['video_player'] !== undefined) {
+                for (const [host, statuses] of Object.entries(this.#normalizeVideoPlayerCondition(conditions['video_player']))) {
+                    const status = await videoPlayerMonitor.getStatus(host) ?? VIDEO_PLAYER_OFFLINE
+                    if (!statuses.includes(status)) {
+                        return `video_player '${host}' is '${status}', required [${statuses.join(', ')}]`
+                    }
+                }
+            }
+
+            //  State-change recency gate.
+            if (conditions['state_changed_ago_minutes'] !== undefined) {
+                for (const [ref, bounds] of Object.entries(conditions['state_changed_ago_minutes'] ?? {})) {
+                    const minMinutes = typeof bounds === 'number' ? bounds : Number(bounds?.gte ?? bounds?.min ?? NaN)
+                    if (!Number.isFinite(minMinutes)) continue
+                    const { domain, subject } = this.#parseSubjectRef(ref)
+                    const ts = await DatabaseService.lastTransitionTs(domain, subject)
+                    if (ts == null) continue
+                    const ageMinutes = (Date.now() - ts) / 60_000
+                    if (ageMinutes < minMinutes) {
+                        return `state_changed_ago_minutes '${ref}' is ${ageMinutes.toFixed(1)}, required >= ${minMinutes}`
+                    }
+                }
+            }
+
+            //  Sun/clock merged gates.
+            for (const [gateKey, candidates] of Object.entries(conditions)) {
+                if (gateKey !== 'after_latest_of' && gateKey !== 'after_earliest_of') continue
+                if (!Array.isArray(candidates) || candidates.length === 0) return `${gateKey} malformed`
+                const instants = candidates
+                    .map((candidate) => this.#resolveGateInstant(candidate, context))
+                    .filter((instantMs) => instantMs !== null && Number.isFinite(instantMs))
+                if (instants.length === 0) return `${gateKey}: no candidate resolvable`
+                const thresholdMs = gateKey === 'after_latest_of' ? Math.max(...instants) : Math.min(...instants)
+                if (Date.now() < thresholdMs) return `${gateKey} not reached (threshold ${new Date(thresholdMs).toLocaleTimeString()})`
+            }
+
+            //  Composite groups, then dynamic numeric sensor gates.
+            for (const [key, constraint] of Object.entries(conditions)) {
+                if (key === 'any_of' || key === 'all_of') {
+                    const groups = Array.isArray(constraint) ? constraint : []
+                    let matched = (key === 'all_of')
+                    for (const group of groups) {
+                        const groupMatched = await this.#evaluateConditionGroup(group, context)
+                        if (key === 'any_of' && groupMatched) { matched = true; break }
+                        if (key === 'all_of' && !groupMatched) { matched = false; break }
+                    }
+                    if (!matched) return `${key}: no group matched`
+                    continue
+                }
+                if (SCALAR_CONDITION_KEYS.has(key)) continue
+                if (constraint && typeof constraint === 'object') {
+                    const value = context[key]
+                    if (!this.#matchesNumericRange(value, constraint)) {
+                        return `${key} ${value == null ? 'missing' : value} not in ${JSON.stringify(constraint)}`
+                    }
+                }
+            }
+        } catch (error) {
+            return `reason unavailable: ${error.message}`
+        }
+
+        return 'conditions not met'
     }
 
     //  Template method - common execute flow.
@@ -431,7 +584,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
-                if (!match) continue
+                if (!match) {
+                    //  Debug-only diagnosis: name the gate that rejected the rule, so a silently
+                    //  skipped rule (a sun/clock gate in particular) is diagnosable from the log.
+                    if (RULE_MISS_EXPLANATION_ENABLED) {
+                        this.log(`Rule skipped: "${rule.name}" - ${await this.explainRuleMiss(rule.conditions, context)}`, 'debug')
+                    }
+                    continue
+                }
 
                 //  Per-rule daily "once" marker -- at most one action per calendar day.
                 if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule, context.timeOfDay)) {

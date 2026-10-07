@@ -10,7 +10,7 @@ It ships as **one reusable pattern with per-room deployments**: a shared base cl
 |--------------|--------|--------|
 | Reachable (playing, paused, or stopped) | **CLOSE** — the automation owns them | unchanged |
 | `playing` | stays closed | **OFF** — dark mode |
-| `paused` / `stopped` (player still online) | stays closed | HTPC instance: restored **locally** from its own time-of-day + illuminance rules (dimmer ON at l1 50% / l2 25%); Bedroom instance: delegated to [Ambient Lights](./ambient-lights.md) via forced `invoke_automation` |
+| `paused` / `stopped` (player still online) | stays closed | HTPC instance: restored **locally** from its own night-window + illuminance rules (dimmer ON at l1 50% / l2 25%); Bedroom instance: delegated to [Ambient Lights](./ambient-lights.md) via forced `invoke_automation` |
 | `offline` (player gone) | **handed back** to the room's roller owner via forced `invoke_automation` | **delegated** to [Ambient Lights](./ambient-lights.md) via the same forced `invoke_automation` (array form) -- the owner restores from its own time-of-day + illuminance rules, so no `presence` gate is needed and an offline machine still gets its lamps back |
 
 > **Settling delay:** `playing` above is the monitor's *effective* status, which only becomes true once the same title has played continuously for the [playback-settle](../monitors/video-player.md#playback-settle) window (~60 s by default). So dark mode and light/suppression stand-down engage ~60 s into continuous viewing rather than the instant playback starts; rollers are unaffected because they track reachability, not playback. Browsing or skipping through titles therefore never dims the room or suppresses roller automations.
@@ -18,7 +18,7 @@ It ships as **one reusable pattern with per-room deployments**: a shared base cl
 Key design points:
 
 - **Roller ownership is keyed to reachability, not playback.** A paused movie still means "someone is watching" — blinds stay down until the player disappears (machine off, player closed).
-- **Roller hand-back is always delegated; light restore is split by player state.** When a player goes **gone** (offline) home-theater invokes the room's roller owner ([Home Office Rollers](./home-office-rollers.md) / [Bedroom Rollers](./bedroom-rollers.md)) so that owner decides the post-playback position from its full rule set, AND pokes the ambient-lights owner via the same array-form `invoke_automation` so the lamps are restored by their own rules. When an **online** player merely pauses/stops, the HTPC/Salon instance instead restores its lamp set locally from its own rules -- gated by time-of-day (`afternoon`/`evening`/`night`) and outdoor illuminance (<900), with the salon dimmer returning switched on via a structured `{state: 'ON', brightness: { l1: 50, l2: 25 }}` command (a bare `{brightness: N}` only sets the level and never switches the relay on); the Bedroom instance keeps delegating that decision to [Ambient Lights](./ambient-lights.md).
+- **Roller hand-back is always delegated; light restore is split by player state.** When a player goes **gone** (offline) home-theater invokes the room's roller owner ([Home Office Rollers](./home-office-rollers.md) / [Bedroom Rollers](./bedroom-rollers.md)) so that owner decides the post-playback position from its full rule set, AND pokes the ambient-lights owner via the same array-form `invoke_automation` so the lamps are restored by their own rules. When an **online** player merely pauses/stops, the HTPC/Salon instance instead restores its lamp set locally from its own rules -- gated by the night window (`any_of`: `hour gte sunset` OR `hour lt sunrise` -- an explicit OR, because a single `hour` bound cannot wrap midnight, so a bare `gte: sunset` silently drops 00:00 to dawn) and outdoor illuminance (<900), with the salon dimmer returning switched on via a structured `{state: 'ON', brightness: { l1: 50, l2: 25 }}` command (a bare `{brightness: N}` only sets the level and never switches the relay on); the Bedroom instance keeps delegating that decision to [Ambient Lights](./ambient-lights.md).
 - **Delegated runs are forced but budget-neutral.** Each hand-off carries `force: true` so an owner acts even if a once/silent guard would otherwise block it, yet a forced run neither consumes nor refreshes any once-per-day marker; human-interaction cooldowns still apply.
 - **Dark-mode OFF rules keep `presence`; the gone rule does not.** Re-darkening an empty room serves no one, so the dark-mode rule requires the host to be reachable. The gone rule, by contrast, is keyed on the player state alone (`offline`) -- no separate `presence` gate -- so an offline machine still triggers the hand-back and the delegated lamp restore.
 - **The illuminance sensor is a context source, never a trigger.** Each instance evaluates its `<900` restore gate against the sensor's latest reading whenever it runs, but only player-status/presence transitions (and change-gated timer ticks) actually wake it -- a sensor-report subscription would re-run the gone rule on every lux change while a player is off.
@@ -74,15 +74,20 @@ rules:
       - { name: AmbientLightsAutomation, force: true }
 
   # Lights: playback drives them locally (dark mode); an ONLINE player that pauses/stops
-  # restores the lamp set itself -- gated by time of day + outdoor illuminance. A GONE player
+  # restores the lamp set itself -- gated by darkness: the night window is an explicit
+  # any_of ("after civil dusk" OR "before civil dawn") because a single `hour:` bound
+  # cannot wrap midnight, with outdoor illuminance as the authority on how dark it really
+  # is. A GONE player
   # instead delegates the restore to the ambient-lights owner (above), so the two never fight
   # over the same lamps. Dimmers take a structured state + per-channel percentage map instead
   # of plain ON (a bare {brightness: N} never switches the relay on).
   - name: 'Room: paused/stopped - restore ambient lighting'
     conditions:
       video_player: { my-pc: [paused, stopped] }
-      time_of_day: [afternoon, evening, night]
       illuminance: { lt: 900 }
+      any_of:
+        - hour: { gte: sunset }    # civil dusk -> midnight
+        - hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
     targets:
       Living_Room_Plug: ON
       Kitchen_Outlet: ON

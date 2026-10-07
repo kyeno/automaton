@@ -43,11 +43,17 @@ rules:
 
   # Dark-window rule: fires once per window when it gets dark enough, and answers a
   # home-theater player-gone hand-off (forced poke, no budget consumed).
+  # The period list stops at 04:59 while civil dawn moves with the season (03:09 in June,
+  # 07:45 in December), so the dark morning gets its own arm: `hour: { lt: sunrise }`
+  # covers midnight -> dawn, which no day-period list can express (a single `hour:` bound
+  # cannot wrap midnight).
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:
-      time_of_day: [evening, night]
       illuminance: { lt: 900 }
+      any_of:
+        - time_of_day: [evening, night]
+        - hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
     targets:
       Kitchen_Outlet: ON
       Hallway_Outlet: ON

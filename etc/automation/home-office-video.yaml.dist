@@ -51,14 +51,20 @@ rules:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
 
-  # Light restore for an ONLINE player that has paused or stopped, gated by time of
-  # day + outdoor illuminance. Dimmers take `{state: 'ON', brightness: { l1: 50, l2: 25 }}`:
+  # Light restore for an ONLINE player that has paused or stopped, gated by DARKNESS:
+  # the night window is an explicit OR because a single `hour:` bound cannot wrap midnight
+  # -- "after civil dusk" OR "before civil dawn" is the whole night, including the dark
+  # morning a night owl watches into (a day-period list drops it too: `night` ends at 04:59).
+  # Illuminance stays the authority on how dark it really is. Dimmers take
+  # `{state: 'ON', brightness: { l1: 50, l2: 25 }}`:
   # a bare `{brightness: N}` sets the level without switching the relay on.
   - name: 'Office: paused/stopped - restore ambient lighting'
     conditions:
       video_player: { my-pc: [paused, stopped] }
-      time_of_day: [afternoon, evening, night]
       illuminance: { lt: 900 }
+      any_of:
+        - hour: { gte: sunset }    # civil dusk -> midnight
+        - hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
     targets:
       Living_Room_Plug: ON
       Kitchen_Plug: ON
