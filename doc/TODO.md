@@ -1,7 +1,8 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- VERIFY: When AI fires request to sensor and we don't have cached data yet (machine was rebooted soon), data should get cached immediately after read
+- VERIFY: When AI fires request to sensor and we don't have cached data yet
+  (machine was rebooted soon), data should get cached immediately after read
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
   pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
   lamps come back mid-browse whenever it's already dark enough (parity with the old
