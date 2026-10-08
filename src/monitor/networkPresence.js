@@ -25,9 +25,13 @@ const CHECK_INTERVAL_MS = 5_000
  * @type {number} */
 const ARPING_TIMEOUT_MS = 5_000
 
-/** Arping arguments -- exactly one packet, 3 second wait. Passed as an array so
+/** Arping arguments -- exactly one packet, 2 second wait. Passed as an array so
  * @type {string[]} */
-const ARPING_ARGS = ['-c', '1', '-w', '3']
+const ARPING_ARGS = ['-c', '1', '-w', '2']
+
+/** Maximum number of arping checks running concurrently in one sweep.
+ * @type {number} */
+const MAX_CONCURRENT_CHECKS = 4
 
 /** Validation pattern for ping targets: strict IPv4 (octets 0-255) or a
  * @type {RegExp} */
@@ -65,7 +69,7 @@ class SNetworkPresence {
      * @type {Map<string, 'online'|'offline'>} */
     #lastLabel = new Map()
 
-    /** Re-entrancy guard for the periodic sweep. A sweep is serial and each arping
+    /** Re-entrancy guard for the periodic sweep. Sweeps are bounded-parallel; a tick
      * @type {boolean} */
     #sweepInFlight = false
 
@@ -151,21 +155,33 @@ class SNetworkPresence {
      * @private */
     async #checkDevices() {
         if (this.#sweepInFlight) {
-            LoggerService.debug('Presence sweep skipped -- previous sweep still running', 'NetworkPresence')
+            LoggerService.trace('Presence sweep skipped -- previous sweep still running', 'NetworkPresence')
             return
         }
         this.#sweepInFlight = true
         try {
+            const targets = []
             for (const [category, devices] of Object.entries(this.#config)) {
                 if (typeof devices !== 'object' || devices === null) continue
                 if (Array.isArray(devices)) continue
 
                 for (const [deviceName, ipAddress] of Object.entries(devices)) {
                     if (typeof ipAddress === 'string' && ipAddress.trim() !== '') {
-                        await this.#checkDevice(category, deviceName, ipAddress)
+                        targets.push({ category, deviceName, ipAddress })
                     }
                 }
             }
+
+            //  Bounded worker pool: sweep time is set by the slowest host, not by their sum.
+            let cursor = 0
+            const worker = async () => {
+                while (cursor < targets.length) {
+                    const target = targets[cursor++]
+                    await this.#checkDevice(target.category, target.deviceName, target.ipAddress)
+                }
+            }
+            const poolSize = Math.min(MAX_CONCURRENT_CHECKS, targets.length)
+            await Promise.all(Array.from({ length: poolSize }, () => worker()))
         } catch (error) {
             LoggerService.error(`Error during device check: ${error.message}`, 'NetworkPresence')
         } finally {
