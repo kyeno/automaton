@@ -5,11 +5,16 @@
  * fabricated sensor contexts against a self-contained rule set modeled on
  * ambient-lights.yaml.dist (no local configuration required):
  *   - bright morning turns off every listed device (sockets + wall switch)
- *   - the merged "Settled dusk" rule (evening/night) turns on only the outlets
+ *   - the "Settled dusk" rule (afternoon/evening) turns on only the outlets
  *   - still-bright evening does nothing
  *   - per-window once semantics: one slot per time window per calendar day
+ *   - the invoke-only "Pre-dawn restore" rule never fires on a natural tick, so a pre-dawn
+ *     firing cannot consume the dusk budget; a forced hand-off restores and consumes nothing
  *   - a forced poke (home-theater player-gone hand-off) re-evaluates the dusk rule
  *     without consuming its once budget, while a later natural tick stays blocked
+ *   - restore coverage parity: the pre-dawn restore covers every dusk target and stays out of
+ *     presence-owned room lights, which come back through their own presence-gated rule on the
+ *     same hand-off poke -- at their own levels, and only when someone is home
  *   - flat per-rule "action" fallback dispatches commands (regression test)
  *   - season conditions and temporal helpers (stubbed Date)
  * Redis/MQTT are not required -- unavailable services fail open by design.
@@ -23,9 +28,11 @@
 import { config } from 'dotenv'
 config()
 
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { parse as yamlParse } from 'yaml'
 
 import { createClient } from 'redis'
 
@@ -33,6 +40,7 @@ import ConfigService from '../src/service/configService.js'
 import CacheService from '../src/service/cacheService.js'
 import LoggerService from '../src/service/loggerService.js'
 import solar from '../src/lib/sun.js'
+import networkPresence from '../src/monitor/networkPresence.js'
 
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
@@ -116,6 +124,10 @@ const ALL_IDS = [
 const AMBIENT_ON_IDS = [
     'Kitchen_Outlet', 'Hallway_Outlet',
 ]
+// The presence-owned room light: it is deliberately NOT in the pre-dawn restore rule, and
+// comes back through its own presence-gated rule on the same hand-off poke.
+const ROOM_LIGHT_ID = 'Living_Room_Switch'
+const ROOM_LIGHT_ON = { state: 'ON', brightness: { l1: 100, l2: 100 } }
 
 // Self-contained rule set mirroring ambient-lights.yaml.dist -- keeps the suite
 // runnable on any machine without a local ambient-lights.yaml present.
@@ -147,17 +159,47 @@ writeFileSync(TEST_CONFIG_PATH, [
     '      Hallway_Outlet: OFF',
     '      Living_Room_Switch: OFF',
     '',
-    // Merged dusk rule: covers every dark window (evening/night) in one rule. Fires
-    // autonomously once per window, AND answers a home-theater player-gone hand-off -- a
-    // forced poke re-evaluates it without consuming the once-per-day budget.
+    // Settled dusk: a flat top-level window gate, so the `once:` budget is split per window and
+    // a gloomy winter afternoon never eats the dusk slot. Fires autonomously once per window.
     "  - name: 'Settled dusk - turn on ambient lamps'",
     '    once: true',
     '    conditions:',
-    '      time_of_day: [evening, night]',
+    '      time_of_day: [afternoon, evening]',
     '      illuminance: { lt: 900 }',
     '    targets:',
     '      Kitchen_Outlet: ON',
     '      Hallway_Outlet: ON',
+    '',
+    // Pre-dawn restore: invoke-only. It answers a home-theater player-gone hand-off (a forced
+    // poke, which bypasses markers entirely) and never fires on a natural tick, so a 00:26
+    // presence blip in the middle of a session cannot blast the lamps.
+    "  - name: 'Pre-dawn restore - turn on ambient lamps'",
+    '    forced_only: true',
+    '    conditions:',
+    '      time_of_day: [night, morning]',
+    "      hour: { lt: 'sunrise' }",
+    '      illuminance: { lt: 900 }',
+    '    targets:',
+    '      Kitchen_Outlet: ON',
+    '      Hallway_Outlet: ON',
+    '',
+    // Presence-owned room light, mirroring the live salon rule. The home-theater hand-off poke
+    // re-evaluates THIS rule too, so an occupant gets the light back at its own level and an
+    // empty house stays dark -- which is why the room light is not in the restore rule above.
+    "  - name: 'After sunset - someone home - full room ambient'",
+    '    once: true',
+    '    conditions:',
+    '      time_of_day: [afternoon, evening, night, morning]',
+    '      illuminance: { lt: 900 }',
+    '      all_of:',
+    '        - any_of:',
+    "            - hour: { gte: 'sunset' }",
+    "            - hour: { lt: 'sunrise' }",
+    '        - any_of:',
+    '            - presence: kyeno',
+    '            - presence: meerkat',
+    '    targets:',
+    "      Living_Room_Switch: { state: 'ON', brightness: { l1: 100, l2: 100 } }",
 ].join('\n'))
 
 /**
@@ -196,18 +238,26 @@ async function runScenario(context, triggerData = {}) {
     return devices
 }
 
-function expectPayload(devices, id, expectedState) {
+function expectPayload(devices, id, expected) {
     const dev = devices.get(id)
-    if (expectedState === null) {
+    if (expected === null) {
         assert(dev.calls.length === 0, `${id}: no command sent`)
         return
     }
+    // A bare state string, or a full structured payload ({state, brightness}) for dimmers.
+    const want = (typeof expected === 'object') ? expected : { state: expected }
     assert(
-        dev.calls.length === 1 && JSON.stringify(dev.calls[0].payload) === JSON.stringify({ state: expectedState }),
-        `${id}: received ${JSON.stringify({ state: expectedState })} exactly once`
+        dev.calls.length === 1 && JSON.stringify(dev.calls[0].payload) === JSON.stringify(want),
+        `${id}: received ${JSON.stringify(want)} exactly once`
     )
     assert(dev.calls.every(c => c.fromAutomation === DeviceCommandSource.AUTOMATION), `${id}: marked as automation-originated`)
 }
+
+// Presence is resolved live through the network-presence monitor, not through the fabricated
+// context, so it is stubbed for the whole run. Default: nobody home -- that keeps the
+// presence-owned room light out of every scenario that is not about presence.
+let PRESENCE = {}
+Object.getPrototypeOf(networkPresence).isOnline = async (name) => PRESENCE[name] === true
 
 console.log('\n── Ambient lights execution ──\n')
 
@@ -224,11 +274,11 @@ for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPaylo
 devices = await runScenario({ illuminance: 8000, timeOfDay: 'evening' })
 for (const id of ALL_IDS) expectPayload(devices, id, null)
 
-// Multi-window once semantics (regression): the merged [evening, night] "Settled dusk" rule
-// gets ONE slot per window per calendar day -- a pre-dawn firing must not consume actual
-// dusk's budget, while re-firing within the SAME window stays blocked for the rest of that
-// day. Marker state is stubbed via the CacheService prototype (same approach as
-// test-automation-force.js) so these assertions hold with or without live Redis.
+// Multi-window once semantics (regression): the "Settled dusk" rule gets ONE slot per window
+// per calendar day -- a gloomy winter afternoon firing must not consume the dusk slot, while
+// re-firing within the SAME window stays blocked for the rest of that day. Marker state is
+// stubbed via the CacheService prototype (same approach as test-automation-force.js) so these
+// assertions hold with or without live Redis.
 {
     const cacheProto = Object.getPrototypeOf(CacheService)
     const origGet = cacheProto.get
@@ -245,15 +295,64 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
         for (const id of ALL_IDS) expectPayload(devices, id, null)
 
-        // Night, same calendar day -> independent NIGHT slot is still free -> fires again
-        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        // Afternoon, same calendar day -> independent AFTERNOON slot is still free -> fires.
+        // This is the winter case: civil dusk lands inside `afternoon`, so the two windows
+        // must never share a budget.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'afternoon' })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 
-        const keys = [...onceStore.keys()]
+        const keys = [...onceStore.keys()].sort()
         assert(keys.includes('auto:AmbientLightsAutomation:once:settled_dusk_-_turn_on_ambient_lamps:evening')
-            && keys.includes('auto:AmbientLightsAutomation:once:settled_dusk_-_turn_on_ambient_lamps:night'),
-            'per-window markers stored under distinct :evening / :night keys')
+            && keys.includes('auto:AmbientLightsAutomation:once:settled_dusk_-_turn_on_ambient_lamps:afternoon'),
+            'per-window markers stored under distinct :afternoon / :evening keys')
+        assert(!keys.some((k) => !k.endsWith(':evening') && !k.endsWith(':afternoon')),
+            `no all-day marker was written (${JSON.stringify(keys)})`)
     } finally {
+        cacheProto.get = origGet
+        cacheProto.set = origSet
+    }
+}
+
+// Pre-dawn hand-off (regression): the merged dusk rule used to carry an `hour: { lt: sunrise }`
+// arm, so a natural 00:26 tick fired it and consumed the rule's WHOLE daily budget -- the real
+// dusk firing hours later was silently skipped with "already acted today". That arm is now its
+// own invoke-only rule: a natural pre-dawn tick must send NOTHING, while the home-theater
+// player-gone hand-off (a forced poke) must restore the lamps, every time, consuming nothing.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    const onceStore = new Map()
+    cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
+    cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
+    const restoreClock = stubDate(9 /* October */, 15, 2)   // 02:00 -- inside the night window
+    try {
+        // Natural pre-dawn tick -> no rule participates at all (the invoke-only guard).
+        let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        for (const id of ALL_IDS) expectPayload(devices, id, null)
+
+        // Forced hand-off at the same instant -> the invoke-only restore rule fires, and it
+        // restores the lamps it owns. The presence-owned room light is NOT among them; it is
+        // covered by the presence scenario below.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        expectPayload(devices, ROOM_LIGHT_ID, null)
+
+        // Repeated hand-offs keep working -- forced runs neither check nor write markers.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        expectPayload(devices, ROOM_LIGHT_ID, null)
+
+        assert(onceStore.size === 0,
+            `pre-dawn hand-offs consumed no budget (${JSON.stringify([...onceStore.keys()])})`)
+
+        // The evening budget is untouched, so the dusk firing that the old merged rule lost
+        // now happens normally -- and dusk still leaves the wall switch to its own rules.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        for (const id of ALL_IDS.filter((i) => !AMBIENT_ON_IDS.includes(i))) expectPayload(devices, id, null)
+    } finally {
+        restoreClock()
         cacheProto.get = origGet
         cacheProto.set = origSet
     }
@@ -395,6 +494,99 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     cacheProto.set = origSet
 }
 
+
+
+
+// Restore-coverage parity (regression): the invoke-only pre-dawn restore answers a home-theater
+// player-gone hand-off. Two invariants keep it honest. (1) It must cover every device the dusk
+// rule lights -- a target the dusk rule lights and the restore rule omits stays dark after a
+// hand-off. (2) It must stay out of every device a PRESENCE-gated rule owns. Those are room
+// lights that should only burn when someone is in the room; the restore rule is presence-blind,
+// and the very same forced poke re-evaluates their own rules too, so an occupant gets each one
+// back at its OWN level while an empty house stays dark. Listing a presence-owned target in the
+// restore rule would light an empty room and win the first-match tie-break against the level its
+// own rule chose.
+{
+    const RESTORE_RULE = 'Pre-dawn restore - turn on ambient lamps'
+    const DUSK_RULE = 'Settled dusk - turn on ambient lamps'
+
+    /** Detect a `presence` gate anywhere in a condition tree (top level, any_of, all_of). */
+    const hasPresence = (cond) => {
+        if (!cond || typeof cond !== 'object') return false
+        if (Object.prototype.hasOwnProperty.call(cond, 'presence')) return true
+        return Object.values(cond).some((v) => Array.isArray(v)
+            ? v.some((item) => hasPresence(item))
+            : hasPresence(v))
+    }
+
+    // Checked on every ambient config that exists (dist is tracked, the live file is
+    // deployment-specific).
+    for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
+        if (!existsSync(file)) continue
+        const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
+        const byName = new Map(rules.map((r) => [r.name, r]))
+        const dusk = Object.keys(byName.get(DUSK_RULE)?.targets ?? {})
+        const restore = Object.keys(byName.get(RESTORE_RULE)?.targets ?? {})
+
+        const missing = dusk.filter((t) => !restore.includes(t))
+        assert(missing.length === 0, `${file}: pre-dawn restore covers every dusk target (${JSON.stringify(missing)})`)
+        assert(byName.get(RESTORE_RULE)?.forced_only === true, `${file}: pre-dawn restore stays invoke-only`)
+
+        const presenceOwned = new Set()
+        for (const r of rules) {
+            if (r.name === RESTORE_RULE || !hasPresence(r.conditions)) continue
+            for (const t of Object.keys(r.targets ?? {})) presenceOwned.add(t)
+        }
+        const hijacked = restore.filter((t) => presenceOwned.has(t))
+        // A template may ship without presence rules; a real deployment that has room lights
+        // must, or this guard would be silently vacuous.
+        if (file.endsWith('ambient-lights.yaml')) {
+            assert(presenceOwned.size > 0, `${file}: deployment config has presence-owned targets to guard`)
+        }
+        assert(hijacked.length === 0,
+            `${file}: pre-dawn restore stays out of presence-owned targets (${JSON.stringify(hijacked)})`)
+    }
+}
+
+// Presence-owned room light (regression): the salon-style room light is deliberately NOT in the
+// invoke-only pre-dawn restore rule -- it belongs to a presence-gated rule of its own, at its
+// own levels. A home-theater player-gone hand-off force-pokes this automation, and a forced run
+// re-evaluates EVERY rule, so the room light comes back through ITS rule at ITS level when
+// someone is home, and an empty house at 03:00 stays dark.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    cacheProto.get = async () => undefined
+    cacheProto.set = async () => true
+    const restoreClock = stubDate(9 /* October */, 15, 3)   // 03:00 -- dark, before civil dawn
+    try {
+        // Empty house, powered-off host: the hand-off restores the lamps it owns, and the room
+        // light stays off -- nobody is in it.
+        PRESENCE = { kyeno: false, meerkat: false }
+        let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        expectPayload(devices, ROOM_LIGHT_ID, null)
+
+        // Someone home: the same poke re-evaluates the presence rule, and the room light comes
+        // back at its OWN 100/100 -- not at the home-theater pause level.
+        PRESENCE = { kyeno: true, meerkat: false }
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        expectPayload(devices, ROOM_LIGHT_ID, ROOM_LIGHT_ON)
+
+        // Natural pre-dawn tick with someone home: the restore rule stays invoke-only, so only
+        // the presence rule participates -- the lamps it does not own stay untouched.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, null)
+        expectPayload(devices, ROOM_LIGHT_ID, ROOM_LIGHT_ON)
+    } finally {
+        restoreClock()
+        PRESENCE = {}
+        cacheProto.get = origGet
+        cacheProto.set = origSet
+    }
+}
 
 
 

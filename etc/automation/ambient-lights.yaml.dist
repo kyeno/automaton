@@ -41,19 +41,37 @@ rules:
       Hallway_Outlet: OFF
       Living_Room_Switch: OFF
 
-  # Dark-window rule: fires once per window when it gets dark enough, and answers a
-  # home-theater player-gone hand-off (forced poke, no budget consumed).
-  # The period list stops at 04:59 while civil dawn moves with the season (03:09 in June,
-  # 07:45 in December), so the dark morning gets its own arm: `hour: { lt: sunrise }`
-  # covers midnight -> dawn, which no day-period list can express (a single `hour:` bound
-  # cannot wrap midnight).
+  # Dark-window rule: fires once per window when it gets dark enough.
+  # `time_of_day` is a TOP-LEVEL gate on purpose -- the `once: true` budget splitter reads the
+  # gate at any depth and gives every listed window its own daily slot. Keeping `afternoon`
+  # apart from `evening` is what protects dusk: in winter civil dusk lands inside `afternoon`,
+  # so a gloomy 14:30 firing must not consume the slot the evening firing needs.
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:
+      time_of_day: [afternoon, evening]
       illuminance: { lt: 900 }
-      any_of:
-        - time_of_day: [evening, night]
-        - hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
+    targets:
+      Kitchen_Outlet: ON
+      Hallway_Outlet: ON
+
+  # Pre-dawn restore: answers a home-theater player-gone hand-off (a forced poke, which
+  # consumes no budget) and nothing else. `forced_only` keeps natural timer/sensor ticks out of
+  # the dark morning entirely -- a movie that ends at 05:00 gets these lamps back, a 00:26
+  # presence blip in the middle of a session does not. The period list stops at 04:59 while
+  # civil dawn moves with the season (03:09 in June, 07:45 in December), so
+  # `hour: { lt: sunrise }` covers midnight -> dawn, which no day-period list can express (a
+  # single `hour:` bound cannot wrap midnight).
+  # Keep this rule to the lamps it owns. Any target a presence-gated rule owns (a room light
+  # that should only burn when someone is in it) does NOT belong here: the same hand-off poke
+  # re-evaluates that rule as well, so an occupant gets the light back at its own level and an
+  # empty house stays dark.
+  - name: 'Pre-dawn restore - turn on ambient lamps'
+    forced_only: true
+    conditions:
+      time_of_day: [night, morning]
+      hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
+      illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON
       Hallway_Outlet: ON

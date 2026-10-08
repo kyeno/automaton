@@ -29,7 +29,7 @@ That made rule behavior hard to reason about ("why did this fire at 7am in June 
 ## How Rules Use Periods
 
 - **Matching.** [`conditionsMatch()`](../../src/automation/base/ruleBasedAutomationBase.js) checks membership of the current period name in the rule's scalar or array value. Absent condition = always passes; a present one that doesn't include the live period rejects the whole rule before any other condition is considered.
-- **`once:` scoping.** A per-rule daily marker (`once: true`) is scoped per time window when the rule carries a `time_of_day:` condition — see [Configuration Guide → once](../configuration.md). In practice: a morning-only cleanup rule re-arms automatically after its window ends, while an all-day rule fires at most once until midnight.
+- **`once:` scoping.** A per-rule daily marker (`once: true`) is scoped per time window when the rule carries a `time_of_day:` condition — **at the top level or nested inside `any_of:` / `all_of:`**, since a nested gate gates the rule just as a top-level one does. See [Configuration Guide → once](../configuration.md). In practice: a morning-only cleanup rule re-arms automatically after its window ends, while a rule with no `time_of_day` gate anywhere fires at most once until midnight.
 - **Priority & overlap.** When several rules match simultaneously, higher `priority` wins (ties keep config order); the losing rules' targets are still merged under most-closed-wins semantics where applicable. `/automation debug <name>` shows each rule's condition summary so overlaps stay visible.
 
 ## Sun-Aware Gates On Top Of The Clock

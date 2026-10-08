@@ -8,7 +8,9 @@
  *   - force:true bypasses the silent period AND an already-consumed once-per-day marker,
  *     without writing or refreshing any marker (a forced/delegated run never consumes a slot),
  *   - human-interaction cooldowns ARE bypassed by force -- a forced run dispatches even when
- *     someone just touched the device, while natural runs still defer to them.
+ *     someone just touched the device, while natural runs still defer to them,
+ *   - a `time_of_day` gate nested inside `any_of`/`all_of` scopes the once-marker per window
+ *     exactly like a top-level one, so a pre-dawn firing never consumes the dusk slot.
  * No MQTT broker or live Redis required; the clock is stubbed like test-silence-between.js.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -292,6 +294,73 @@ try {
             'both per-window markers coexist under distinct keys'
         )
         restoreNight()
+    }
+    // -- S8: nested time_of_day gates scope the once-marker too (regression) ----------
+    //
+    //  The shipped "Settled dusk" rule carried its period list INSIDE an `any_of` (next to a
+    //  `hour: { lt: sunrise }` arm). #onceMarkerKey() only looked at the top level, so the rule
+    //  got one bare all-day marker: a pre-dawn firing at 00:26 consumed it and the 18:33 dusk
+    //  firing was silently skipped with "already acted today". The gate is now detected at any
+    //  depth, so every window keeps its own slot.
+
+    console.log('\n\u2500\u2500 Nested time_of_day gate (marker scoping) \u2500\u2500\n')
+
+    {
+        const cfgPathNested = path.join(tmpDir, 'force-probe-nested.yaml')
+        fs.writeFileSync(cfgPathNested, [
+            'rules:',
+            '  - name: "Nested window probe rule"',
+            '    once: true',
+            '    conditions:',
+            '      any_of:',
+            '        - time_of_day: [afternoon, evening]',
+            '        - time_of_day: [night]',
+            '    action: "on"',
+        ].join('\n'))
+        const nestedAuto = new ForceProbeAutomation('NestedWindowAutomation', cfgPathNested)
+
+        redisMock.onceStore.clear()
+        let receivedBase = nestedAuto.device.received.length
+
+        //  The exact outage order: a pre-dawn firing first, then the dusk firing.
+        const restoreNight = stubDate(2, 0)          // night window
+        await nestedAuto.execute({ trigger: 'manual' })
+        assert(nestedAuto.device.received.length === receivedBase + 1, 'pre-dawn firing dispatches')
+        restoreNight()
+
+        const restoreEvening = stubDate(20, 0)       // evening window, SAME calendar day
+        await nestedAuto.execute({ trigger: 'manual' })
+        assert(nestedAuto.device.received.length === receivedBase + 2,
+            'dusk firing is NOT blocked by the earlier pre-dawn firing (the outage)')
+        restoreEvening()
+
+        let keys = [...redisMock.onceStore.keys()].sort()
+        assert(!keys.some((k) => !k.includes(':night') && !k.includes(':evening')),
+            `no bare all-day marker was written (${JSON.stringify(keys)})`)
+        assert(
+            keys.includes('auto:NestedWindowAutomation:once:nested_window_probe_rule:night')
+                && keys.includes('auto:NestedWindowAutomation:once:nested_window_probe_rule:evening'),
+            `nested gate yields per-window marker keys (${JSON.stringify(keys)})`)
+
+        //  Same window, same day -- the slot is genuinely consumed.
+        receivedBase = nestedAuto.device.received.length
+        const restoreEveningAgain = stubDate(21, 30)
+        await nestedAuto.execute({ trigger: 'manual' })
+        assert(nestedAuto.device.received.length === receivedBase,
+            'a second firing inside the SAME evening window stays blocked')
+        restoreEveningAgain()
+
+        //  Afternoon is a third independent window.
+        receivedBase = nestedAuto.device.received.length
+        const restoreAfternoon = stubDate(14, 0)
+        await nestedAuto.execute({ trigger: 'manual' })
+        assert(nestedAuto.device.received.length === receivedBase + 1,
+            'afternoon keeps its own slot (a gloomy afternoon cannot eat the dusk slot)')
+        restoreAfternoon()
+
+        keys = [...redisMock.onceStore.keys()].sort()
+        assert(keys.length === 3,
+            `three per-window markers coexist on one calendar day (${JSON.stringify(keys)})`)
     }
 } finally {
     restoreCacheService()

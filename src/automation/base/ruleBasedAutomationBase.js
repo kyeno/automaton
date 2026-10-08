@@ -593,9 +593,10 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                     continue
                 }
 
-                //  Per-rule daily "once" marker -- at most one action per calendar day.
+                //  Per-rule daily "once" marker -- at most one action per calendar day, and
+                //  one per time-of-day window for rules that declare a `time_of_day` gate.
                 if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule, context.timeOfDay)) {
-                    const scope = rule.conditions?.['time_of_day'] ? ` during ${context.timeOfDay}` : ''
+                    const scope = this.#declaresTimeWindow(rule.conditions) ? ` during ${context.timeOfDay}` : ''
                     this.log(`Rule "${rule.name}" already acted today${scope}, skipping`, 'debug')
                     continue
                 }
@@ -976,14 +977,36 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
     //  Private helpers.
 
-    /** Build the Redis key for a rule's daily "once" marker. Rules that declare.
+    /** Detect a `time_of_day` gate anywhere in one condition group, recursing through the
+     * `any_of` / `all_of` sub-groups exactly like #collectSubjectRefs() walks them. A gate
+     * nested in an `any_of` gates the rule just as a top-level one does, so it must scope the
+     * `once` marker too -- otherwise a rule whose window list lives inside an `any_of` gets a
+     * single all-day budget and an early firing silently eats the later window's slot.
+     * @private
+     * @param {Record<string, unknown>|null|undefined} conds - Condition group from YAML
+     * @returns {boolean} true when a `time_of_day` gate exists at any depth */
+    #declaresTimeWindow(conds) {
+        if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return false
+        if (conds['time_of_day'] !== undefined) return true
+        for (const list of [conds.any_of, conds.all_of]) {
+            if (!Array.isArray(list)) continue
+            for (const sub of list) {
+                if (this.#declaresTimeWindow(sub)) return true
+            }
+        }
+        return false
+    }
+
+    /** Build the Redis key for a rule's daily "once" marker. Rules that declare a
+     * `time_of_day` gate -- at the top level or nested in `any_of`/`all_of` -- get one slot
+     * per window, so a pre-dawn firing never consumes the dusk slot.
      * @private
      * @param {Object} rule - Rule object carrying an `once: true` flag
      * @param {string|null} period - Context time-of-day period ('morning' ... 'night')
      * @returns {string} Redis key for the marker */
     #onceMarkerKey(rule, period) {
         const base = `auto:${this.name}:once:${slugify(rule.name)}`
-        const declaresWindow = Boolean(rule.conditions?.['time_of_day'])
+        const declaresWindow = this.#declaresTimeWindow(rule.conditions)
         return declaresWindow && typeof period === 'string' && period !== '' ? `${base}:${period}` : base
     }
 

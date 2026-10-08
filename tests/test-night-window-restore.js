@@ -211,22 +211,28 @@ console.log('')
     const ambientDoc = yamlParseDocument(fs.readFileSync(path.join(ROOT, 'etc/automation/ambient-lights.yaml'), 'utf8')).toJS()
     const byName = (n) => (ambientDoc.rules ?? []).find((r) => r.name === n)
     const duskRule = byName('Settled dusk - turn on ambient lamps')
+    const preDawnRule = byName('Pre-dawn restore - turn on ambient lamps')
     const salonRule = byName('After sunset - someone home - full salon ambient')
     const morningRule = byName('Bright morning - turn off leftover lights')
 
-    assert(duskRule !== undefined && salonRule !== undefined && morningRule !== undefined,
+    assert(duskRule !== undefined && preDawnRule !== undefined && salonRule !== undefined && morningRule !== undefined,
         'ambient-lights rules present in config')
 
-    //  Settled dusk: the period list stops at 04:59 while civil dawn is 06:04 now (03:09 in
-    //  June), so the dark morning needs its own arm.
-    assert(duskRule.conditions.any_of?.some((g) => g.hour?.lt === 'sunrise') === true,
-        "settled dusk carries a 'before civil dawn' arm")
-    assert(duskRule.conditions.any_of?.some((g) => JSON.stringify(g.time_of_day) === JSON.stringify(['afternoon', 'evening', 'night'])) === true,
-        'settled dusk keeps its afternoon/evening/night arm')
-    assert(duskRule.conditions.time_of_day === undefined,
-        'settled dusk period list lives inside the any_of, not as a top-level gate')
-    assert(await match(duskRule.conditions, sunContext(DARK_MORNING, { illuminance: 1, timeOfDay: 'morning' }), DARK_MORNING) === true,
-        `settled dusk fires in the dark morning (${clockOf(DARK_MORNING)})`)
+    //  Settled dusk: the dark-morning arm now lives in its own invoke-only rule, so this rule
+    //  is a plain top-level window gate. That placement is what scopes its `once:` budget per
+    //  window -- the afternoon slot (a gloomy winter afternoon) stays independent of evening.
+    assert(duskRule.conditions.any_of === undefined && duskRule.conditions.all_of === undefined,
+        'settled dusk is a flat top-level gate, not an any_of')
+    assert(JSON.stringify(duskRule.conditions.time_of_day) === JSON.stringify(['afternoon', 'evening']),
+        'settled dusk gates on afternoon + evening at the top level')
+    assert(duskRule.conditions.hour === undefined,
+        'settled dusk carries no sun arm -- the dark morning belongs to the restore rule')
+    assert(duskRule.conditions.illuminance?.lt === 700,
+        'settled dusk keeps illuminance as the darkness authority')
+    assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 1, timeOfDay: 'evening' }), EVENING) === true,
+        `settled dusk fires after civil dusk (${clockOf(EVENING)})`)
+    assert(await match(duskRule.conditions, sunContext(DARK_MORNING, { illuminance: 1, timeOfDay: 'morning' }), DARK_MORNING) === false,
+        `settled dusk is inert in the dark morning (${clockOf(DARK_MORNING)})`)
     assert(await match(duskRule.conditions, sunContext(AFTER_DAWN, { illuminance: 1, timeOfDay: 'morning' }), AFTER_DAWN) === false,
         `settled dusk is inert after civil dawn (${clockOf(AFTER_DAWN)})`)
     const WINTER_AFTERNOON = local(2026, 11, 8, 16, 0)
@@ -237,6 +243,33 @@ console.log('')
         `settled dusk stays inert at winter noon (${clockOf(WINTER_NOON)})`)
     assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 900, timeOfDay: 'evening' }), EVENING) === false,
         'settled dusk keeps illuminance as the authority')
+
+    //  Pre-dawn restore: the arm the dusk rule used to carry, now invoke-only. It answers the
+    //  home-theater player-gone hand-off (a forced run) and stays out of natural ticks, so a
+    //  00:26 presence blip in the middle of a session never blasts the lamps.
+    assert(preDawnRule.forced_only === true,
+        'pre-dawn restore is invoke-only -- natural ticks never fire it')
+    assert(preDawnRule.once === undefined,
+        'pre-dawn restore declares no once: budget (forced runs never check or write markers)')
+    assert(preDawnRule.conditions.hour?.lt === 'sunrise',
+        "pre-dawn restore gates on 'before civil dawn' (lt: sunrise)")
+    assert(JSON.stringify(preDawnRule.conditions.time_of_day) === JSON.stringify(['night', 'morning']),
+        'pre-dawn restore covers night and the dark morning')
+    assert(preDawnRule.conditions.illuminance?.lt === 700,
+        'pre-dawn restore keeps illuminance as the darkness authority')
+    assert(await match(preDawnRule.conditions, sunContext(PRE_DAWN, DARK), PRE_DAWN) === true,
+        `pre-dawn restore fires pre-dawn (${clockOf(PRE_DAWN)})`)
+    assert(await match(preDawnRule.conditions, sunContext(DARK_MORNING, { illuminance: 1, timeOfDay: 'morning' }), DARK_MORNING) === true,
+        `pre-dawn restore fires in the dark morning (${clockOf(DARK_MORNING)})`)
+    assert(await match(preDawnRule.conditions, sunContext(AFTER_DAWN, { illuminance: 1, timeOfDay: 'morning' }), AFTER_DAWN) === false,
+        `pre-dawn restore closes after civil dawn (${clockOf(AFTER_DAWN)})`)
+    assert(await match(preDawnRule.conditions, sunContext(NOON, { illuminance: 1, timeOfDay: 'noon' }), NOON) === false,
+        `pre-dawn restore stays inert at noon (${clockOf(NOON)})`)
+    assert(await match(preDawnRule.conditions, sunContext(PRE_DAWN, { illuminance: 900, timeOfDay: 'night' }), PRE_DAWN) === false,
+        'pre-dawn restore keeps illuminance as the authority')
+    const JUNE_PRE_DAWN = local(2026, 5, 22, 3, 0)
+    assert(await match(preDawnRule.conditions, sunContext(JUNE_PRE_DAWN, DARK), JUNE_PRE_DAWN) === true,
+        `summer: pre-dawn restore fires (${clockOf(JUNE_PRE_DAWN)})`)
 
     //  Salon boost: two independent ORs (night window, who is home) combined with all_of.
     //  The presence arm is live monitor state, so only the window arm is evaluated here.
@@ -265,6 +298,22 @@ console.log('')
         `morning lights-off stays inert pre-dawn (${clockOf(PRE_DAWN)})`)
     assert(await match(morningRule.conditions, sunContext(AFTER_DAWN, { illuminance: 20, timeOfDay: 'morning' }), AFTER_DAWN) === true,
         `morning lights-off fires with daylight (${clockOf(AFTER_DAWN)})`)
+
+    //  `once:` budget scoping: the engine suffixes a marker with the active window only when the
+    //  rule declares a `time_of_day` gate -- at the top level OR nested in any_of/all_of. A rule
+    //  whose gate was nested inside an any_of used to get one all-day slot, so a 00:26 pre-dawn
+    //  firing silently ate the 18:33 dusk firing. Every `once:` rule here must declare a gate.
+    const declaresTimeWindow = (conds) => {
+        if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return false
+        if (conds['time_of_day'] !== undefined) return true
+        return [conds.any_of, conds.all_of].some((list) =>
+            Array.isArray(list) && list.some((sub) => declaresTimeWindow(sub)))
+    }
+    const unscoped = ambientDoc.rules
+        .filter((rule) => rule.once === true && !declaresTimeWindow(rule.conditions))
+        .map((rule) => rule.name)
+    assert(unscoped.length === 0,
+        `every once: rule declares a time_of_day gate, so no marker is all-day-scoped (${JSON.stringify(unscoped)})`)
 
     //  Static parity over the whole ambient config: presence/hour/time_of_day must resolve
     //  against the analyzer's reserved keys (never as sensor dimensions), and every rule must
