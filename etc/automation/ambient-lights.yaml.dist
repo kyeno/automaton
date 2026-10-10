@@ -49,6 +49,10 @@ rules:
   # hours before dusk -- the periods are fixed clock bands with no sun awareness of their own.
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
+    # Re-assert at this one daily transition: paired lamps must flip together even when a cached
+    # state is stale -- an earlier unconfirmed command can leave it describing the pre-command
+    # world, and no-op suppression would then desync the pair (doc/BUGS.md issue 3).
+    reassert_state: true
     conditions:
       illuminance: { lt: 900 }
       any_of:

@@ -1245,7 +1245,31 @@ export default class DeviceBase {
                 self.#correlator.cancelAll()
                 self.#stateOrigin = DeviceStateOrigin.HUMAN
                 self.#writeHumanCooldown('human-directed command dispatched')
-                self.#clearPendingCommandMarker()
+                //  Track THIS command's outcome too (doc/BUGS.md issue 3): if its frame is lost on
+                //  the radio and no echo arrives, the token expires unconfirmed and marks the cached
+                //  state UNVERIFIED, so a later automation command is dispatched instead of being
+                //  suppressed against a stale cache. Same self-limiting guarantee as the automation
+                //  path: at most one extra publish per dropped command. TOGGLE has no deterministic
+                //  target, so it stays untracked; correlateAs unifies DualDimmer split publishes onto
+                //  one STATE-channel expectation. The persisted marker slot is single-key, so the new
+                //  write supersedes any stale automation marker without a racy delete-then-set.
+                const corrSource = options?.correlateAs && typeof options.correlateAs === 'object'
+                    ? options.correlateAs
+                    : finalPayload
+                const corrDescription = self.#multiChannelJson(corrSource) ?? description
+                if (String(corrDescription).toUpperCase() !== 'TOGGLE') {
+                    const kind = self.#commandKindFor(corrDescription)
+                    const ttlMs = kind === 'travel' ? self.getTravelEchoWindowMs() : self.getInstantEchoWindowMs()
+                    self.#correlator.register(corrDescription, {
+                        kind,
+                        anchorPosition: Number.isFinite(self.#stateLast?.position) ? self.#stateLast.position : null,
+                        anchorState: typeof self.#stateLast?.state === 'string' ? String(self.#stateLast.state).toUpperCase() : null,
+                        echoGraceMs: self.getTravelEchoGraceMs()
+                    }, ttlMs)
+                    self.#persistPendingCommandMarker(corrDescription, kind, ttlMs)
+                } else {
+                    self.#clearPendingCommandMarker()
+                }
             }
 
             self.setCachedState(self.#stateLast, {

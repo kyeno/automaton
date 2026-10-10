@@ -8,14 +8,17 @@
  */
 'use strict'
 
-/** Default per-request timeout in milliseconds. Players are LAN-local and
+/** Default per-request timeout in milliseconds. Players are LAN-local and should
+ * answer well under this; a stalled web thread (e.g. MPC-HC blocking for ~1 s while
+ * seeking or skipping) must not be misread as an offline player. Per-player overrides
+ * are accepted via the optional `timeout_ms` key in etc/device/network.yaml.
  * @type {number} */
-const DEFAULT_TIMEOUT_MS = 500
+const DEFAULT_TIMEOUT_MS = 1200
 
 /** Perform an HTTP GET request with a timeout and optional basic auth.
  * @param {string} url - Absolute URL to request (e.g., http://host:port/path)
  * @param {Object} [options={}] - Request options
- * @param {number} [options.timeoutMs=500] - Abort timeout in milliseconds
+ * @param {number} [options.timeoutMs=1200] - Abort timeout in milliseconds
  * @param {string} [options.username] - Optional basic-auth username
  * @param {string} [options.password] - Optional basic-auth password
  * @returns {Promise<string>} Response body as text

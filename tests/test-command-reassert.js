@@ -14,6 +14,9 @@
  *     change must.
  *   - The MQTT-spam guarantee stays intact for healthy devices: a confirmed redundant
  *     command is still suppressed.
+ *   - Human-directed commands register correlation tokens too: a dropped human frame marks the
+ *     cached state UNVERIFIED just like a dropped automation one, so the next command is
+ *     dispatched instead of suppressed against a stale cache (doc/BUGS.md issue 3).
  *   - `receiveCommand(..., {bypassNoOpSuppression: true})` forces a command onto the wire.
  *
  *   Rule engine
@@ -491,6 +494,78 @@ console.log('\n── F. Multi-channel echo matching & no-op suppression ──\
     dm.receiveCommand({ state: 'ON', brightness: 80 }, DeviceCommandSource.AUTOMATION)
     await sleep(20)
     assert(mqtt.published.length === before, 'F3 redundant dimmer ON+brightness stays suppressed once confirmed')
+}
+
+// ---------------------------------------------------------------------------
+// G. Human-directed commands are tracked too (doc/BUGS.md issue 3)
+//    A human OFF whose frame was lost on the radio used to leave the cache "proven" and
+//    stale -- no token existed for it -- so the next automation ON was dropped as a no-op
+//    and paired devices desynced forever. Human commands now register correlation tokens
+//    like automation ones do.
+// ---------------------------------------------------------------------------
+
+console.log('\n── G. Dropped human command marks the state unverified ──\n')
+{
+    const mqtt = new MockMqttService({ autoEcho: false })
+    const plug = createPlug('Bedroom Plug', mqtt)
+
+    //  Lamp lit: report lands, cache = ON.
+    mqtt.simulateExternalMessage('Bedroom Plug', { state: 'ON' })
+    await sleep(10)
+    assert(plug.getStateLast()?.state === 'ON', 'G1 cache seeded to ON by a device report')
+
+    //  The person switches it OFF; the frame is lost on the radio and no echo ever arrives.
+    plug.receiveCommand('OFF', DeviceCommandSource.HUMAN)
+    await sleep(TOKEN_EXPIRY_WAIT_MS)   //  human token expires unconfirmed -> state unverified
+
+    //  The lamp keeps advertising its stale pre-command value (unchanged reports are not evidence).
+    mqtt.simulateExternalMessage('Bedroom Plug', { state: 'ON' })
+    await sleep(10)
+
+    //  Dusk restore sends ON: with the unverified marker this must NOT be suppressed as a no-op.
+    plug.receiveCommand('ON', DeviceCommandSource.AUTOMATION)
+    await sleep(10)
+    const ons = mqtt.published.filter((p) => p.payload.state === 'ON')
+    assert(ons.length === 1, 'G1 automation ON after a dropped human OFF is dispatched, not suppressed')
+    assert(mqtt.published.length === 2, 'G1 exactly one extra publish per unconfirmed human command')
+}
+
+{
+    //  G2: healthy human command confirms via echo -> redundant suppression stays intact (no spam).
+    const mqtt = new MockMqttService({ autoEcho: true })
+    const plug = createPlug('Healthy Human Plug', mqtt)
+
+    mqtt.simulateExternalMessage('Healthy Human Plug', { state: 'OFF' })
+    await sleep(10)
+
+    plug.receiveCommand('ON', DeviceCommandSource.HUMAN)
+    await sleep(40)   //  echo arrives and confirms the token
+    assert(plug.getStateLast()?.state === 'ON', 'G2 human ON confirmed by echo -> cache proven')
+
+    //  Automation re-asserting the same confirmed state is a genuine no-op again.
+    plug.receiveCommand('ON', DeviceCommandSource.AUTOMATION)
+    await sleep(20)
+    assert(mqtt.published.length === 1, 'G2 redundant automation ON stays suppressed once the human command confirmed')
+}
+
+{
+    //  G3: TOGGLE has no deterministic target -- it stays untracked, so an unechoed toggle does
+    //  NOT leave an unverified marker and cannot force extra publishes on its own.
+    const mqtt = new MockMqttService({ autoEcho: false })
+    const plug = createPlug('Toggle Plug', mqtt)
+
+    mqtt.simulateExternalMessage('Toggle Plug', { state: 'OFF' })
+    await sleep(10)
+
+    plug.receiveCommand('TOGGLE', DeviceCommandSource.HUMAN)
+    await sleep(TOKEN_EXPIRY_WAIT_MS)
+
+    //  Cache still says OFF (no report arrived); with NO unconfirmed marker this is provably
+    //  redundant and must stay suppressed.
+    plug.receiveCommand('OFF', DeviceCommandSource.AUTOMATION)
+    await sleep(10)
+    assert(mqtt.published.length === 1 && mqtt.published[0].payload.state === 'TOGGLE',
+        'G3 unechoed human TOGGLE leaves no unverified marker -> redundant OFF stays suppressed')
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`)

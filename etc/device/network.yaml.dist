@@ -39,6 +39,8 @@ appliances:
 #   vlc -- VLC HTTP API (http://<host>:<port>/requests/status.json, JSON)
 #   mpc -- MPC-HC web interface (http://<host>:<port>/variables.html; parsing
 #          verified against MPC-HC 1.9.16.63, expected to hold for 1.9.x)
+# An optional per-player `timeout_ms` key overrides the shared fetch timeout
+# (default 1200 ms) when one host's web server runs slower than the rest.
 # For MPC-HC, enable the web interface via View -> Options -> Player ->
 # Web Interface: turn on "Listen on port" and turn off "Allow access from
 # localhost only". The compression setting does not matter (the built-in HTTP

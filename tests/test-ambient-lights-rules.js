@@ -8,6 +8,8 @@
  *   - the "Settled dusk" rule (afternoon/evening) turns on only the outlets
  *   - still-bright evening does nothing
  *   - per-window once semantics: one slot per time window per calendar day
+ *   - both shipped configs flag the settled-dusk rule with reassert_state so a stale cache can
+ *     never desync the paired lamps at the daily transition (doc/BUGS.md issue 3)
  *   - the invoke-only "Pre-dawn restore" rule never fires on a natural tick, so a pre-dawn
  *     firing cannot consume the dusk budget; a forced hand-off restores and consumes nothing
  *   - a forced poke (home-theater player-gone hand-off) re-evaluates the dusk rule
@@ -162,8 +164,11 @@ writeFileSync(TEST_CONFIG_PATH, [
     // Settled dusk: two independent windows -- an unguarded evening arm and an afternoon arm
     // gated on civil dusk (`hour: { gte: sunset }`). Each keeps its own `once:` slot, and the
     // sun gate keeps a gloomy mid-afternoon from lighting the lamps before dusk has settled.
+    // reassert_state mirrors the shipped configs: paired lamps must flip together even when a
+    // cached state is stale (an earlier unconfirmed command left it pre-command).
     "  - name: 'Settled dusk - turn on ambient lamps'",
     '    once: true',
+    '    reassert_state: true',
     '    conditions:',
     '      illuminance: { lt: 900 }',
     '      any_of:',
@@ -545,6 +550,8 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
             `${file}: settled dusk gates the afternoon arm on civil dusk (hour >= sunset)`)
         assert(conds.time_of_day === undefined && conds.hour === undefined,
             `${file}: no flat top-level window/sun gate left behind`)
+        assert(rules.find((r) => r.name === DUSK_RULE)?.reassert_state === true,
+            `${file}: settled dusk re-asserts state so a stale cache cannot desync paired lamps`)
     }
 }
 
