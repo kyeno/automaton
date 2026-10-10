@@ -788,9 +788,21 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 const result = this.resolveCommand(dev, tk, matchingRules)
                 if (!result || result.skip) return
 
+                //  Re-assert semantics: a forced hand-off (`/automation force`, an
+                //  `invoke_automation: {force: true}` player-gone hand-off) or a rule flagged
+                //  `reassert_state` must reach the device even when its cached state already
+                //  matches -- that cache can be a stale pre-command snapshot whenever the device
+                //  never confirmed our own previous command (see doc/ht-lights-bug.md).
+                const reassert = bypassHumanCooldown === true || matchingRules.some((rule) =>
+                    rule?.reassert_state === true
+                    && (rule.targets?.[tk] !== undefined || rule.action !== undefined))
+
                 let payload = result.payload
                 this.log(`${dev.getName()} -> ${JSON.stringify(payload)}`)
-                dev.receiveCommand(payload, DeviceCommandSource.AUTOMATION)
+                if (reassert) {
+                    this.log(`${dev.getName()}: re-assert requested -- no-op suppression bypassed`, 'debug')
+                }
+                dev.receiveCommand(payload, DeviceCommandSource.AUTOMATION, { bypassNoOpSuppression: reassert })
                 dispatchedCount++
             })
         }

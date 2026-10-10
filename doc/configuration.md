@@ -334,6 +334,7 @@ rules:
   - name: 'Human-readable rule name'
     once: true                          # Optional: act at most once per calendar day (per time-window for rules with a time_of_day condition)
     forced_only: true                   # Optional: participate only in forced/delegated runs (e.g., delegated light restore); natural ticks skip it entirely
+    reassert_state: true                # Optional: force commands onto the wire even if cached state already matches (hand-off/restore rules that must never be no-op suppressed)
     conditions:
       time_of_day: [morning, noon]     # Day period(s)
       season: [winter]                 # Season(s), optional -- spring/summer/autumn/winter
@@ -578,6 +579,20 @@ Adding `once: true` to a rule makes it act **at most once per local calendar day
 ### Invoke-Only Rules (`forced_only`)
 
 Adding `forced_only: true` to a rule makes it participate **only in forced or delegated runs** -- `/automation force <n>` or another automation's forced `invoke_automation`. Natural timer/sensor ticks skip such rules entirely, even when their conditions hold and no once-marker is set. This is useful for rules that should only act when explicitly poked by another automation (e.g., a restore rule that answers a hand-off) without ever firing on their own. Because forced runs neither check nor write once-markers, an invoke-only rule can re-fire on every delegation.
+
+### Re-Assert State (`reassert_state`)
+
+Adding `reassert_state: true` to a rule tells the engine to dispatch its commands with **no-op suppression bypassed**: each targeted device receives `{bypassNoOpSuppression: true}` and sends the command onto the wire even if its last *reported* state already equals the commanded value.
+
+Why this exists: a device can execute an automation command and never report back (a plug relay flips off while still advertising `state:"ON"`). The cache then keeps describing the pre-command world, and a later restore command gets dropped as "already at target" -- freezing the stale value in place. That is exactly how the home-theater ambient lights failed to come back after the player went offline (see [ht-lights-bug](../ht-lights-bug.md)). Forcing the command guarantees a hand-off/restore reaches the radio.
+
+Scope and safety:
+
+- It is **per-rule** and applies only to devices targeted by *that* rule; it does not leak onto other rules' targets in the same run.
+- It covers **natural** runs too. Forced/delegated runs already bypass suppression automatically, so the flag matters for restore paths that fire on their own schedule -- e.g. the `paused`/`stopped` ambient-lighting restore in `home-office-video.yaml`, which is triggered naturally rather than forced.
+- It complements the automatic unverified-state bypass in `DeviceBase` (which fires whenever any prior automation command expired without confirmation); the explicit flag additionally guarantees a re-send even when no such marker is present.
+- Spam-safe: each flagged dispatch sends at most one extra publish per device, and healthy confirmed states are untouched unless the flag is set. `/automation debug <name>` and `/automation coverage <name>` render a `[reassert]` tag next to `[once/day]` / `[invoke-only]` so the flag stays visible.
+
 
 ### Rule Match History
 

@@ -77,15 +77,23 @@ export default class DualDimmer extends DualSwitch {
     /** Some converters (notably the Tuya-based AVATTO ZDMS16) silently drop.
      * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
      * @param {DeviceCommandSource} source - Who is behind this command
+     * @param {Object} [options] - Dispatch modifiers forwarded to the base publisher
+     * @param {boolean} [options.bypassNoOpSuppression=false] - Send even when cached state already matches
      * @protected */
-    _publishResolved(resolved, source) {
+    _publishResolved(resolved, source, options = {}) {
         const { targetChannels, fieldState, fieldBrightness } = resolved
         if (fieldState !== null && fieldBrightness !== undefined) {
-            this._publishRaw(this._buildStateFields(targetChannels, fieldState), source)
-            this._publishRaw(this._buildBrightnessFields(targetChannels, fieldBrightness), source)
+            //  Some converters drop combined state+brightness messages, so the two publishes must stay
+            //  separate on the wire. They describe ONE logical action though; correlate both onto the
+            //  STATE channels (the reliable echo signal) so the brightness publish does not leave an
+            //  instant token that can never confirm -- see doc/ht-lights-bug.md.
+            const stateFields = this._buildStateFields(targetChannels, fieldState)
+            const opts = { ...options, correlateAs: stateFields }
+            this._publishRaw(stateFields, source, opts)
+            this._publishRaw(this._buildBrightnessFields(targetChannels, fieldBrightness), source, opts)
             return
         }
-        super._publishResolved(resolved, source)
+        super._publishResolved(resolved, source, options)
     }
 
     /** Resolve the accepted [min,max] Zigbee level range for one channel.

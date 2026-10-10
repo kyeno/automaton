@@ -148,6 +148,7 @@ const testScripts = [
   'test-origin-classification.js',
   'test-mqtt-publish-hook.js',
   'test-mqtt-dedupe-exempt.js',
+  'test-command-reassert.js',
   'test-dist-sync.js',
   'test-ai-intent-parsing.js',
   'test-ai-intent-execution.js',

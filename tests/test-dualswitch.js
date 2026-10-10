@@ -547,9 +547,10 @@ console.log('\n── Origin tracking & human-interaction detection ──\n')
 }
 
 {
-    // D) Automation-driven command + its own suffixed echo stays AUTOMATION for the whole
-    //    token window (pins current correlator fallback semantics so they cannot silently
-    //    regress; see doc/TODO.md for the larger-scope echo-matching follow-up).
+    // D) Automation-driven command + its own suffixed echo stays AUTOMATION. The suffixed report
+    //    ({state_left/state_right}) is a real echo match now (CommandCorrelator channel matching), so
+    //    origin stays automation AND a redundant re-send would be suppressed again -- pinned here so the
+    //    multi-channel confirm/suppress path cannot silently regress (doc/ht-lights-bug.md, finding #2).
     const swF = new DualSwitch('Wall Switch A', '0xf1', { channels: ['left', 'right'] })
     const mockF = new MockMqttService()
     swF.setMqttService(mockF)

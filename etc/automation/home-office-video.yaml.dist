@@ -58,7 +58,11 @@ rules:
   # Illuminance stays the authority on how dark it really is. Dimmers take
   # `{state: 'ON', brightness: { l1: 50, l2: 25 }}`:
   # a bare `{brightness: N}` sets the level without switching the relay on.
+  # `reassert_state`: this rule exists to UNDO dark mode, so it must reach the device even
+  # when its cached state already matches -- that cache can be a stale pre-command snapshot
+  # when an earlier dark-mode OFF was never confirmed by the device (see doc/ht-lights-bug.md).
   - name: 'Office: paused/stopped - restore ambient lighting'
+    reassert_state: true
     conditions:
       video_player: { my-pc: [paused, stopped] }
       illuminance: { lt: 900 }

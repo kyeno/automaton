@@ -194,6 +194,7 @@ class AutomationCmd extends CommandBase {
             if (summary !== '') detail += ` -- ${summary}`
             if (rule.once) detail += ' [once/day]'
             if (rule.forced_only === true) detail += ' [invoke-only]'
+            if (rule.reassert_state === true) detail += ' [reassert]'
             props.push([`rule ${i + 1}`, detail])
         }
 
@@ -354,6 +355,7 @@ class AutomationCmd extends CommandBase {
         const parts = []
         if (rule?.once === true) parts.push('[once/day]')
         if (rule?.forced_only === true) parts.push('[invoke-only]')
+        if (rule?.reassert_state === true) parts.push('[reassert]')
         if (typeof rule?.priority === 'number' && rule.priority !== 0) parts.push(`[p=${rule.priority}]`)
         return parts.join(' ')
     }

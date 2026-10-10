@@ -56,8 +56,10 @@ export default class DualSwitch extends Mechanism {
 
     /** Translate a command into zigbee2mqtt's suffixed multi-channel payload shape.
      * @param {string|Object} command - State string or structured payload (may carry channel/brightness/state keys; brightness may be a number or a per-channel map)
-     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command */
-    receiveCommand(command, source = DeviceCommandSource.HUMAN) {
+     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command
+     * @param {Object} [options] - Dispatch modifiers forwarded to the base publisher
+     * @param {boolean} [options.bypassNoOpSuppression=false] - Send even when cached state already matches */
+    receiveCommand(command, source = DeviceCommandSource.HUMAN, options = {}) {
         const channels = this.getChannels()
 
         //  No declared topology: behave exactly like a plain mechanism so devices.
@@ -70,19 +72,19 @@ export default class DualSwitch extends Mechanism {
                     return
                 }
                 this.warn('channel/brightness ignored -- no channels configured, using single-state behavior')
-                return super.receiveCommand(rest, source)
+                return super.receiveCommand(rest, source, options)
             }
             LoggerService.debug(
                 'No "channels" configured for dual switch -- falling back to single-state behavior',
                 `${this.getLogPrefix()}:${this.getName()}`
             )
-            return super.receiveCommand(command, source)
+            return super.receiveCommand(command, source, options)
         }
 
         const resolved = this._resolveCommand(command, channels)
         if (resolved === null) return // already logged why it was dropped
 
-        this._publishResolved(resolved, source)
+        this._publishResolved(resolved, source, options)
     }
 
     /** Build the state_* fields of the payload for a resolved command.
@@ -125,18 +127,22 @@ export default class DualSwitch extends Mechanism {
     /** Publish a raw payload to zigbee2mqtt via the base mechanism publisher.
      * @param {Object} payload - Payload ready for zigbee2mqtt
      * @param {DeviceCommandSource} source - Who is behind this command
+     * @param {Object} [options] - Dispatch modifiers forwarded to the base publisher
+     * @param {boolean} [options.bypassNoOpSuppression=false] - Send even when cached state already matches
      * @protected */
-    _publishRaw(payload, source) {
-        super.receiveCommand(payload, source)
+    _publishRaw(payload, source, options = {}) {
+        super.receiveCommand(payload, source, options)
     }
 
     /** Publish a resolved command to zigbee2mqtt. Default: a single combined.
      * @param {{targetChannels: Array<string>, fieldState: string|null, fieldBrightness: (number|Object<string, number>)|undefined}} resolved - Resolved command
      * @param {DeviceCommandSource} source - Who is behind this command
+     * @param {Object} [options] - Dispatch modifiers forwarded to the base publisher
+     * @param {boolean} [options.bypassNoOpSuppression=false] - Send even when cached state already matches
      * @protected */
-    _publishResolved(resolved, source) {
+    _publishResolved(resolved, source, options = {}) {
         const payload = this._buildPayload(resolved)
-        if (payload) this._publishRaw(payload, source)
+        if (payload) this._publishRaw(payload, source, options)
     }
 
     /** Resolve a raw command into its effective scope and fields without building.

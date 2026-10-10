@@ -1,6 +1,6 @@
 # Architecture
 
-> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md) · [Rule Engine Restore & Ownership](./rule-engine-restore-semantics.md) · [Time-of-Day Periods](./time-of-day-periods.md) · [Weatherman Speech Rendering](./weatherman-speech-rendering.md)
+> **In this section:** [AI Conversation Caching](./ai-conversation-caching.md) · [Automation vs Human Differentiation](./automation-human-differentiation.md) · [Rule Engine Restore & Ownership](./rule-engine-restore-semantics.md) · [Sequence Entity](./sequence-entity.md) · [Time-of-Day Periods](./time-of-day-periods.md) · [Weatherman Speech Rendering](./weatherman-speech-rendering.md)
 
 ## Project Structure
 
@@ -17,6 +17,7 @@
 │   │   ├── ai-conversation-caching.md  # AI conversation persistence & caching behavior
 │   │   ├── automation-human-differentiation.md # Automation vs human origin classification
 │   │   ├── rule-engine-restore-semantics.md # Snapshots, ownership, no-op suppression
+│   │   ├── sequence-entity.md # New sequence being -- approved design & implementation brief
 │   │   ├── time-of-day-periods.md # Fixed day periods, c1e8c6f history, coverage tooling
 │   │   └── weatherman-speech-rendering.md # Clock phrases, day markers, date fusion
 │   ├── installation/           # Setup guides
@@ -50,6 +51,7 @@
 │   ├── i18n/                   # Internationalization bundles
 │   │   ├── en_US/              # English language pack
 │   │   └── pl_PL/              # Polish language pack
+│   ├── sequence/               # Sequence definitions (sequences.yaml)
 │   └── interaction/            # Interaction definitions
 ├── src/                        # Source code
 │   ├── ai/                     # AI assistant and tool builder
@@ -58,6 +60,7 @@
 │   ├── interaction/            # Interaction engine
 │   ├── lib/                    # Shared utilities
 │   ├── monitor/                # Network presence monitoring
+│   ├── sequence/               # Ordered device choreography + optional loops
 │   ├── service/                # Core services (MQTT, Redis, config, logging)
 │   └── ui/                     # Terminal UI components
 │       ├── channels.js         # Channel definitions (window routing)

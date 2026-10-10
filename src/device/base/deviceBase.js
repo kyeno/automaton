@@ -104,7 +104,7 @@ const SUMMARY_TRUNCATE_LENGTH = 80
 class CommandCorrelator {
 
     /** Active expectation, if any.
-     * @type {{token: string, expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null), anchorState: (string|null), lastSeenPosition: (number|null), settleCount: number, ttlMs: number, issuedAt: number, expiresAt: number, echoGraceMs: (number|null)}|null} */
+     * @type {{token: string, expectedState: string, expectedChannels: Array<{key:string,type:'state'|'number',value:(string|number)}>|null, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null), anchorState: (string|null), lastSeenPosition: (number|null), settleCount: number, ttlMs: number, issuedAt: number, expiresAt: number, echoGraceMs: (number|null)}|null} */
     #active = null
 
     /** Monotonic counter for unique token ids. @type {number} */
@@ -117,10 +117,16 @@ class CommandCorrelator {
      * @type {{position: number, expiresAt: number}|null} */
     #settling = null
 
+    /** Most recent automation command that expired without confirmation. Cleared once it
+     *  stops being ambiguous: a new command is registered, an echo/conflict is classified,
+     *  a genuine state change is observed, or a human-directed command supersedes it.
+     * @type {{token: string, expectedState: string, expiredAt: number}|null} */
+    #unconfirmed = null
+
     //  -- Public API -------------------------------------------------------
 
     /** Register an outgoing rule-engine command as the new active expectation.
-     * @param {string} expectedState - Normalized description: ON/OFF/OPEN/CLOSE/STOP/TOGGLE or "POS:N"
+     * @param {string} expectedState - Normalized description: ON/OFF/OPEN/CLOSE/STOP/TOGGLE, "POS:N", or a JSON object of suffixed channel fields (e.g. {"state_l1":"ON"})
      * @param {Object} [options] - Registration context captured at dispatch time
      * @param {'instant'|'travel'|'wildcard'} [options.kind='instant'] - Command family
      * @param {number|null} [options.anchorPosition=null] - Device position (%) at registration time
@@ -131,9 +137,12 @@ class CommandCorrelator {
     register(expectedState, options = {}, ttlMs) {
         const now = Date.now()
         const lifetime = Math.max(1_000, Number(ttlMs) || 0)
+        //  A new command supersedes whatever the previous one left unresolved.
+        this.#unconfirmed = null
         this.#active = {
             token: `cmd-${now}-${++this.#counter}`,
             expectedState: String(expectedState ?? '').toUpperCase(),
+            expectedChannels: this.#channelExpectationsFrom(String(expectedState ?? '')),
             kind: options?.kind ?? 'instant',
             direction: null, // computed below once the anchor is normalized
             anchorPosition: Number.isFinite(options?.anchorPosition) ? options.anchorPosition : null,
@@ -164,10 +173,12 @@ class CommandCorrelator {
         switch (verdict) {
             case 'echo':
                 this.#trace(`token ${this.#active.token} consumed as echo`)
+                this.#unconfirmed = null
                 this.#active = null
                 break
             case 'conflict':
                 this.#trace(`token ${this.#active.token} discarded on conflict`)
+                this.#unconfirmed = null
                 this.#active = null
                 break
             case 'continuation': {
@@ -182,12 +193,23 @@ class CommandCorrelator {
         return verdict
     }
 
-    /** Is there a non-expired active expectation? Expired tokens are dropped lazily.
+    /** Is there a non-expired active expectation? Expired tokens are dropped lazily; a
+     *  dropped token is remembered as unconfirmed so callers can treat the cached state as
+     *  unverified (the device may well have executed the command and simply never reported it).
      * @returns {boolean} */
     hasActive() {
         if (!this.#active) return false
         if (Date.now() > this.#active.expiresAt) {
             this.#trace(`token ${this.#active.token} expired without confirmation`)
+            this.#unconfirmed = {
+                token: this.#active.token,
+                expectedState: this.#active.expectedState,
+                expiredAt: Date.now()
+            }
+            this.#warn(
+                `Automated command ${this.#active.expectedState} produced no observable response --` +
+                ' cached device state stays unverified until the device confirms or changes state'
+            )
             this.#active = null
             return false
         }
@@ -208,12 +230,30 @@ class CommandCorrelator {
             : null
     }
 
+    /** Last automation command that expired without confirmation, if any. Its presence means
+     *  the cached device state may still describe the pre-command world, so it cannot be used
+     *  to prove that a new command would be a no-op.
+     * @returns {{token: string, expectedState: string, expiredAt: number}|null} */
+    getUnconfirmed() {
+        //  Lazy expiry: surface a token that ran out while nothing was polling the device.
+        this.hasActive()
+        return this.#unconfirmed
+    }
+
+    /** Clear the unconfirmed marker -- called once the device state is observed to change,
+     *  which is independent evidence about where the device actually is.
+     * @returns {void} */
+    noteObservedChange() {
+        this.#unconfirmed = null
+    }
+
     /** Discard any pending expectation -- called when a human-directed command. */
     cancelAll() {
         if (this.#active) {
             this.#trace(`token ${this.#active.token} cancelled by human-directed command`)
         }
         this.#active = null
+        this.#unconfirmed = null
     }
 
 
@@ -228,6 +268,14 @@ class CommandCorrelator {
      * @private */
     #trace(message) {
         LoggerService.trace(message, this.#logContext)
+    }
+
+    /** Emit a WARN line under the same context -- reserved for outcomes the operator needs to
+     *  see, e.g. an automated command that produced no observable response at all.
+     * @param {string} message - Warning text to record
+     * @private */
+    #warn(message) {
+        LoggerService.warn(message, this.#logContext)
     }
 
     //  Settle absorption (post-completion tail handling)
@@ -286,6 +334,62 @@ class CommandCorrelator {
         return null
     }
 
+    /** Derive per-channel expectations from a serialized multi-channel command so an echo can be
+     *  matched against suffixed report fields (`state_l1`, `brightness_l2`, ...). Single-state
+     *  descriptions ("ON", "POS:50") carry no channels and yield null -- those keep using the legacy
+     *  `payload.state` comparison untouched. Keys are lowercased to mirror wire reports; state values
+     *  are uppercased for case-insensitive comparison.
+     * @param {string} rawExpectedState - The un-normalized expected-state description as registered
+     * @returns {Array<{key:string,type:'state'|'number',value:(string|number)}>|null} Channel map, or null when none
+     * @private */
+    #channelExpectationsFrom(rawExpectedState) {
+        const s = String(rawExpectedState ?? '')
+        if (!s.startsWith('{')) return null
+        let obj
+        try {
+            obj = JSON.parse(s)
+        } catch {
+            return null
+        }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
+        const out = []
+        for (const [k, v] of Object.entries(obj)) {
+            const key = k.toLowerCase()
+            if (/^(state|position|brightness)_/.test(key)) {
+                if (typeof v === 'number') out.push({ key, type: 'number', value: v })
+                else out.push({ key, type: 'state', value: String(v).toUpperCase() })
+            }
+        }
+        return out.length > 0 ? out : null
+    }
+
+    /** Match a multi-channel instant command against a report. STATE channels are the reliable echo
+     *  signal on multi-channel devices, so they drive confirmation; numeric channels (brightness/
+     *  position) only decide when the command carried no state at all. A partial report that omits any
+     *  commanded channel cannot confirm yet and yields null rather than a false positive.
+     * @param {{token: string, expectedChannels: Array<{key:string,type:'state'|'number',value:(string|number)}>}} token - Active token with its channel map
+     * @param {*} payload - Parsed MQTT report
+     * @returns {'echo'|null}
+     * @private */
+    #matchInstantChannels(token, payload) {
+        const exps = token.expectedChannels ?? []
+        const states = exps.filter(e => e.type === 'state')
+        const pool = states.length > 0 ? states : exps
+        for (const e of pool) {
+            const raw = payload[e.key]
+            if (raw == null) return null // partial report -> cannot confirm yet
+            if (e.type === 'state') {
+                if (String(raw).toUpperCase() !== e.value) return null
+            } else {
+                const reported = Number(raw)
+                if (!Number.isFinite(reported)) return null
+                const tolerance = e.key.startsWith('position_') ? POSITION_MATCH_TOLERANCE : 1
+                if (Math.abs(reported - Number(e.value)) > tolerance) return null
+            }
+        }
+        return 'echo'
+    }
+
     /** Evaluate one payload against the active token.
      * @param {{expectedState: string, kind: ('instant'|'travel'|'wildcard'), direction: (number|null), anchorPosition: (number|null)}} token
      * @param {*} payload - Parsed MQTT payload
@@ -307,13 +411,16 @@ class CommandCorrelator {
                     ? this.#matchStop(token, reportedState, position)
                     : this.#matchTravel(token, reportedState, position)
                 break
-            default: // instant (ON/OFF)
-                verdict = reportedState === token.expectedState ? 'echo' : null
+            default: // instant (ON/OFF / multi-channel state)
+                verdict = token.expectedChannels?.length
+                    ? this.#matchInstantChannels(token, payload)
+                    : (reportedState === token.expectedState ? 'echo' : null)
         }
 
         //  File-only TRACE decision record -- makes every verdict explainable post-hoc.
         this.#trace(
             `eval ${token.token} kind=${token.kind} expectedState=${token.expectedState}` +
+                ` channels=${token.expectedChannels?.length ?? 0}` +
                 ` input={state:${reportedState ?? 'null'}, position:${position ?? 'null'}} -> ${verdict ?? 'null'}`
         )
         return verdict
@@ -875,6 +982,18 @@ export default class DeviceBase {
         return 'instant'
     }
 
+    /** Serialize an object payload for correlation ONLY when it carries multi-channel (suffixed)
+     *  fields; otherwise return null so callers fall back to the scalar description. This keeps
+     *  single-state devices on their existing code path untouched.
+     * @private
+     * @param {*} payload - Candidate command payload
+     * @returns {string|null} JSON of the payload when it has at least one suffixed field, else null */
+    #multiChannelJson(payload) {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
+        const hasSuffixed = Object.keys(payload).some(k => /^(state|position|brightness)_/i.test(String(k)))
+        return hasSuffixed ? JSON.stringify(payload) : null
+    }
+
     //  -- MQTT message handling --------------------------------------------
 
     /** Handle incoming MQTT messages.
@@ -950,6 +1069,11 @@ export default class DeviceBase {
                 }
                 default: {
                     const hadStateChange = this.#didStateChange(parsed)
+                    if (hadStateChange) {
+                        //  Observed reality moved: independent evidence about where the device
+                        //  actually is, so any doubt left by an unconfirmed command is resolved.
+                        this.#correlator.noteObservedChange()
+                    }
                     if (!hadStateChange) {
                         //  Periodic report / no meaningful change -- payload only, origin untouched.
                         this.#stateLast = parsed
@@ -999,8 +1123,12 @@ export default class DeviceBase {
 
     /** Receive a command from another device (e.g., a Remote) or from automation.
      * @param {string|Object} command - Command to send. Either a state string
-     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command */
-    receiveCommand(command, source = DeviceCommandSource.HUMAN) {
+     * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command
+     * @param {Object} [options] - Dispatch modifiers
+     * @param {boolean} [options.bypassNoOpSuppression=false] - Send even when the cached state
+     *   already matches the commanded state. Reserved for hand-off/restore dispatches, where the
+     *   cache may be a stale pre-command snapshot and the command MUST reach the device. */
+    receiveCommand(command, source = DeviceCommandSource.HUMAN, options = {}) {
         let finalPayload
         let description
 
@@ -1024,7 +1152,12 @@ export default class DeviceBase {
         const isAutomation = source === DeviceCommandSource.AUTOMATION
 
         //  --- Suppress redundant commands ---
-        if (this.#isCommandRedundant(finalPayload, description)) {
+        if (options?.bypassNoOpSuppression === true) {
+            LoggerService.debug(
+                `No-op suppression bypassed for "${description}" (re-assert requested)`,
+                `${this.getLogPrefix()}:${this.#name}`
+            )
+        } else if (this.#isCommandRedundant(finalPayload, description)) {
             LoggerService.info(
                 `Command "${description}" suppressed: device already at target state`,
                 `${this.getLogPrefix()}:${this.#name}`
@@ -1086,16 +1219,25 @@ export default class DeviceBase {
 
             if (isAutomation) {
                 //  Rule-engine action: register the expectation so its echoes are.
-                const kind = self.#commandKindFor(description)
+                //  Multi-channel devices (dual switch/dimmer) publish suffixed payloads whose scalar
+                //  description is a JSON blob; correlate them on the STATE channels -- the reliable
+                //  echo signal -- so their instant tokens confirm via real echoes instead of always
+                //  expiring unconfirmed. DualDimmer passes options.correlateAs to unify its split
+                //  state+brightness messages onto one state-based expectation (see doc/ht-lights-bug.md).
+                const corrSource = options?.correlateAs && typeof options.correlateAs === 'object'
+                    ? options.correlateAs
+                    : finalPayload
+                const corrDescription = self.#multiChannelJson(corrSource) ?? description
+                const kind = self.#commandKindFor(corrDescription)
                 const ttlMs = kind === 'travel' ? self.getTravelEchoWindowMs() : self.getInstantEchoWindowMs()
-                self.#correlator.register(description, {
+                self.#correlator.register(corrDescription, {
                     kind,
                     anchorPosition: Number.isFinite(self.#stateLast?.position) ? self.#stateLast.position : null,
                     anchorState: typeof self.#stateLast?.state === 'string' ? String(self.#stateLast.state).toUpperCase() : null,
                     echoGraceMs: self.getTravelEchoGraceMs()
                 }, ttlMs)
                 self.#stateOrigin = DeviceStateOrigin.AUTOMATION
-                self.#persistPendingCommandMarker(description, kind, ttlMs)
+                self.#persistPendingCommandMarker(corrDescription, kind, ttlMs)
                 self.#armMotionWatchdog()
             } else {
                 //  Human-directed command: invalidate any stale automation expectations NOW --
@@ -1294,6 +1436,22 @@ export default class DeviceBase {
             return false
         }
 
+        //  A no-op is only provable from a CONFIRMED state. When our own last automation command
+        //  expired without confirmation, the cached value may still describe the pre-command
+        //  world -- a plug can execute a command and never report it -- so suppressing a later
+        //  command would freeze that stale value in place. This is exactly how the home-theater
+        //  ambient restore silently failed (see doc/ht-lights-bug.md). Self-limiting: dispatching
+        //  the replacement command registers a fresh token and clears the marker, so this adds at
+        //  most one extra publish per unconfirmed command.
+        const unconfirmed = this.#correlator.getUnconfirmed()
+        if (unconfirmed != null) {
+            LoggerService.trace(
+                `redundancy check skipped -- state unverified after unconfirmed ${unconfirmed.expectedState}`,
+                `${this.getLogPrefix()}:${this.#name}`
+            )
+            return false
+        }
+
         const descUpper = String(description).toUpperCase()
 
         //  --- Position-based commands ---
@@ -1305,6 +1463,27 @@ export default class DeviceBase {
                 return Math.abs(cachedPos - targetPos) <= POSITION_MATCH_TOLERANCE
             }
             return false
+        }
+
+        //  --- Multi-channel commands ({state_l1,...}, {brightness_l1,...}, {position_l1,...}) ---
+        //  Dual switches/dimmers report per-channel suffixed fields; a command is redundant only
+        //  when EVERY commanded channel already matches the cache (exact for state, within tolerance
+        //  for numeric levels/positions). Without this, healthy multi-channel devices could never be
+        //  proven no-ops and sticky automations would spam them every tick.
+        const mcKeys = Object.keys(finalPayload).filter(k => /^(state|brightness|position)_/.test(String(k)))
+        if (mcKeys.length > 0) {
+            return mcKeys.every(ch => {
+                const cmdVal = finalPayload[ch]
+                const cachedVal = cached[ch]
+                if (/^state_/.test(ch)) {
+                    return typeof cachedVal === 'string' && cachedVal.toUpperCase() === String(cmdVal).toUpperCase()
+                }
+                const cNum = Number(cachedVal)
+                const vNum = Number(cmdVal)
+                if (!Number.isFinite(cNum) || !Number.isFinite(vNum)) return false
+                const tol = /^position_/.test(ch) ? POSITION_MATCH_TOLERANCE : 1
+                return Math.abs(cNum - vNum) <= tol
+            })
         }
 
         //  --- State-based commands ---

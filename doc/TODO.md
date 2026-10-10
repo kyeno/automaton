@@ -19,6 +19,8 @@
 - Integrate automated IR remote
 
 ## Architecture
+- NEXT: Implement the new *sequence* being per the approved brief in
+  doc/architecture/sequence-entity.md (phases 1-7; design fully settled, nothing open)
 - BUG: Many config entries have something_timeout or something_cooldown _ms, while they
   take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
@@ -35,13 +37,13 @@
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 - CONSIDER: "ZigbeeMonitor" sharing the same "state change" logic as other monitors and populate that via local EventBus. Log real Zigbee state changes ONLY as trace; every higher level - via EventBus.
 - CONSIDER: Dropping db's shm and wal to original DB more often, not just on quit?
-- CONSIDER: Teach CommandCorrelator.#evaluate() to recognize multi-channel suffixed echoes
+- DONE (2026-10-10) -- was: teach CommandCorrelator.#evaluate() to recognize multi-channel suffixed echoes
   ({state_left/state_right}, {brightness_l1/brightness_l2}) so AUTOMATION commands on
   DualSwitch/DualDimmer consume their instant tokens via real echo matching instead of
   expiring by TTL. Today's fallback keeps attribution correct (origin set at publish +
   "preserve origin" inside the token window) but delays human-override detection until
   token expiry. Context: dual-switch work 2026-09; current semantics pinned by section D
-  of tests/test-dualswitch.js ("Origin tracking & human-interaction detection").
+  of tests/test-command-reassert.js section F. RESOLVED: register() derives per-channel expectations from the payload JSON; #evaluate() confirms on STATE channels (numeric fallback when no state); DeviceBase.#isCommandRedundant() proves {state_*,brightness_*,position_*} no-ops; DualDimmer correlates its split publishes onto STATE via options.correlateAs. See doc/ht-lights-bug.md finding #2.
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
   module longnames coming out as "<file>\n<copyright>" for lib/* headers
