@@ -159,13 +159,18 @@ writeFileSync(TEST_CONFIG_PATH, [
     '      Hallway_Outlet: OFF',
     '      Living_Room_Switch: OFF',
     '',
-    // Settled dusk: a flat top-level window gate, so the `once:` budget is split per window and
-    // a gloomy winter afternoon never eats the dusk slot. Fires autonomously once per window.
+    // Settled dusk: two independent windows -- an unguarded evening arm and an afternoon arm
+    // gated on civil dusk (`hour: { gte: sunset }`). Each keeps its own `once:` slot, and the
+    // sun gate keeps a gloomy mid-afternoon from lighting the lamps before dusk has settled.
     "  - name: 'Settled dusk - turn on ambient lamps'",
     '    once: true',
     '    conditions:',
-    '      time_of_day: [afternoon, evening]',
     '      illuminance: { lt: 900 }',
+    '      any_of:',
+    '        - time_of_day: [evening]',
+    '        - all_of:',
+    '            - time_of_day: [afternoon]',
+    "            - hour: { gte: 'sunset' }",
     '    targets:',
     '      Kitchen_Outlet: ON',
     '      Hallway_Outlet: ON',
@@ -274,6 +279,26 @@ for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPaylo
 devices = await runScenario({ illuminance: 8000, timeOfDay: 'evening' })
 for (const id of ALL_IDS) expectPayload(devices, id, null)
 
+// Gloomy mid-afternoon BEFORE civil dusk (regression for the 2026-10-10 14:53 incident):
+// sub-threshold illuminance must NOT light the lamps while the sun is still up -- the
+// afternoon arm waits for `hour >= sunset`, and the unguarded evening arm does not cover 14:xx.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    cacheProto.get = async () => undefined   // no markers: only the gate decides
+    cacheProto.set = async () => true
+    const restoreClock = stubDate(9 /* October */, 10, 14)   // 14:00; that day's dusk ~18:3x
+    try {
+        let devices = await runScenario({ illuminance: 686, timeOfDay: 'afternoon' })
+        for (const id of ALL_IDS) expectPayload(devices, id, null)
+    } finally {
+        restoreClock()
+        cacheProto.get = origGet
+        cacheProto.set = origSet
+    }
+}
+
 // Multi-window once semantics (regression): the "Settled dusk" rule gets ONE slot per window
 // per calendar day -- a gloomy winter afternoon firing must not consume the dusk slot, while
 // re-firing within the SAME window stays blocked for the rest of that day. Marker state is
@@ -286,6 +311,9 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     const onceStore = new Map()
     cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
     cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
+    // Pin the clock to a post-dusk winter afternoon (~16:3x civil dusk): the afternoon arm
+    // requires `hour >= sunset`, so this scenario runs past it -- deterministically, any month.
+    const restoreClock = stubDate(11 /* December */, 15, 17)
     try {
         // Evening #1 -> dispatches and consumes today's EVENING slot only
         let devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
@@ -295,9 +323,9 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
         for (const id of ALL_IDS) expectPayload(devices, id, null)
 
-        // Afternoon, same calendar day -> independent AFTERNOON slot is still free -> fires.
-        // This is the winter case: civil dusk lands inside `afternoon`, so the two windows
-        // must never share a budget.
+        // Afternoon, same calendar day -> independent AFTERNOON slot is still free and the clock
+        // sits past that day's civil dusk -> fires. The winter case: dusk lands inside
+        // `afternoon`, so the two windows must never share a budget.
         devices = await runScenario({ illuminance: 50, timeOfDay: 'afternoon' })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 
@@ -308,6 +336,7 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         assert(!keys.some((k) => !k.endsWith(':evening') && !k.endsWith(':afternoon')),
             `no all-day marker was written (${JSON.stringify(keys)})`)
     } finally {
+        restoreClock()
         cacheProto.get = origGet
         cacheProto.set = origSet
     }
@@ -496,6 +525,28 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
 
 
 
+
+// Post-dusk gate (regression for the 2026-10-10 incident): commit 6bea899 made `afternoon` a
+// bare top-level window in the settled-dusk rule, so a gloomy mid-afternoon below the lux
+// threshold lit the lamps hours before civil dusk. Both shipped configs must keep the two-arm
+// shape: an unguarded evening arm and an afternoon arm gated on `hour: { gte: sunset }`.
+{
+    const DUSK_RULE = 'Settled dusk - turn on ambient lamps'
+    for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
+        if (!existsSync(file)) continue
+        const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
+        const conds = rules.find((r) => r.name === DUSK_RULE)?.conditions ?? {}
+        const arms = Array.isArray(conds.any_of) ? conds.any_of : []
+        assert(arms.length === 2 && JSON.stringify(arms[0]?.time_of_day) === JSON.stringify(['evening']),
+            `${file}: settled dusk keeps an unguarded evening arm`)
+        const afternoonArm = arms[1]?.all_of ?? []
+        assert(afternoonArm.some((g) => JSON.stringify(g.time_of_day) === JSON.stringify(['afternoon']))
+                && afternoonArm.some((g) => g.hour?.gte === 'sunset'),
+            `${file}: settled dusk gates the afternoon arm on civil dusk (hour >= sunset)`)
+        assert(conds.time_of_day === undefined && conds.hour === undefined,
+            `${file}: no flat top-level window/sun gate left behind`)
+    }
+}
 
 // Restore-coverage parity (regression): the invoke-only pre-dawn restore answers a home-theater
 // player-gone hand-off. Two invariants keep it honest. (1) It must cover every device the dusk

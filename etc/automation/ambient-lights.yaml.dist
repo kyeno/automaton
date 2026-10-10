@@ -41,16 +41,21 @@ rules:
       Hallway_Outlet: OFF
       Living_Room_Switch: OFF
 
-  # Dark-window rule: fires once per window when it gets dark enough.
-  # `time_of_day` is a TOP-LEVEL gate on purpose -- the `once: true` budget splitter reads the
-  # gate at any depth and gives every listed window its own daily slot. Keeping `afternoon`
-  # apart from `evening` is what protects dusk: in winter civil dusk lands inside `afternoon`,
-  # so a gloomy 14:30 firing must not consume the slot the evening firing needs.
+  # Dark-window rule: fires once per window when it gets dark enough. Two independent windows,
+  # each with its own `once:` slot (the budget splitter reads `time_of_day` gates at any depth):
+  # an unguarded `evening` arm, and an `afternoon` arm gated on civil dusk
+  # (`hour: { gte: sunset }`) because in winter dusk lands inside `afternoon`. The sun gate is
+  # what keeps a gloomy mid-afternoon (illuminance below threshold) from lighting the lamps
+  # hours before dusk -- the periods are fixed clock bands with no sun awareness of their own.
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     conditions:
-      time_of_day: [afternoon, evening]
       illuminance: { lt: 900 }
+      any_of:
+        - time_of_day: [evening]
+        - all_of:
+            - time_of_day: [afternoon]
+            - hour: { gte: sunset }   # winter dusk lands inside `afternoon`
     targets:
       Kitchen_Outlet: ON
       Hallway_Outlet: ON

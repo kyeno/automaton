@@ -218,15 +218,21 @@ console.log('')
     assert(duskRule !== undefined && preDawnRule !== undefined && salonRule !== undefined && morningRule !== undefined,
         'ambient-lights rules present in config')
 
-    //  Settled dusk: the dark-morning arm now lives in its own invoke-only rule, so this rule
-    //  is a plain top-level window gate. That placement is what scopes its `once:` budget per
-    //  window -- the afternoon slot (a gloomy winter afternoon) stays independent of evening.
-    assert(duskRule.conditions.any_of === undefined && duskRule.conditions.all_of === undefined,
-        'settled dusk is a flat top-level gate, not an any_of')
-    assert(JSON.stringify(duskRule.conditions.time_of_day) === JSON.stringify(['afternoon', 'evening']),
-        'settled dusk gates on afternoon + evening at the top level')
-    assert(duskRule.conditions.hour === undefined,
-        'settled dusk carries no sun arm -- the dark morning belongs to the restore rule')
+    //  Settled dusk: two independent windows with their own `once:` slots (the budget splitter
+    //  reads `time_of_day` gates at any depth): an unguarded evening arm and an afternoon arm
+    //  gated on civil dusk. In winter dusk lands inside `afternoon`, but a gloomy mid-afternoon
+    //  BEFORE dusk must stay dark -- the periods are fixed clock bands with no sun awareness.
+    const duskArms = Array.isArray(duskRule.conditions.any_of) ? duskRule.conditions.any_of : []
+    assert(duskArms.length === 2,
+        'settled dusk splits into two arms (unguarded evening / post-dusk afternoon)')
+    assert(JSON.stringify(duskArms[0]?.time_of_day) === JSON.stringify(['evening']),
+        'evening arm carries the plain period list')
+    const afternoonArm = duskArms[1]?.all_of ?? []
+    assert(afternoonArm.some((g) => JSON.stringify(g.time_of_day) === JSON.stringify(['afternoon']))
+            && afternoonArm.some((g) => g.hour?.gte === 'sunset'),
+        "afternoon arm requires both `afternoon` and civil dusk (`hour: { gte: sunset }`)")
+    assert(duskRule.conditions.time_of_day === undefined && duskRule.conditions.hour === undefined,
+        'no flat top-level window/sun gate left behind -- each arm owns its own once slot')
     assert(duskRule.conditions.illuminance?.lt === 700,
         'settled dusk keeps illuminance as the darkness authority')
     assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 1, timeOfDay: 'evening' }), EVENING) === true,
@@ -235,10 +241,18 @@ console.log('')
         `settled dusk is inert in the dark morning (${clockOf(DARK_MORNING)})`)
     assert(await match(duskRule.conditions, sunContext(AFTER_DAWN, { illuminance: 1, timeOfDay: 'morning' }), AFTER_DAWN) === false,
         `settled dusk is inert after civil dawn (${clockOf(AFTER_DAWN)})`)
-    const WINTER_AFTERNOON = local(2026, 11, 8, 16, 0)
+    //  The reported incident (2026-10-10): a slightly overcast afternoon read 686 lx at 14:53,
+    //  more than three hours before that day's 18:33 civil dusk -- with no sun gate the lamps lit.
+    const GLOOMY_AFTERNOON = local(2026, 9, 10, 14, 53)
+    assert(await match(duskRule.conditions, sunContext(GLOOMY_AFTERNOON, { illuminance: 686, timeOfDay: 'afternoon' }), GLOOMY_AFTERNOON) === false,
+        `gloomy pre-dusk afternoon stays dark (${clockOf(GLOOMY_AFTERNOON)}) -- the reported bug`)
+    const WINTER_AFTERNOON = local(2026, 11, 8, 17, 0)   // past that day's ~16:3x civil dusk
+    const WINTER_PRE_DUSK = local(2026, 11, 8, 15, 30)    // still an hour+ before it
     const WINTER_NOON = local(2026, 11, 8, 12, 0)
     assert(await match(duskRule.conditions, sunContext(WINTER_AFTERNOON, { illuminance: 1, timeOfDay: 'afternoon' }), WINTER_AFTERNOON) === true,
-        `settled dusk still fires in a winter afternoon (${clockOf(WINTER_AFTERNOON)})`)
+        `settled dusk fires in a winter afternoon once dusk has settled (${clockOf(WINTER_AFTERNOON)})`)
+    assert(await match(duskRule.conditions, sunContext(WINTER_PRE_DUSK, { illuminance: 1, timeOfDay: 'afternoon' }), WINTER_PRE_DUSK) === false,
+        `winter afternoon BEFORE civil dusk stays dark (${clockOf(WINTER_PRE_DUSK)})`)
     assert(await match(duskRule.conditions, sunContext(WINTER_NOON, { illuminance: 1, timeOfDay: 'noon' }), WINTER_NOON) === false,
         `settled dusk stays inert at winter noon (${clockOf(WINTER_NOON)})`)
     assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 900, timeOfDay: 'evening' }), EVENING) === false,
