@@ -10,8 +10,9 @@ Automaton loads configuration from multiple sources in this order:
 2. **Main config** (`etc/automaton.yaml`) -- behavior, UI, logging, AI parameters
 3. **Device definitions** (`etc/device/*.yaml`) -- what devices exist and their types
 4. **Automation rules** (`etc/automation/*.yaml`) -- scheduled rule evaluations
-5. **Interaction mappings** (`etc/interaction/interaction.yaml`) -- event-driven responses
-6. **i18n bundles** (`etc/i18n/{locale}/*`) -- language-specific prompts and templates
+5. **Sequence definitions** (`etc/sequence/sequences.yaml`) -- ordered device choreography with optional loops
+6. **Interaction mappings** (`etc/interaction/interaction.yaml`) -- event-driven responses
+7. **i18n bundles** (`etc/i18n/{locale}/*`) -- language-specific prompts and templates
 
 ---
 
@@ -656,7 +657,64 @@ Create `<Name>Interaction.js` in `etc/interaction/`, extending `InteractionBase`
 
 ---
 
-## 6. i18n Bundles
+## 6. Sequences (`etc/sequence/sequences.yaml`)
+
+Ordered device choreography with an optional loop driver. Each entry under `sequences:` is one sequence instance — a first-class being alongside devices and automations. Copy `etc/sequence/sequences.yaml.dist` to `sequences.yaml` and customize; a missing file or bad entries warn at startup but never crash it. Full design rationale lives in [doc/architecture/sequence-entity.md](./architecture/sequence-entity.md).
+
+### Entry schema
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `name` | yes | Friendly name; internally slugified (`'Salon Hazard Light'` → `salon_hazard_light`). Slugs must be unique across all sequences |
+| `delay_ms` | no | Sequence-level inter-step pause (duration like `"500ms"` / `"2s"`, or plain ms number). Absent ⇒ **multi-device endpoint mode** — every step fires back-to-back |
+| `devices` | simple form | Ordered list of names (or `{device, command?, delay_ms?}` objects). ON sends each device `'ON'`; OFF sends each device `'OFF'` in the same order |
+| `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay_ms?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
+| `loop` | no | Block making this a looping sequence: `enabled: true`, `cycle: once \| continuous`, `off_delay_ms: auto \| duration` (gap between end of ON run and start of OFF run; `auto` = second run starts right when the first finishes) |
+
+Exactly one of `devices:` (simple) or `on:` (rich) must be present per entry. Durations parse via `temporal.parseDurationMs()` (`"500ms"`, `"3m 45s"`, plain ms numbers); invalid values warn and degrade to absent/auto. Referenced devices that don't exist make their steps inert with a warning — remaining steps still execute.
+
+### Simple form + pacing
+
+```yaml
+sequences:
+  - name: 'Ambient Lights'
+    delay_ms: '500ms'
+    devices:
+      - 'Salon Ambient Left'
+      - 'Bedroom Ambient'
+      - device: 'Kitchen LED Strip'   # object entries allow per-step overrides
+        command: 'ON'
+        delay_ms: '800ms'
+```
+
+### Rich form + loop (hazard light oscillation)
+
+```yaml
+  - name: 'Salon Hazard Light'
+    loop:
+      enabled: true
+      cycle: continuous
+      off_delay_ms: auto
+    on:                               # phase A -- low values
+      - device: 'Salon Dimmer'
+        payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }
+    off:                              # phase B -- high values (the swing back)
+      - device: 'Salon Dimmer'
+        payload: { state: 'ON', brightness: { l1: 100, l2: 75 } }
+```
+
+Setting brightness values automatically creates the transition on the wire — no extra "transition" field needed.
+
+### Runtime behaviour & state keys
+
+- Runs are **blocking**: a second `run()` or `startLoop()` while an instance is busy is rejected with a warning (never queued, never overridden).
+- Loops stop gracefully (`/sequence loop stop <name>`): between phases the inter-phase timer cancels and the sequence goes straight to idle; mid-phase the in-flight step-list always finishes so no device ends half-configured.
+- Live status is exposed under StateService keys `sequence.<slug>.active`, `sequence.<slug>.phase` (`on`|`off`) and `sequence.<slug>.loop.active`; all cleared at idle. Commands carry AUTOMATION provenance.
+- Drive from the UI: `/sequence run <name> [ON|OFF]`, `/sequence loop start|stop <name>` — names may be slugs or friendly names (case-insensitive); bare `/sequence` lists everything with live status. See [UI commands](./ui/commands/index.md) for details.
+
+---
+
+## 7. i18n Bundles
 
 Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 tags (`en_US`, `pl_PL`, etc.). Each locale contains an AI bundle, a TTS bundle, an alerts bundle, and (for the weatherman automation) a speech bundle, a date bundle, and a proverb list:
 

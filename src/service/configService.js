@@ -21,7 +21,8 @@ import { parse as yamlParse } from 'yaml'
 const DEFAULT_PATHS = Object.freeze({
     configs: {
         network:     'etc/device/network.yaml',
-        interaction: 'etc/interaction/interaction.yaml'
+        interaction: 'etc/interaction/interaction.yaml',
+        sequence:    'etc/sequence/sequences.yaml'
     },
     directories: {
         automation:  'etc/automation/',

@@ -32,6 +32,9 @@ import InteractionContainer from '../interaction/container/interactionContainer.
 import DeviceContainer from '../device/container/deviceContainer.js'
 import NetworkPresence from '../monitor/networkPresence.js'
 
+//  Sequences (consumed by the /sequence command via ctx)
+import SequenceContainer from '../sequence/container/sequenceContainer.js'
+
 import LogWindow from './windows/logWindow.js'
 import DeviceWindow from './windows/deviceWindow.js'
 import AiWindow from './windows/aiWindow.js'
@@ -177,6 +180,7 @@ class Ui {
             automationContainer: AutomationContainer,
             interactionContainer: InteractionContainer,
             deviceContainer: DeviceContainer,
+            sequenceContainer: SequenceContainer,
             networkPresence: NetworkPresence,
             configService: ConfigService,
         }

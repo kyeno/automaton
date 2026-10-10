@@ -17,6 +17,7 @@ The Automaton terminal UI supports slash commands typed into the input bar at th
 | `/automation [arg]` | Manage automations: `list`, `debug <name>`, `coverage <name> [legacy]` (static timing-gap analysis), `run <name>`, `force <name> [first]` (bare invocation shows usage) |
 | `/interaction [arg]` | Manage interactions: `list`, `debug <name>`, `run <name> [actionType]` (bare invocation shows usage) |
 | `/device [arg]` | List & inspect Zigbee + network devices: bare counts/help, `list [zigbee\|network]`, `debug <name>` cross-registry lookup |
+| `/sequence [arg]` | Run device sequences & control their loops: bare list with live status, `run <name> [ON\|OFF]`, `loop start <name>`, `loop stop <name>` (names may be slugs or friendly names) |
 | `/quit` (`/exit`, `/q`) | Exit Automaton |
 | `/win [arg]` | Switch window by shortcut number or id |
 
@@ -259,3 +260,14 @@ Lists and inspects devices across **both** registries — Zigbee devices from De
 | `/device debug <name>` | Cross-registry lookup, case-insensitive. A single hit renders its full detail view (Zigbee: type/id/last-state JSON/origin/active kind; network: category/IP/presence). Names present in BOTH registries are reported as ambiguous and each side renders under a labelled block |
 
 Network presence states come from `NetworkPresence.getPresence(name)`: warm cache renders `online`/`offline`; cold or expired caches (or a missing Redis) degrade to `unknown` instead of failing the command. Missing services on either side print explicit "(none registered/configured)" notes rather than crashing.
+
+### `/sequence [arg]`
+
+Drives sequence instances configured in `etc/sequence/sequences.yaml` — ordered device choreography with optional loops (see the Sequences section of the [Configuration Guide](../../configuration.md)). Bare invocation lists every registered sequence with its live status (`running (on)` / `idle`, plus `[LOOP]` while a loop session is engaged). Names accept both slugs and friendly names case-insensitively, so multi-word names work as-is; tab completion offers subcommands first, then known sequence names after `run` / `loop start` / `loop stop`.
+
+| Invocation | Behaviour |
+|------------|-----------|
+| `/sequence` | All sequences: name, slug, active state + phase, loop flag |
+| `/sequence run <name> [ON\|OFF]` | Single blocking run down the step list (default ON); rejected with a note when that instance is already running |
+| `/sequence loop start <name>` | Engage the loop session (`cycle: once \| continuous` per config); refused when busy or no `loop:` block is configured |
+| `/sequence loop stop <name>` | Graceful stop: between phases cancels the inter-phase timer straight to idle; mid-phase lets the in-flight step-list finish first so no device ends half-configured |

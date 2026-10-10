@@ -120,6 +120,7 @@ const testScripts = [
   'test-interaction-cmd.js',
   'test-roller-shutters.js',
   'test-kitchen-countertop-led.js',
+  'test-sequences.js',
   'test-device-cmd.js',
   'test-silence-between.js',
   'test-weatherman-day-position.js',

@@ -47,9 +47,11 @@ const DAY_PERIODS = Object.freeze({
 
 //  Duration unit factors (shared by msToHumanPhrase / humanToMs)
 
-/** Milliseconds per supported duration unit, keyed by the single-letter token
+/** Milliseconds per supported duration unit, keyed by the unit token ('ms' = milliseconds;
+ * d/h/m/s are single letters).
  * @type {Record<string, number>} */
 const DURATION_UNIT_MS = Object.freeze({
+    ms: 1,
     d: 86_400_000,
     h: 3_600_000,
     m: 60_000,
@@ -278,15 +280,15 @@ class STemporal {
 
 
     /** Parse a human-readable duration string into milliseconds.
-     * @param {string} text - Human-readable duration, e.g. "1h" or "3m 45s"
+     * @param {string} text - Human-readable duration, e.g. "500ms", "1h" or "3m 45s"
      * @returns {number|null} Total milliseconds; null when the input is not a string, */
     humanToMs(text) {
         if (typeof text !== 'string') return null
         const trimmed = text.trim()
-        if (!/^(\d+[dhms]\s*)+$/i.test(trimmed)) return null
+        if (!/^(\d+\s*(?:ms|[dhms])\s*)+$/i.test(trimmed)) return null
 
         let total = 0
-        for (const match of trimmed.matchAll(/(\d+)\s*([dhms])/gi)) {
+        for (const match of trimmed.matchAll(/(\d+)\s*(ms|[dhms])/gi)) {
             total += parseInt(match[1], 10) * DURATION_UNIT_MS[match[2].toLowerCase()]
             if (!Number.isSafeInteger(total)) return null
         }

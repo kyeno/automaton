@@ -22,6 +22,7 @@ import AnsiColors from './enum/ansiColors.js'
 import DeviceContainer from './device/container/deviceContainer.js'
 import AutomationContainer from './automation/container/automationContainer.js'
 import InteractionContainer from './interaction/container/interactionContainer.js'
+import SequenceContainer from './sequence/container/sequenceContainer.js'
 
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
@@ -176,6 +177,11 @@ async function gracefulDeath(reason, errorLevel = 0) {
         if (initialized.has('InteractionContainer')) {
             LoggerService.debug('Cleaning up interactions...', 'Main')
             await Promise.resolve(InteractionContainer.cleanupInteractions())
+        }
+
+        if (initialized.has('SequenceContainer')) {
+            LoggerService.debug('Cleaning up sequences...', 'Main')
+            await Promise.resolve(SequenceContainer.cleanupSequences())
         }
 
         if (initialized.has('AutomationContainer')) {
@@ -336,6 +342,8 @@ async function bootstrap() {
     await initService('I18nLoader', () => I18nLoader.init(), true)
 
     await initService('DeviceContainer', () => DeviceContainer.init())
+    //  Sequences resolve their steps through DeviceContainer -- must come after it (D16: optional-tolerant).
+    await initService('SequenceContainer', () => SequenceContainer.init(), true)
     await initService('AutomationContainer', () => AutomationContainer.init())
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('NetworkPresence', () => NetworkPresence.init())

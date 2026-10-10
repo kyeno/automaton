@@ -1,0 +1,46 @@
+# AUTOMATON -- Sequences Configuration
+# Ordered device choreography with optional loops. Each entry under `sequences:`
+# is one sequence instance (a first-class being alongside devices & automations).
+# Copy this file to sequences.yaml (gitignored) and customize for your home.
+# Full reference: doc/configuration.md ("Sequences" section).
+#
+# Entry fields:
+#   name       required friendly name; internally slugified (spaces -> underscores),
+#              e.g. 'Salon Hazard Light' -> salon_hazard_light
+#   delay_ms   OPTIONAL inter-step pause ("500ms", "2s", ... or plain ms). When absent
+#              the sequence acts as a multi-device endpoint -- every step fires back-to-back.
+#   devices    simple form: ordered names (or {device, command, delay_ms} objects);
+#              ON sends each device 'ON', OFF sends each device 'OFF'.
+#   on/off     rich form: explicit step lists. A step is {device, payload?, delay_ms?};
+#              payload passes through DeviceBase.receiveCommand() verbatim (any shape it
+#              accepts: strings, {state}, {position:N}, {state,brightness:{l1,l2}}, ...).
+#              'off' defaults to plain OFF over the same ordered devices from 'on'.
+#   loop       OPTIONAL block making this a looping sequence:
+#                enabled: true
+#                cycle: once | continuous      # once = single ON->OFF pass; continuous = repeat until stopped
+#                off_delay_ms: auto | duration # gap between end of ON run and start of OFF run;
+#                                              # auto = second run starts right when first finishes
+sequences:
+  # Simple form + pacing: ambient lights come up one after another.
+  - name: 'Ambient Lights'
+    delay_ms: '500ms'
+    devices:
+      - 'Salon Ambient Left'
+      - 'Bedroom Ambient'
+      - device: 'Kitchen LED Strip'   # object entries allow per-step overrides
+        command: 'ON'
+        delay_ms: '800ms'
+
+  # Rich form: Salon dual-dimmer hazard light oscillation. Setting brightness values
+  # automatically creates the transition on the wire -- no extra "transition" field needed.
+  - name: 'Salon Hazard Light'
+    loop:
+      enabled: true
+      cycle: continuous
+      off_delay_ms: auto
+    on:                               # phase A -- low values
+      - device: 'Salon Dimmer'
+        payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }
+    off:                              # phase B -- high values (the swing back)
+      - device: 'Salon Dimmer'
+        payload: { state: 'ON', brightness: { l1: 100, l2: 75 } }

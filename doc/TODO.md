@@ -19,8 +19,17 @@
 - Integrate automated IR remote
 
 ## Architecture
-- NEXT: Implement the new *sequence* being per the approved brief in
-  doc/architecture/sequence-entity.md (phases 1-7; design fully settled, nothing open)
+- DONE (2026-10-10) -- was: Implement the new *sequence* being per the approved brief in
+  doc/architecture/sequence-entity.md (phases 1-7; design fully settled, nothing open). RESOLVED:
+  SequenceBase (ordered steps, blocking mutex, optional loop driver with graceful stop + state keys
+  sequence.<slug>.{active,phase,loop.active}) and SSequenceContainer singleton (config load, duplicate-slug/form
+  validation, name/slug resolution, command/loop APIs, shutdown cleanup) under src/sequence/; wired into
+  main.js startup/shutdown after DeviceContainer; etc/sequence/sequences.yaml.dist template + shallow
+  validator (src/validators/sequences.js); /sequence UI command (list/run/loop start|stop with tab
+  completion); tests/test-sequences.js scenarios A-H registered in bin/automaton-test; docs updated
+  (configuration.md section 6, ui commands quick ref + detail). Along the way fixed humanToMs() to accept
+  "ms" units as the brief documented, and made the loop driver yield an event-loop tick per cycle so
+  zero-delay continuous loops never starve timers/UI.
 - BUG: Many config entries have something_timeout or something_cooldown _ms, while they
   take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
