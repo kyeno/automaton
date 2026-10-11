@@ -20,6 +20,16 @@
 #                  inside the grace window cannot re-fire a slot that already spoke.
 # Manual runs ("/automation run|force TtsGardenerAutomation") always speak immediately.
 #
+# A third thing runs beside those two, on top of whichever trigger fired: the stuck-probe
+# watchdog. Every stuck_check_interval it snapshots every probe's moisture and compares it with
+# the snapshot of the previous cycle -- a probe reporting byte-for-byte the same reading is
+# flagged, because a capacitive probe frozen on one value is usually stuck rather than soil that
+# is perfectly stable, and gets named in a warning telling you to give it a poke. The snapshot is
+# data recording, not speech, so it is taken on every run -- silent period and down channels
+# included; only the warning is gated by silence_between, stuck_warn_cooldown and stuck_speak.
+# Snapshot and warning marker live in Redis ("auto:TtsGardenerAutomation:stuck:snapshot" and
+# ":stuck:warned"), so a restart in the middle of a cycle keeps the baseline to compare against.
+#
 # Output routing is a precise boolean switch (use_ai) like ttsGreeter:
 #   use_ai false -> speak the bucket's tts line directly (default);
 #   use_ai true  + AI available -> send the bucket's ai instruction to the model, which
@@ -33,33 +43,37 @@
 #   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- name of the single driest plant
 #   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
+#   {% stuck_flowers %}    -- every probe that did not move since the previous snapshot, "Name (NN%)"
+#   {% stuck_window %}     -- the comparison window spoken in the active locale ("24 hours")
 # The percent sign travels inside the value, not inside the template words, so the plain TTS
 # path (AI down) speaks the unit too -- a bare "21" was read as a number with nothing on it.
 # Reference: doc/automations/gardener.md
-#
-# Template -- copy to tts-gardener.yaml and customize for your home.
 
-triggers_zigbee: [Flower Sensor One, Flower Sensor Two]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
+triggers_zigbee: [Kuchnia Kwiatek Babci, Kuchnia Kwiatek Biale Drzewko, Kuchnia Kwiatek Pomaranczowy, Sypialnia Kwiatek Bonsai, Sypialnia Kwiatek Cytrynka, Sypialnia Kwiatek Drzewo]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
+# All six Kwiatek probes are listed here.
 
-moisture_property: 'soil_moisture'    # state key carrying the percent value (z2m exposes soil probes as soil_moisture)
+moisture_property: 'soil_moisture'    # state key carrying the percent value on those devices (z2m exposure-dependent)
 
-use_ai: false                    # true  -> route each announcement through AI -> TTS when available
+use_ai: true                     # true  -> route each announcement through AI -> TTS when available
                                  #         (warn log + plain TTS sentence if the AI is down);
                                  # false -> direct TTS only, never touches the AI pipeline
 
-# OPTIONAL -- spoken framing for every report, on both output paths. Name a profile from the
-# active locale's tts.yaml profiles: registry, and override single fields with tts_options
-# (explicit fields win over the profile). Remove both to keep plain speech.
-tts_profile: ''                  # empty = plain speech; name a profiles: entry to add jingles
+# Spoken framing for every report, on both output paths. The profile names the entry of the
+# active locale's tts.yaml profiles: registry (etc/i18n/pl_PL/tts.yaml); explicit tts_options
+# entries below win over the profile field by field. Remove both to keep plain speech.
+tts_profile: 'garden'            # -> intro 'creatorshome-digital-click-357350.mp3', 0s spacing
 #tts_options:
 #  intro: 'intro-chime.wav'      # Wave filename played before the report
 #  outro: null                   # Wave filename played after the report
 #  intro_spacing: -1.5           # Seconds between intro end and speech start; negative = overlap
 
-announce_times: ["0830", "1900"] # local HHmm slots for the twice-daily status report (each fires once per day)
+announce_times: ["1045", "1430", "1830", "2330"] # local HHmm slots for the twice-daily status report (each fires once per day)
 timer_interval: "1m"            # tick driving announce_times scheduling -- keep at minute granularity
-silence_between: "2300-0600"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
+silence_between: "0230-1030"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
 event_cooldown: "5m"            # minimum gap between two event-driven reports, garden-wide ("5m", "300s", plain ms); 0 disables
+stuck_check_interval: "24h"     # gap between two soil-moisture snapshots -- the stuck-probe comparison cycle ("24h", "12h", "30m", plain ms); 0 disables the watchdog
+stuck_warn_cooldown: "12h"      # minimum gap between two spoken stuck-probe warnings ("12h", "30m", plain ms); 0 speaks on every detection
+stuck_speak: true               # false keeps the stuck-probe warning in the logs only
 
 rules:                          # most severe first -- first matching band wins per plant
                                 # reactive: true  -> a drop into this band may speak on its own

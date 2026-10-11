@@ -24,7 +24,7 @@ Greets people when their computers come back online — but only in proportion t
 
 ## TTS Gardener
 
-Watches soil-moisture flower probes and reports plant hydration by voice. Each plant is banded against YAML thresholds, the announcement follows the **worst** plant, and the reactive gate speaks only when a plant has worsened past the band it was last announced in — so periodic battery blips never re-announce, while recovery lowers the baseline silently and the next drop below a band speaks again. Reads the real zigbee2mqtt `soil_moisture` state property. Demonstrates per-plant severity tracking, daily announce slots, and the friendly-name wiring a sensor-driven automation depends on.
+Watches soil-moisture flower probes and reports plant hydration by voice. Each plant is banded against YAML thresholds, the announcement follows the **worst** plant, and the reactive gate speaks only when a plant has worsened past the band it was last announced in — so periodic battery blips never re-announce, while recovery lowers the baseline silently and the next drop below a band speaks again. Reads the real zigbee2mqtt `soil_moisture` state property, and a daily watchdog names any probe whose reading did not move at all since the previous snapshot -- a capacitive probe frozen on one value is stuck, not stable soil. Demonstrates per-plant severity tracking, daily announce slots, a Redis-backed sensor-health snapshot, and the friendly-name wiring a sensor-driven automation depends on.
 
 → [Full documentation](./gardener.md)
 

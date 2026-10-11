@@ -1,5 +1,5 @@
-# Gardener -- Polish Language Bundle (Template)
-# ---------------------------------------------
+# Gardener -- Polish Language Bundle
+# ----------------------------------
 # Speech templates for the ttsGardener automation (plant hydration reports).
 # Each section holds per-output-path lines like the greeter bundle:
 #   <bucket>.tts -- spoken verbatim when use_ai is off / AI unavailable
@@ -8,12 +8,12 @@
 #   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- name of the single driest plant
 #   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
+#   {% stuck_flowers %}    -- every probe that did not move since the previous snapshot, "Name (NN%)"
+#   {% stuck_window %}     -- the comparison window spoken in this locale ("24 hours")
 # Keep numeric values out of the template words where possible so Piper TTS and small
 # models read digits naturally in any locale; unit words stay in the sentences themselves.
 # Every ai line tells the model to work from the data given alone: the automation has
 # already read the probes, and a model that goes hunting for tools wastes the report.
-#
-# Template -- copy to gardener.yaml and customize sentences for your home.
 
 critical:
   tts: 'Uwaga! Wilgotność podłoża spadła do niebezpiecznych wartości: {% affected_flowers %}. Najbardziej przesuszone jest {% driest_flower %}, z odczytem tylko {% driest_moisture %}. Podlej je natychmiast!'
@@ -30,3 +30,7 @@ slightly_dry:
 healthy:
   tts: 'Wszystkie Twoje rośliny są dobrze nawodnione. Wilgotność podłoża wygląda świetnie -- nic nie wymaga podlania.'
   ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Ogłoś krótko i z przyjemnością, że wszystkie rośliny w ogrodzie mają odpowiednią wilgotność i dziś nikt nie potrzebuje wody.'
+
+stuck:
+  tts: 'Uwaga: czujniki wilgotności gleby {% stuck_flowers %} podają dokładnie taki sam odczyt jak {% stuck_window %} temu. Czujnik zamrożony na jednej wartości to zwykle zawieszony czujnik, a nie idealnie stabilna gleba -- szturchnij go i sprawdź, czy liczba drgnęła.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Poinformuj, że te czujniki wilgotności gleby nie zmieniły odczytu od {% stuck_window %}: {% stuck_flowers %}. Wyjaśnij, że czujnik zamrożony na jednej wartości to zwykle zawieszony czujnik, a nie idealnie stabilna gleba, i zaproponuj szturchnięcie czujnika oraz sprawdzenie odczytu ręcznie. Nie twierdź, że gleba jest sucha, i nie zalecaj podlania.'

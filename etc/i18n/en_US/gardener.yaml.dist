@@ -1,5 +1,5 @@
-# Gardener -- English Language Bundle (Template)
-# ----------------------------------------------
+# Gardener -- English Language Bundle
+# -----------------------------------
 # Speech templates for the ttsGardener automation (plant hydration reports).
 # Each section holds per-output-path lines like the greeter bundle:
 #   <bucket>.tts -- spoken verbatim when use_ai is off / AI unavailable
@@ -8,12 +8,14 @@
 #   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- name of the single driest plant
 #   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
+#   {% stuck_flowers %}    -- every probe that did not move since the previous snapshot, "Name (NN%)"
+#   {% stuck_window %}     -- the comparison window spoken in this locale ("24 hours")
 # Keep numeric values out of the template words where possible so Piper TTS and small
 # models read digits naturally in any locale; unit words stay in the sentences themselves.
 # Every ai line tells the model to work from the data given alone: the automation has
 # already read the probes, and a model that goes hunting for tools wastes the report.
 #
-# Template -- copy to gardener.yaml and customize sentences for your home.
+# Template copy ships as gardener.yaml.dist.
 
 critical:
   tts: 'Attention! Soil moisture has dropped dangerously low on {% affected_flowers %}. The driest one, {% driest_flower %}, sits at just {% driest_moisture %}. Water them immediately!'
@@ -30,3 +32,7 @@ slightly_dry:
 healthy:
   tts: 'All your plants are well hydrated. Soil moisture looks good across the board -- no watering needed right now.'
   ai: 'Do not use tools -- base your answer only on the provided information. Give a brief, pleasant all-clear that every plant in the garden is properly hydrated and nothing needs watering today.'
+
+stuck:
+  tts: 'Heads up: the soil probes on {% stuck_flowers %} report exactly the same reading as they did {% stuck_window %} ago. A probe frozen on one value is usually the probe being stuck rather than the soil being perfectly stable -- give it a poke and check whether the number moves.'
+  ai: 'Do not use tools -- base your answer only on the provided information. Report that these soil moisture probes have not changed their reading at all in the last {% stuck_window %}: {% stuck_flowers %}. Explain that a probe frozen on a single value is usually the probe being stuck rather than the soil being perfectly stable, and suggest poking the probe and checking the reading by hand. Do not claim the soil is dry and do not recommend watering.'

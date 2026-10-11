@@ -147,6 +147,21 @@ function stubDate(hour, minute) {
     return () => { global.Date = OriginalDate }
 }
 
+/** Same stub with a day offset, for the stuck-probe watchdog's day-scale cycles. */
+function stubDateTime(day, hour, minute) {
+    const OriginalDate = global.Date
+    class FakeDate extends OriginalDate {
+        constructor(...args) {
+            if (args.length === 0) super(2026, 7 /* August */, day, hour, minute, 0, 0)
+            else super(...args)
+        }
+        static now() { return new FakeDate().getTime() }
+    }
+    Object.setPrototypeOf(FakeDate.prototype, OriginalDate.prototype)
+    global.Date = FakeDate
+    return () => { global.Date = OriginalDate }
+}
+
 // -- Event capture ----------------------------------------------------------
 
 const seen = { tts: [], system: [], periodic: [] }
@@ -482,6 +497,236 @@ try {
     gardener.config = cfg({ triggers_zigbee: ['Flower Test A', 'Flower Test B', 'Flower Missing'] })
     const readings = gardener.readFlowerMoisture()
     assert(readings.length === 1 && readings[0].name === 'Flower Test A' && readings[0].moisture === 45, 'only the numeric reading survives; bad/missing devices are dropped with warnings')
+
+    // -----------------------------------------------------------------------
+    console.log('\n-- stuck-probe watchdog: periodic snapshot, a probe that did not move is named --')
+    ttsUp = true
+    setAi({ available: false })
+    const stuckCfg = (o = {}) => cfg({
+        triggers_zigbee: ['Flower Test A', 'Flower Test B'],
+        announce_times: [],
+        stuck_check_interval: '24h',
+        stuck_warn_cooldown: '12h',
+        stuck_speak: true,
+        ...o
+    })
+    const snapshotKey = gardener.stuckSnapshotKey()
+    const warnKey = gardener.stuckWarnMarkerKey()
+    const snapshotAt = () => markerStore.get(snapshotKey)?.takenAt
+    const stuckTokensFor = (intervalMs, flowers = 'Flower Test A (40%)') => ({
+        stuck_flowers: flowers,
+        stuck_window: gardener.stuckWindowPhrase(intervalMs)
+    })
+    const stuckTokens = stuckTokensFor(24 * 3_600_000)
+
+    clearMarkers()
+    gardener.resetState()
+    gardener.config = stuckCfg()
+    flowerStates.set('Flower Test A', 40)
+    flowerStates.set('Flower Test B', 30)
+    let restoreStuckDate = stubDateTime(15, 10, 0)
+    try {
+        //  First run: baseline only, nothing spoken.
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(markerStore.has(snapshotKey), 'first due run records the baseline snapshot')
+        assert(JSON.stringify(markerStore.get(snapshotKey).readings) === JSON.stringify({ 'Flower Test A': 40, 'Flower Test B': 30 }),
+            'the baseline holds every readable probe')
+        assert(seen.tts.length === 0, 'the baseline run says nothing')
+        const baselineAt = snapshotAt()
+
+        //  Interval not elapsed: no comparison, snapshot untouched.
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 30)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 0 && snapshotAt() === baselineAt, 'no comparison and no speech inside the interval')
+
+        //  Next cycle: A frozen on the same value, B moved.
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(16, 10, 5)
+        flowerStates.set('Flower Test A', 40)
+        flowerStates.set('Flower Test B', 25)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('stuck', 'tts', stuckTokens),
+            'the probe that did not move is named in the spoken warning')
+        assert(markerStore.has(warnKey), 'the spoken warning stores its cooldown marker')
+        assert(snapshotAt() === Date.now() && markerStore.get(snapshotKey).readings['Flower Test B'] === 25,
+            'the snapshot rolls forward to the fresh readings')
+        const rolledAt = snapshotAt()
+
+        //  Every probe moved: all-clear, snapshot rolled, nothing spoken.
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(17, 10, 5)
+        flowerStates.set('Flower Test A', 41)
+        flowerStates.set('Flower Test B', 26)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 0, 'a garden where every probe moved stays quiet')
+        assert(snapshotAt() === Date.now() && rolledAt !== snapshotAt(), 'the all-clear cycle still rolls the snapshot forward')
+
+        //  Warn cooldown: 6h cycles, 12h between spoken warnings.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: '12h' })
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 0)
+        flowerStates.set('Flower Test A', 40)
+        flowerStates.set('Flower Test B', 33)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 0, 'cooldown scenario: the baseline is silent')
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 1, 'first detection speaks')
+        const warnedAt = markerStore.get(warnKey)?.at
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 22, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 0, 'a detection inside the warn cooldown stays quiet')
+        assert(snapshotAt() === Date.now() && markerStore.get(warnKey).at === warnedAt, 'the cooled detection rolls the snapshot and keeps its marker')
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(16, 5, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 1, 'a detection past the warn cooldown speaks again')
+
+        //  stuck_speak:false keeps the warning in the logs only.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, stuck_speak: false })
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 0 && !markerStore.has(warnKey), 'stuck_speak:false never speaks and marks no cooldown')
+
+        //  Silent period: snapshot keeps being taken, warning suppressed.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, silence_between: '2200-0800' })
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 23, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(16, 5, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(snapshotAt() === Date.now(), 'the snapshot keeps being taken during the silent period')
+        assert(seen.tts.length === 0, 'the stuck warning is suppressed by the silent period')
+
+        //  Output channels down: data recording continues, nothing is spoken.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, silence_between: null })
+        ttsUp = false
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(snapshotAt() === Date.now() && seen.tts.length === 0, 'a down output channel never stops the snapshot')
+        ttsUp = true
+
+        //  The watchdog also runs from execute(), ahead of the slot gate.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, announce_times: [] })
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 0)
+        flowerStates.set('Flower Test A', 40)
+        flowerStates.set('Flower Test B', 33)
+        resetSeen()
+        await gardener.execute({ trigger: 'timer' })
+        assert(seen.tts.length === 0 && markerStore.has(snapshotKey), 'execute() records the baseline before the slot gate')
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        flowerStates.set('Flower Test B', 34)
+        resetSeen()
+        await gardener.execute({ trigger: 'timer' })
+        assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('stuck', 'tts', stuckTokensFor(6 * 3_600_000)),
+            'a timer run with no slot due still voices the stuck warning')
+
+        //  Redis outage: the in-memory baseline keeps the watchdog running.
+        clearMarkers()
+        gardener.resetState()
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0 })
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 0)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        const savedCacheGet = cacheProto.get
+        cacheProto.get = async () => { throw new Error('redis is down') }
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        flowerStates.set('Flower Test B', 35)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        cacheProto.get = savedCacheGet
+        assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('stuck', 'tts', stuckTokensFor(6 * 3_600_000)),
+            'a Redis outage falls back to the in-memory baseline and still warns')
+
+        //  Restart: the snapshot lives in Redis, the in-memory mirror is gone.
+        clearMarkers()
+        gardener.resetState()
+        gardener.config = stuckCfg({ stuck_check_interval: '24h', stuck_warn_cooldown: 0 })
+        markerStore.set(snapshotKey, { takenAt: Date.now() - 25 * 3_600_000, readings: { 'Flower Test A': 40, 'Flower Test B': 33 } })
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(16, 11, 0)
+        flowerStates.set('Flower Test A', 40)
+        flowerStates.set('Flower Test B', 33)
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('stuck', 'tts',
+            stuckTokensFor(24 * 3_600_000, 'Flower Test A (40%), Flower Test B (33%)')),
+            'after a restart the comparison runs against the snapshot from Redis')
+
+        //  Disabled watchdog and interval parsing.
+        gardener.config = stuckCfg({ stuck_check_interval: 0 })
+        clearMarkers()
+        gardener.resetState()
+        resetSeen()
+        await gardener.runStuckWatchdog()
+        assert(!markerStore.has(snapshotKey) && seen.tts.length === 0, 'stuck_check_interval 0 disables the watchdog')
+        assert(gardener.stuckWatchEnabled() === false && gardener.stuckIntervalMs() === 0, 'interval 0 reports the watchdog as off')
+        gardener.config = stuckCfg({ stuck_check_interval: 'nonsense' })
+        assert(gardener.stuckIntervalMs() === 24 * 3_600_000, 'an unparseable interval falls back to the 24h default')
+        gardener.config = stuckCfg({ stuck_warn_cooldown: '3h' })
+        assert(gardener.stuckWarnCooldownMs() === 3 * 3_600_000, 'warn cooldown accepts duration strings')
+    } finally {
+        restoreStuckDate()
+    }
+
+    // -----------------------------------------------------------------------
+    console.log('\n-- stuck comparison rules and shipped keys --')
+    assert(JSON.stringify(gardener.findStuckProbes(
+        [{ name: 'A', moisture: 40 }, { name: 'B', moisture: 41 }, { name: 'C', moisture: 12 }],
+        { takenAt: 0, readings: { A: 40, B: 41.5, D: 7 } }
+    )) === JSON.stringify([{ name: 'A', moisture: 40 }]),
+        'only probes present on both sides with byte-identical readings are stuck')
+    assert(gardener.findStuckProbes([{ name: 'A', moisture: Number.NaN }], { takenAt: 0, readings: { A: Number.NaN } }).length === 0,
+        'a non-numeric reading is never judged')
+    assert(shippedConfig.stuck_check_interval === distConfig.stuck_check_interval
+        && shippedConfig.stuck_warn_cooldown === distConfig.stuck_warn_cooldown
+        && shippedConfig.stuck_speak === distConfig.stuck_speak,
+        `stuck keys present in live config and shipped template (${shippedConfig.stuck_check_interval})`)
+    const stuckDist = yamlParse(fs.readFileSync(resolve(ROOT, 'etc', 'i18n', localeDir, 'gardener.yaml.dist'), 'utf8'))
+    assert(typeof stuckDist.stuck?.tts === 'string' && typeof stuckDist.stuck?.ai === 'string',
+        `stuck bucket ships in the ${localeDir} template`)
+    assert(String(bundle.stuck?.ai).includes(noToolsClause), 'stuck.ai tells the model to use no tools (live bundle)')
+    assert(String(stuckDist.stuck.ai).includes(noToolsClause), 'stuck.ai tells the model to use no tools (template)')
 
 } finally {
     unsubs.forEach(unsub => unsub())

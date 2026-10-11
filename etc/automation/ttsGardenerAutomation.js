@@ -21,6 +21,7 @@ import RuleBasedAutomationBase from '../../src/automation/base/ruleBasedAutomati
 import DeviceContainer from '../../src/device/container/deviceContainer.js'
 import AiAssistant from '../../src/ai/aiAssistant.js'
 import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
+import CacheService from '../../src/service/cacheService.js'
 import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
 import TtsService from '../../src/service/ttsService.js'
@@ -41,6 +42,16 @@ const SLOT_GRACE_MINUTES = 5
 /** Default gap between two event-driven reports, garden-wide ("5m"). */
 const DEFAULT_EVENT_COOLDOWN_MS = 5 * 60_000
 
+/** Default gap between two moisture snapshots -- the stuck-probe comparison cycle ("24h"). */
+const DEFAULT_STUCK_CHECK_INTERVAL_MS = 24 * 3_600_000
+
+/** Default gap between two spoken stuck-probe warnings ("12h"). */
+const DEFAULT_STUCK_WARN_COOLDOWN_MS = 12 * 3_600_000
+
+/** Snapshot lifetime as a multiple of the check interval, so a restart in the middle of a
+ *  cycle never loses the baseline it has to compare against. */
+const STUCK_SNAPSHOT_TTL_FACTOR = 2
+
 export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
 
     /** @type {Record<string, unknown>|null} Cached gardener i18n bundle; reloaded on every run. */
@@ -54,6 +65,16 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      *  re-announcement cooldown. In-memory only -- a restart starts uncooled.
      * @type {number|null} */
     #lastSpokenAt = null
+
+    /** Latest moisture snapshot, mirrored from the Redis copy so the watchdog keeps working
+     *  while Redis is down. Shape: { takenAt: epochMs, readings: { flowerName: value } }.
+     * @type {{takenAt: number, readings: Record<string, number>}|null} */
+    #stuckSnapshot = null
+
+    /** Epoch ms of the last spoken stuck-probe warning; mirrors the Redis warn marker, which
+     *  is the authoritative copy across restarts.
+     * @type {number|null} */
+    #lastStuckWarnAt = null
 
     //  -- Construction & lifecycle ------------------------------------------
 
@@ -76,8 +97,13 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         const triggerSource = String(triggerData?.trigger ?? 'unknown')
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
+        //  Stuck-probe watchdog first, and before every gate below: the daily snapshot is data
+        //  recording, not speech, so it must keep being taken when no output channel is up and
+        //  during the silent period. Only its warning is gated (see runStuckWatchdog).
+        await this.runStuckWatchdog()
+
         //  Off-guard: if neither the AI pipeline nor the TTS server is available there.
-        if (!AiAssistant.isAvailable() && !TtsService.isEnabled()) {
+        if (!this.#outputChannelUp()) {
             this.log('Both AI and TTS unavailable -- skipping gardener run', 'debug')
             return
         }
@@ -182,6 +208,269 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         for (const reading of readings) {
             this.#lastAnnouncedSeverity.set(reading.name, severities.get(reading.name) ?? 0)
         }
+    }
+
+    //  -- Stuck-probe watchdog ------------------------------------------------
+
+    /** Take the periodic moisture snapshot and compare it with the previous one. Capacitive
+     *  soil probes are known to freeze on a single value, so a probe reporting byte-for-byte
+     *  the same reading as the snapshot of the previous cycle gets a warning naming it: the
+     *  sensor likely needs a poke. The snapshot is data recording, not speech -- it is taken
+     *  whenever the interval elapsed, including during the silent period and when no output
+     *  channel is up; only the warning is gated (off-guard, silent period, stuck_warn_cooldown,
+     *  stuck_speak).
+     * @returns {Promise<void>} */
+    async runStuckWatchdog() {
+        if (!this.stuckWatchEnabled()) return
+
+        const intervalMs = this.stuckIntervalMs()
+        const snapshot = await this.#readStuckSnapshot()
+
+        if (snapshot === null) {
+            const readings = this.readFlowerMoisture()
+            if (readings.length === 0) return
+            await this.#writeStuckSnapshot(readings)
+            this.log(`Stuck-probe baseline recorded (${readings.length} probe(s)); first comparison in ${temporal.millisecondsToHumanReadable(intervalMs)}`, 'debug')
+            return
+        }
+
+        const ageMs = Date.now() - snapshot.takenAt
+        if (ageMs < 0) {
+            //  Clock jumped backwards (NTP correction, restored Redis keyspace) -- re-baseline.
+            const readings = this.readFlowerMoisture()
+            if (readings.length > 0) await this.#writeStuckSnapshot(readings)
+            this.log('Stuck-probe snapshot is dated in the future -- baseline re-recorded', 'warn')
+            return
+        }
+        if (ageMs < intervalMs) return
+
+        const readings = this.readFlowerMoisture()
+        if (readings.length === 0) {
+            this.log('Stuck check due but no probe readable -- previous snapshot kept for the next cycle', 'debug')
+            return
+        }
+
+        const stuck = this.findStuckProbes(readings, snapshot)
+        await this.#writeStuckSnapshot(readings)
+
+        if (stuck.length === 0) {
+            this.log(`Stuck check: every probe moved within ${temporal.millisecondsToHumanReadable(intervalMs)}`, 'debug')
+            return
+        }
+
+        const named = stuck.map((s) => `${s.name} (${this.#formatPercent(s.moisture)})`).join(', ')
+        this.log(`Stuck probe suspected: ${named} -- reading unchanged for ${temporal.millisecondsToHumanReadable(intervalMs)}, the sensor may need poking`, 'warn')
+
+        if (this.config?.stuck_speak === false) {
+            this.log('stuck_speak disabled -- the warning stays in the logs', 'debug')
+            return
+        }
+        if (!this.#outputChannelUp()) {
+            this.log('Stuck warning suppressed -- no output channel is up', 'debug')
+            return
+        }
+        if (this.isInSilentPeriod()) {
+            this.log('Stuck warning suppressed by the silent period', 'debug')
+            return
+        }
+        if (await this.#stuckWarnCooldownActive()) return
+
+        if (await this.speakBucket('gardener.stuck', this.#stuckTokens(stuck, intervalMs))) {
+            await this.#markStuckWarned()
+        }
+    }
+
+    /** Whether the stuck-probe watchdog is active (a positive stuck_check_interval).
+     * @returns {boolean} true when snapshots are being taken */
+    stuckWatchEnabled() {
+        return this.stuckIntervalMs() > 0
+    }
+
+    /** Gap between two moisture snapshots, from config.stuck_check_interval. Accepts the usual
+     *  duration forms ("24h", "30m", plain milliseconds); 0 disables the watchdog.
+     * @returns {number} Interval in milliseconds (>= 0) */
+    stuckIntervalMs() {
+        const raw = this.config?.stuck_check_interval
+        if (raw === null || raw === undefined) return DEFAULT_STUCK_CHECK_INTERVAL_MS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms === null || ms < 0) {
+            this.log(`Invalid stuck_check_interval ${JSON.stringify(raw)} (expected e.g. "24h" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_STUCK_CHECK_INTERVAL_MS)})`, 'warn')
+            return DEFAULT_STUCK_CHECK_INTERVAL_MS
+        }
+        return ms
+    }
+
+    /** Minimum gap between two spoken stuck-probe warnings, from config.stuck_warn_cooldown.
+     *  Accepts "12h", "30m", plain milliseconds; 0 speaks on every detection.
+     * @returns {number} Cooldown window in milliseconds (>= 0) */
+    stuckWarnCooldownMs() {
+        const raw = this.config?.stuck_warn_cooldown
+        if (raw === null || raw === undefined) return DEFAULT_STUCK_WARN_COOLDOWN_MS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms === null || ms < 0) {
+            this.log(`Invalid stuck_warn_cooldown ${JSON.stringify(raw)} (expected e.g. "12h" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_STUCK_WARN_COOLDOWN_MS)})`, 'warn')
+            return DEFAULT_STUCK_WARN_COOLDOWN_MS
+        }
+        return ms
+    }
+
+    /** Redis key holding the latest moisture snapshot.
+     * @returns {string} Key ("auto:<name>:stuck:snapshot") */
+    stuckSnapshotKey() {
+        return `auto:${this.name}:stuck:snapshot`
+    }
+
+    /** Redis key marking the moment the last stuck-probe warning was voiced.
+     * @returns {string} Key ("auto:<name>:stuck:warned") */
+    stuckWarnMarkerKey() {
+        return `auto:${this.name}:stuck:warned`
+    }
+
+    /** Probes whose reading is byte-for-byte the same as in the previous snapshot -- a probe
+     *  that did not move a muscle across a whole cycle. A probe present on only one side of
+     *  the comparison (offline, renamed, non-numeric) is never judged.
+     * @param {Array<{name: string, moisture: number}>} readings - Live readings this run
+     * @param {{readings?: Record<string, number>}|null} snapshot - Snapshot of the previous cycle
+     * @returns {Array<{name: string, moisture: number}>} Probes that did not move */
+    findStuckProbes(readings, snapshot) {
+        const previous = snapshot?.readings ?? {}
+        const out = []
+        for (const reading of readings) {
+            if (!Number.isFinite(reading.moisture)) continue
+            const before = previous[reading.name]
+            if (typeof before !== 'number' || !Number.isFinite(before)) continue
+            if (before === reading.moisture) out.push({ name: reading.name, moisture: reading.moisture })
+        }
+        return out
+    }
+
+    /** Localized, speech-oriented phrase for a duration ("24 hours", "24 godzin"). A whole
+     *  day is spoken in hours on purpose: the locale unit words are plural forms, so a bare
+     *  "1 days" reads broken out loud.
+     * @param {number} ms - Duration in milliseconds (positive finite value)
+     * @returns {string} Localized phrase, compact ASCII form when no words are available */
+    stuckWindowPhrase(ms) {
+        const units = { ...temporal.getDurationUnits() }
+        if (Math.floor(ms / 86_400_000) === 1) delete units.day
+        return temporal.msToHumanPhrase(ms, units) ?? temporal.millisecondsToHumanReadable(ms)
+    }
+
+    /** Read the latest snapshot from Redis and adopt it into memory. When Redis is down the
+     *  in-memory mirror keeps the watchdog running inside this process; a snapshot dated in
+     *  the future (restored keyspace) is rejected.
+     * @private
+     * @returns {Promise<{takenAt: number, readings: Record<string, number>}|null>} Usable snapshot */
+    async #readStuckSnapshot() {
+        try {
+            const stored = await CacheService.get(this.stuckSnapshotKey())
+            if (this.#isUsableSnapshot(stored)) {
+                this.#stuckSnapshot = stored
+                return stored
+            }
+        } catch (error) {
+            this.log(`Stuck-snapshot lookup failed: ${error.message} -- using the in-memory baseline`, 'warn')
+        }
+        return this.#isUsableSnapshot(this.#stuckSnapshot) ? this.#stuckSnapshot : null
+    }
+
+    /** Store a fresh snapshot in Redis with a TTL of twice the check interval (so a restart
+     *  mid-cycle keeps the baseline to compare against) and mirror it in memory.
+     * @private
+     * @param {Array<{name: string, moisture: number}>} readings - Readings to record
+     * @returns {Promise<void>} */
+    async #writeStuckSnapshot(readings) {
+        const snapshot = { takenAt: Date.now(), readings: {} }
+        for (const reading of readings) snapshot.readings[reading.name] = reading.moisture
+        this.#stuckSnapshot = snapshot
+        const ttlSeconds = Math.max(1, Math.ceil(this.stuckIntervalMs() * STUCK_SNAPSHOT_TTL_FACTOR / 1000))
+        try {
+            if (!await CacheService.set(this.stuckSnapshotKey(), snapshot, ttlSeconds)) {
+                this.log('Stuck-snapshot not persisted to Redis -- the baseline lives in memory only until the next restart', 'warn')
+            }
+        } catch (error) {
+            this.log(`Error storing the stuck-probe snapshot: ${error.message}`, 'warn')
+        }
+    }
+
+    /** Shape check for a snapshot read from Redis or held in memory.
+     * @private
+     * @param {*} node - Cached value to validate
+     * @returns {boolean} true when the node is a usable snapshot */
+    #isUsableSnapshot(node) {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) return false
+        if (typeof node.takenAt !== 'number' || !Number.isFinite(node.takenAt)) return false
+        return Boolean(node.readings && typeof node.readings === 'object' && !Array.isArray(node.readings))
+    }
+
+    /** Whether the last spoken stuck warning is still cooling down. The marker lives in Redis
+     *  so the cooldown survives a restart; a Redis outage falls back to the in-memory
+     *  timestamp and fails open when there is none.
+     * @private
+     * @returns {Promise<boolean>} true when this warning must stay quiet */
+    async #stuckWarnCooldownActive() {
+        const windowMs = this.stuckWarnCooldownMs()
+        if (windowMs <= 0) return false
+
+        let markerAt = null
+        try {
+            const marker = await CacheService.get(this.stuckWarnMarkerKey())
+            const at = Number(marker?.at)
+            if (Number.isFinite(at)) markerAt = at
+        } catch (_) {
+            //  Redis unavailable -- the in-memory timestamp below is all there is.
+        }
+
+        const lastAt = markerAt ?? this.#lastStuckWarnAt
+        if (lastAt === null) return false
+
+        const elapsedMs = Date.now() - lastAt
+        if (elapsedMs < 0 || elapsedMs >= windowMs) return false
+        this.log(`Stuck warning suppressed -- ${Math.round(elapsedMs / 1000)}s since the last one (cooldown ${temporal.millisecondsToHumanReadable(windowMs)})`, 'debug')
+        return true
+    }
+
+    /** Record that a stuck warning was voiced: in-memory timestamp plus the Redis marker, so
+     *  the cooldown outlives a restart.
+     * @private
+     * @returns {Promise<void>} */
+    async #markStuckWarned() {
+        this.#lastStuckWarnAt = Date.now()
+        const ttlSeconds = Math.max(1, Math.ceil(Math.max(this.stuckWarnCooldownMs(), this.stuckIntervalMs()) / 1000))
+        try {
+            if (!await CacheService.set(this.stuckWarnMarkerKey(), { at: this.#lastStuckWarnAt }, ttlSeconds)) {
+                this.log('Stuck-warning marker not persisted to Redis -- the cooldown is in-memory only', 'warn')
+            }
+        } catch (error) {
+            this.log(`Error storing the stuck-warning marker: ${error.message}`, 'warn')
+        }
+    }
+
+    /** Runtime placeholder values for the stuck bucket: the probes that did not move, each as
+     *  "Name (NN%)", plus the comparison window spoken in the active locale.
+     * @private
+     * @param {Array<{name: string, moisture: number}>} stuck - Probes that did not move
+     * @param {number} intervalMs - Snapshot interval the comparison ran on
+     * @returns {Record<string, string>} Token map */
+    #stuckTokens(stuck, intervalMs) {
+        return {
+            stuck_flowers: stuck.map((s) => `${s.name} (${this.#formatPercent(s.moisture)})`).join(', '),
+            stuck_window: this.stuckWindowPhrase(intervalMs)
+        }
+    }
+
+    /** Whether anything can voice a report at all: the AI pipeline or the TTS server.
+     * @private
+     * @returns {boolean} true when at least one output channel is up */
+    #outputChannelUp() {
+        return AiAssistant.isAvailable() || TtsService.isEnabled()
+    }
+
+    /** Moisture value as a speech-friendly percentage string ("21%"); empty for a non-number.
+     * @private
+     * @param {number} value - Raw reading
+     * @returns {string} Formatted percentage, or '' when not numeric */
+    #formatPercent(value) {
+        return Number.isFinite(value) ? `${Number(value.toFixed(1))}%` : ''
     }
 
     /** No device targets for this automation -- returns empty Map so parent's flow
@@ -352,13 +641,16 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         return true
     }
 
-    /** Clear in-memory announcement state (per-flower severities + the event cooldown). The
-     *  once-per-day slot markers themselves live in Redis under the base's
-     *  `auto:<name>:once:<slug>` keys and expire with their own TTL.
+    /** Clear in-memory announcement state (per-flower severities, the event cooldown and the
+     *  watchdog's in-memory mirror). The once-per-day slot markers, the moisture snapshot and
+     *  the stuck-warning marker live in Redis under `auto:<name>:...` keys and survive a
+     *  restart with their own TTL.
      *  @returns {void} */
     resetState() {
         this.#lastAnnouncedSeverity.clear()
         this.#lastSpokenAt = null
+        this.#stuckSnapshot = null
+        this.#lastStuckWarnAt = null
     }
 
     //  -- Config & bundle helpers ---------------------------------------------
@@ -471,7 +763,7 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      * @param {Map<string, number>} severities - Per-flower severity from execute()
      * @returns {Record<string, string>} Token map */
     #tokensFor(readings, severities) {
-        const fmt = (v) => Number.isFinite(v) ? `${Number(v.toFixed(1))}%` : ''
+        const fmt = (v) => this.#formatPercent(v)
         const sorted = [...readings].sort((a, b) => a.moisture - b.moisture)
         const affected = sorted.filter(r => (severities.get(r.name) ?? 0) > 0)
             .map(r => `${r.name} (${fmt(r.moisture)})`)

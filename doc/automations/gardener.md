@@ -18,6 +18,7 @@ The readings come from the device state property zigbee2mqtt exposes on capaciti
    - `use_ai: true` + AI down / provider error / empty reply → warn in logs and speak the plain `tts` line instead. There is deliberately **no spoken fallback notice** — a dry plant must not be announced twice.
 8. A configured `silence_between:` window suppresses timer and event runs; a forced run (`automaton automation force TtsGardenerAutomation`) bypasses it.
 9. When **neither** the AI pipeline nor the TTS server is available, the run is skipped before any evaluation work.
+10. **Stuck-probe watchdog.** Every `stuck_check_interval:` (default `24h`) the automation snapshots every readable probe and compares the new readings with the snapshot of the previous cycle. A probe reporting **byte-for-byte the same value** as it did a whole cycle ago is flagged: a capacitive probe frozen on one number is far more likely stuck than soil that is perfectly stable, so the warning names the probe and tells you to give it a poke. The snapshot is data recording, not speech, so it is taken on every run — silent period, down output channels and all; only the warning is gated by the off-guard, `silence_between:`, `stuck_warn_cooldown:` and `stuck_speak:`. The snapshot lives in Redis (`auto:TtsGardenerAutomation:stuck:snapshot`, TTL twice the interval) together with the warning marker (`:stuck:warned`), so a restart in the middle of a cycle keeps the baseline it has to compare against and does not reset the cooldown; while Redis is unreachable the watchdog runs off its in-memory copy. A probe present on only one side of the comparison — offline, renamed, non-numeric — is never judged, and a snapshot written in the future (a clock correction, a restored keyspace) re-baselines instead of warning.
 
 ## Configuration
 
@@ -32,6 +33,9 @@ announce_times: ["0830", "1900"]     # local HHmm slots for the daily status rep
 timer_interval: "1m"                 # tick driving announce_times -- keep at minute granularity
 silence_between: "2300-0600"         # suppress execution between these local times; null disables
 event_cooldown: "5m"                 # minimum gap between two event-driven reports; 0 disables
+stuck_check_interval: "24h"          # gap between two moisture snapshots -- the stuck-probe cycle; 0 disables the watchdog
+stuck_warn_cooldown: "12h"           # minimum gap between two spoken stuck-probe warnings; 0 speaks on every detection
+stuck_speak: true                    # false keeps the stuck-probe warning in the logs only
 
 rules:                               # most severe first -- first matching band wins per plant
   - name: 'Critical drought'         # reactive: true -> a drop into this band speaks on its own
@@ -62,6 +66,9 @@ rules:                               # most severe first -- first matching band 
 | `timer_interval` | `1m` | Tick driving the slot scheduling |
 | `silence_between` | — | `HHmm-HHmm` local window with no speech |
 | `event_cooldown` | `5m` | Minimum gap between two event-driven reports, garden-wide; scheduled and manual runs ignore it |
+| `stuck_check_interval` | `24h` | Gap between two soil-moisture snapshots; a probe whose reading did not move at all between them is reported as stuck. `0` disables the watchdog |
+| `stuck_warn_cooldown` | `12h` | Minimum gap between two *spoken* stuck-probe warnings; the detection is always logged, `0` speaks on every detection |
+| `stuck_speak` | `true` | `false` keeps the stuck-probe warning in the logs only |
 | `rules[].name` | — | Rule label (appears in the rules window) |
 | `rules[].conditions` | — | Band test on the synthetic `moisture` value — the key here is the *reading*, not the device state key |
 | `rules[].sentence` | — | Bundle section to speak, e.g. `gardener.critical` |
@@ -69,7 +76,7 @@ rules:                               # most severe first -- first matching band 
 
 ## Language Bundles
 
-Sentences live in `etc/i18n/{locale}/gardener.yaml`, one section per band with a `tts` line and an `ai` instruction:
+Sentences live in `etc/i18n/{locale}/gardener.yaml`, one section per band with a `tts` line and an `ai` instruction — plus the `stuck:` section the watchdog speaks, which is not a moisture band:
 
 ```yaml
 critical:
@@ -82,6 +89,8 @@ critical:
 | `{% affected_flowers %}` | Every plant below the healthy band as `Name (NN%)`, driest first |
 | `{% driest_flower %}` | Name of the single driest plant |
 | `{% driest_moisture %}` | That plant's reading as a percentage, e.g. `21%` |
+| `{% stuck_flowers %}` | Every probe whose reading did not move since the previous snapshot, as `Name (NN%)` |
+| `{% stuck_window %}` | The comparison window spoken in the active locale, e.g. `24 hours` |
 
 The `tts` line is spoken verbatim on the plain-TTS path (and as the fallback when AI fails); the `ai` line is an *instruction* to the model, never read aloud itself. Numeric values stay out of the template words on purpose so Piper TTS and small models read digits naturally in any locale — the percent sign travels inside the value itself, so the plain path says "twenty-one percent" and not a bare number. Every `ai` line opens with the weatherman's clause telling the model to use no tools and work only from the data given: the probes have already been read, and a model that goes looking for them spends the announcement on a tool call.
 
@@ -127,6 +136,7 @@ In the device window, a probe's reading appears in the **Humid** column: the col
 | Sensor type | `src/device/type/sensor.js` |
 | MQTT semantic dedupe | `src/service/mqttService.js` (`soil_moisture` is a semantic key) |
 | TTS framing profiles | `src/lib/ttsProfiles.js` |
+| Stuck-probe snapshot store | `src/service/cacheService.js` (Redis `auto:TtsGardenerAutomation:stuck:*`) |
 | Tests | `tests/test-tts-gardener.js`, `tests/test-mqtt-soil-moisture-dedupe.js`, `tests/test-device-classification.js`, `tests/test-device-window-sensor-columns.js` |
 
 ---

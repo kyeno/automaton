@@ -1,10 +1,6 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Add extra automation for Gardener (or build it in current one) that will store the current values
-  once per 24 hours and then compare with previous values from 24 hours ago. If one of the humidity 
-  values is identical (didn't move a muscle), warn that this particular sensor might've gotten stuck
-  and needs poking (it happens with those moisture sensors)
 - UI: Both design and functionality of 5th window is a total misunderstanding.
   Instead of log-alike window, it should permanently list the rule-based
   automations and just re-draw whatever acted last under each one of them.
@@ -28,6 +24,7 @@
 - Integrate automated IR remote
 
 ## Architecture
+- Move ai_bridge: config key to ai: bridge:
 - BUG: Many config entries have something_timeout or something_cooldown _ms, while they
   take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
