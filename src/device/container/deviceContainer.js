@@ -18,6 +18,7 @@ import MqttService from '../../service/mqttService.js'
 import EventBus from '../../service/eventBus.js'
 import Autoloader from '../../lib/autoloader.js'
 import LoggerService from '../../service/loggerService.js'
+import { categoryFromDefinition } from '../../lib/deviceClassification.js'
 
 
 /** Path to the device type implementations directory.
@@ -191,19 +192,42 @@ class SDeviceContainer {
         }
     }
 
+    /** Resolve the type category for a device: the config mapping wins, and a device with
+     *  no entry is judged by the definition the bridge reports. Public so callers (and the
+     *  tests) can inspect the decision without instantiating a device.
+     * @param {string} friendlyName - Device friendly name
+     * @param {Object} [definition=null] - Bridge device-list entry for this device
+     * @returns {string} Category key ('sensor', 'mechanism', ...) or 'dummy' */
+    classifyDevice(friendlyName, definition = null) {
+        const configured = this.#deviceTypeMap[friendlyName]
+        if (configured && this.#typeModulesByCategory[configured]) return configured
+
+        return categoryFromDefinition(definition, {
+            availableCategories: Object.keys(this.#typeModulesByCategory),
+        }) ?? 'dummy'
+    }
+
     /** Resolve the appropriate class for a device by its friendly name.
      * @param {string} name - Device friendly name
+     * @param {Object} [definition=null] - Bridge device-list entry for this device
      * @returns {Class} Device class
      * @private */
-    #resolveDeviceType(name) {
-        //  Try type category mapping from devices.yml config.
-        const typeCategory = this.#deviceTypeMap[name]
+    #resolveDeviceType(name, definition = null) {
+        //  Config mapping first, bridge definition second, dummy last.
+        const category = this.classifyDevice(name, definition)
 
-        if (typeCategory) {
-            const typeModule = this.#typeModulesByCategory[typeCategory]
+        if (category !== 'dummy') {
+            const typeModule = this.#typeModulesByCategory[category]
 
             if (typeModule) {
-                LoggerService.debug(`Resolved "${name}" -> type:${typeCategory}`, 'DeviceContainer')
+                if (this.#deviceTypeMap[name]) {
+                    LoggerService.debug(`Resolved "${name}" -> type:${category}`, 'DeviceContainer')
+                } else {
+                    LoggerService.warn(
+                        `No config entry for "${name}" -- auto-classified as "${category}" from the bridge definition`,
+                        'DeviceContainer'
+                    )
+                }
                 return typeModule.default || typeModule
             }
         }
@@ -237,12 +261,25 @@ class SDeviceContainer {
                 continue
             }
 
-            const DeviceClass = this.#resolveDeviceType(name)
+            const DeviceClass = this.#resolveDeviceType(name, definition)
             //  Merge declarative per-device parameters (channels, brightness_range, ...)
             const deviceData = { ...definition, id: deviceId, ...(this.#deviceParams[name] ?? {}) }
 
             devices[name] = new DeviceClass(name, deviceId, deviceData)
         }
+
+        //  Per-category counts. A probe that drifted out of the config shows up as a
+        //  lone "Device:1" here, which is the earliest tripwire for a friendly-name rename.
+        const counts = {}
+        for (const device of Object.values(devices)) {
+            const category = device.getLogPrefix?.() || 'Device'
+            counts[category] = (counts[category] ?? 0) + 1
+        }
+        const summary = Object.entries(counts)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([category, count]) => `${category}:${count}`)
+            .join(' ')
+        LoggerService.info(`Instantiated by type: ${summary || 'none'}`, 'DeviceContainer')
 
         return devices
     }
@@ -358,6 +395,17 @@ class SDeviceContainer {
 
     //  -- Dynamic device management ------------------------------------
 
+    /** Look up a device entry in the bridge's cached device list.
+     * @param {string} friendlyName - Device friendly name
+     * @returns {Object|null} Bridge device entry, or null when the list is unavailable
+     * @private */
+    #bridgeDefinitionFor(friendlyName) {
+        const bridge = this.#devices['bridge']
+        const list = typeof bridge?.getDevices === 'function' ? bridge.getDevices() : null
+        if (!Array.isArray(list)) return null
+        return list.find(entry => entry?.friendly_name === friendlyName) ?? null
+    }
+
     /** Add a new device at runtime (triggered by Bridge on device_announce).
      * @param {string} friendlyName - Device friendly name
      * @param {string} ieeeAddr - IEEE address (device ID)
@@ -369,7 +417,7 @@ class SDeviceContainer {
             return null
         }
 
-        const DeviceClass = this.#resolveDeviceType(friendlyName)
+        const DeviceClass = this.#resolveDeviceType(friendlyName, this.#bridgeDefinitionFor(friendlyName))
         // Merge declarative per-device parameters.
         const deviceData = { ...data, id: ieeeAddr, ieee_address: ieeeAddr, friendly_name: friendlyName, ...(this.#deviceParams[friendlyName] ?? {}) }
         const device = new DeviceClass(friendlyName, ieeeAddr, deviceData)

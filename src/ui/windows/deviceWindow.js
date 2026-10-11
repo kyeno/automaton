@@ -28,6 +28,7 @@ const HUMID_W = 6
 const PRESS_W = 8
 const LIGHT_W = 7
 const ACTION_W = 10
+const LASTSEEN_W = 8
 
 //  DeviceWindow.
 
@@ -94,6 +95,7 @@ class DeviceWindow extends BaseWindow {
         const sensors = []
         const mechanisms = []
         const remotes = []
+        const unclassified = []
 
         for (const [name, device] of Object.entries(allDevices)) {
             const prefix = device.getLogPrefix?.() || 'Device'
@@ -102,9 +104,14 @@ class DeviceWindow extends BaseWindow {
                 sensors.push({ name, device })
             } else if (prefix === 'Remote') {
                 remotes.push({ name, device })
-            } else {
-                //  Mechanism (or fallback)
+            } else if (device.shouldTrackOrigin?.() === true) {
+                //  Actuators only -- Mechanism and its multi-channel subclasses.
                 mechanisms.push({ name, device })
+            } else {
+                //  No type mapping resolved, so this is a DummyDevice. Listing it under
+                //  Mechanisms would claim it answers power commands, which is exactly the
+                //  friendly-name-drift trap: a renamed soil probe used to land here.
+                unclassified.push({ name, device })
             }
         }
 
@@ -112,6 +119,7 @@ class DeviceWindow extends BaseWindow {
         sensors.sort((a, b) => a.name.localeCompare(b.name))
         mechanisms.sort((a, b) => a.name.localeCompare(b.name))
         remotes.sort((a, b) => a.name.localeCompare(b.name))
+        unclassified.sort((a, b) => a.name.localeCompare(b.name))
 
         const lines = []
 
@@ -135,14 +143,21 @@ class DeviceWindow extends BaseWindow {
             this.#renderRemotes(remotes, lines)
         }
 
+        //  -- Unclassified section --------------------------------------
+        if (unclassified.length > 0) {
+            lines.push('')
+            this.#renderUnclassified(unclassified, lines)
+        }
+
         //  -- Summary footer --------------------------------------------
-        const totalDevices = sensors.length + mechanisms.length + remotes.length
+        const totalDevices = sensors.length + mechanisms.length + remotes.length + unclassified.length
         lines.push('')
         lines.push(
             AnsiColors.dim + 'Devices: ' + totalDevices +
             ' | Sensors: ' + sensors.length +
             ' | Mechanisms: ' + mechanisms.length +
             ' | Remotes: ' + remotes.length +
+            (unclassified.length > 0 ? ' | Unclassified: ' + unclassified.length : '') +
             AnsiColors.reset
         )
 
@@ -385,6 +400,59 @@ class DeviceWindow extends BaseWindow {
 
             lines.push(line)
         }
+    }
+
+    /** Render the Unclassified section -- devices the container resolved to DummyDevice
+     *  because no type mapping matched their friendly name. They are listed here, never
+     *  as mechanisms: a dummy answers power commands by faking a state change, so a
+     *  mechanism row for a soil probe is a lie about the hardware.
+     * @private
+     * @param {Array<Object>} unclassified - Device instances without a resolved type
+     * @param {Array<string>} lines - Row buffer that receives the rendered section */
+    #renderUnclassified(unclassified, lines) {
+        const header = AnsiColors.bold + AnsiColors.yellow +
+            '-- Unclassified (' + unclassified.length + ') --' + AnsiColors.reset
+        lines.push(header)
+
+        let hdr = ''
+        hdr += 'Name'.padEnd(NAME_W)
+        hdr += 'Last seen'.padStart(LASTSEEN_W)
+        hdr += 'Batt'.padStart(BATT_W)
+        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
+
+        for (const { name, device } of unclassified) {
+            const stateLast = device.getStateLast?.() || {}
+            const battery = stateLast.battery ?? null
+            const seenAt = device.getStateLastAt?.() ?? null
+
+            let seenText = '-'
+            if (seenAt) {
+                const when = seenAt instanceof Date ? seenAt : new Date(seenAt)
+                if (!Number.isNaN(when.getTime())) seenText = temporal.formatClockTime(when)
+            }
+
+            let line = ''
+
+            //  Name column.
+            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
+
+            //  Last seen column (grey, right-aligned).
+            line += colCell(seenText, AnsiColors.grey, LASTSEEN_W, 'right')
+
+            //  Battery column.
+            if (battery != null) {
+                const battColor = this.#getBatteryColor(battery)
+                line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
+            } else {
+                line += ' '.repeat(BATT_W)
+            }
+
+            lines.push(line)
+        }
+
+        lines.push(
+            AnsiColors.dim + '  No type mapping -- check these names against etc/device/zigbee.yaml' + AnsiColors.reset
+        )
     }
 
     //  -- Private Helpers --------------------------------------------------

@@ -257,7 +257,9 @@ Device types determine behavior:
 |------|-------------|
 | `mechanism` | Actuator devices that can be controlled (lights, outlets, shutters) |
 | `remote` | Input devices that trigger interactions (wall switches, wireless controllers) |
-| `sensor` | Read-only devices providing measurements (temperature, humidity, illuminance) |
+| `sensor` | Read-only devices providing measurements (temperature, humidity, soil moisture, illuminance) |
+
+Names must match the bridge's `friendly_name` **exactly** — renaming a device in Zigbee2MQTT breaks its mapping here. A device with no mapping is judged by the definition the bridge reports: a measurement-only device (temperature / humidity / soil moisture / illuminance, with nothing actuating) is auto-classified as `sensor` with a warning naming it, while anything that actuates falls back to a dummy that only mirrors state. The startup line `Instantiated by type: Sensor:9 Mechanism:8 Device:1 ...` counts every device by resolved type, so a stray `Device:N` is the tripwire for a drifted name, and the device window lists unmapped devices under **Unclassified** instead of presenting them as controllable mechanisms. The soil-probe case end to end: [TTS Gardener](automations/gardener.md).
 
 ### Network Hosts (`etc/device/network.yaml`)
 
