@@ -25,6 +25,9 @@ class SSequenceContainer {
      * @type {Map<string, SequenceBase>} */
     #sequences = new Map()
 
+    /** True once bootstrap ran at least one build attempt -- gates /config reload probes so half-built containers are never touched. */
+    #initialized = false
+
 
     /** Synchronous singleton constructor.
      * @return {this} */
@@ -40,16 +43,80 @@ class SSequenceContainer {
      * stale state keys. Bad or missing config warns and stays inert -- never crashes startup (D16).
      * @async */
     async init() {
-        const filePath = ConfigService.getConfigPath('sequence')
-        if (!filePath) {
-            LoggerService.warn('No sequence config path configured -- sequences stay inert', 'SequenceContainer')
-            return
+        const built = await this.#buildRegistry()
+        if (!built.ok) {
+            LoggerService.warn(`Sequences stay inert -- ${built.reason}`, 'SequenceContainer')
+        } else {
+            this.#sequences = built.registry
+            LoggerService.info(`${built.loaded} sequence(s) loaded`, 'SequenceContainer')
+        }
+        this.#initialized = true
+    }
+
+    /** Re-read the sequences config from disk and rebuild the live registry in place -- the hook
+     * behind /config reload. Two-phase safe swap: when the file cannot be read at all the current
+     * registry is kept intact; otherwise engaged loops are gracefully stopped first (in-flight step
+     * lists finish per D6), then the map is replaced with freshly built instances so added/renamed/
+     * removed definitions take effect without a restart. Entry semantics match startup exactly
+     * (bad entries warn+skip, never crash -- D16).
+     * @returns {Promise<{ok:boolean, loaded:number, added:string[], removed:string[]}>} Report for UI rendering */
+    async reloadSequences() {
+        const before = new Set(this.#sequences.keys())
+        const built = await this.#buildRegistry()
+
+        if (!built.ok) {
+            LoggerService.warn(
+                `Sequences reload skipped (${built.reason}) -- keeping ${before.size} registered instance(s)`,
+                'SequenceContainer'
+            )
+            return { ok: false, loaded: 0, added: [], removed: [] }
         }
 
-        const section = ConfigService.load(filePath, 'sequences')
-        if (!section) {
-            LoggerService.warn(`No sequence config available at "${filePath}" -- sequences stay inert`, 'SequenceContainer')
-            return
+        //  Graceful teardown of outgoing instances before their definition goes stale (D6/D16):
+        //  stop engaged loops and cancel armed inter-phase timers; in-flight step lists finish first.
+        for (const seq of [...this.#sequences.values()]) {
+            try {
+                if (seq.isLoopActive()) seq.stopLoop()
+                seq.cleanup?.()
+            } catch (err) {
+                LoggerService.error(`Error tearing down sequence "${seq.getName()}": ${err.message}`, 'SequenceContainer')
+            }
+        }
+
+        this.#sequences = built.registry
+        this.#initialized = true
+
+        const after = [...this.#sequences.keys()]
+        const added = after.filter((slug) => !before.has(slug)).sort()
+        const removed = [...before].filter((slug) => !after.includes(slug)).sort()
+        return { ok: true, loaded: after.length, added, removed }
+    }
+
+    /** Read the sequences config fresh from disk and build a brand-new registry WITHOUT touching
+     * the live map -- shared by init() and reloadSequences(). Per-entry diagnostics (schema errors,
+     * bad entries, inert devices) warn exactly as they do at startup.
+     * @private
+     * @returns {Promise<{ok:boolean, reason?:string, registry?:Map<string, SequenceBase>, loaded?:number}>} */
+    async #buildRegistry() {
+        const filePath = ConfigService.getConfigPath('sequence')
+        if (!filePath) {
+            return { ok: false, reason: 'no sequence config path configured' }
+        }
+
+        //  load() may hand back a cached instance -- possibly one still bound to an older file path.
+        //  Rebind through the service when needed and force a disk read either way, so both init()
+        //  and reloadSequences() always see current on-disk state; parse errors surface as not-ok
+        //  instead of silently rebuilding from stale data.
+        let section = ConfigService.load(filePath, 'sequences')
+        try {
+            if (section && section.filePath !== filePath) {
+                ConfigService.unload('sequences')
+                section = ConfigService.load(filePath, 'sequences')
+            }
+            if (!section) throw new Error(`no sequence config available at "${filePath}"`)
+            section.refresh()
+        } catch (err) {
+            return { ok: false, reason: String(err?.message ?? err) }
         }
 
         let errors = []
@@ -64,6 +131,8 @@ class SSequenceContainer {
 
         const rawEntries = section.get('sequences', [])
         const entries = Array.isArray(rawEntries) ? rawEntries : []
+        /** @type {Map<string, SequenceBase>} */
+        const registry = new Map()
         let loadedCount = 0
 
         for (let i = 0; i < entries.length; i++) {
@@ -80,7 +149,7 @@ class SSequenceContainer {
             }
 
             const slug = slugify(name)
-            if (this.#sequences.has(slug)) {
+            if (registry.has(slug)) {
                 LoggerService.error(`Duplicate sequence slug "${slug}" ("${name}") -- skipping duplicate`, 'SequenceContainer')
                 continue
             }
@@ -95,14 +164,14 @@ class SSequenceContainer {
             try {
                 const seq = new SequenceBase(name, entry)
                 await seq.init()
-                this.#sequences.set(slug, seq)
+                registry.set(slug, seq)
                 loadedCount++
             } catch (err) {
                 LoggerService.error(`Failed to initialize sequence "${name}": ${err.message}`, 'SequenceContainer')
             }
         }
 
-        LoggerService.info(`${loadedCount} sequence(s) loaded`, 'SequenceContainer')
+        return { ok: true, registry, loaded: loadedCount }
     }
 
     /** Clean up all sequences during graceful shutdown. */
@@ -119,6 +188,13 @@ class SSequenceContainer {
     }
 
     //  -- Public API -----------------------------------------------------
+
+    /** Whether bootstrap has run for this container (even if no sequences loaded) -- /config reload
+     * only rebuilds when true, keeping processes that never started it (e.g., unit tests) untouched.
+     * @returns {boolean} */
+    isInitialized() {
+        return this.#initialized
+    }
 
     /** Get a sequence instance by its slug.
      * @param {string} slug - Registry key (slugified name)

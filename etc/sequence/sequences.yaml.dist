@@ -19,7 +19,9 @@
 #                enabled: true
 #                cycle: once | continuous      # once = single ON->OFF pass; continuous = repeat until stopped
 #                off_delay_ms: auto | duration # gap between end of ON run and start of OFF run;
-#                                              # auto = second run starts right when first finishes
+#                                              # auto = phase starts right when the previous one finishes
+#                on_delay_ms: auto | duration  # gap between end of OFF run and next ON run (continuous only);
+#                                              # auto = no wait, same as above
 sequences:
   # Simple form + pacing: ambient lights come up one after another.
   - name: 'Ambient Lights'
@@ -37,7 +39,8 @@ sequences:
     loop:
       enabled: true
       cycle: continuous
-      off_delay_ms: auto
+      off_delay_ms: '2s'   # dwell before the OFF swing
+      on_delay_ms: '2s'    # dwell before the next ON swing
     on:                               # phase A -- low values
       - device: 'Salon Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }

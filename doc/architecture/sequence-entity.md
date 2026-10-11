@@ -55,7 +55,7 @@ Reference examples:
 | D3 | Config space = `etc/sequence/sequences.yaml`; committed template `sequences.yaml.dist`; active file gitignored like all other configs. | Matches existing etc/ layering |
 | D4 | Single friendly `name:` field per entry (no separate label). Internal registry/state key derived with existing `slugify()` from `lib/string.js:14` (trim, lowercase, spaces→underscores): `'Salon Hazard Light'` → `salon_hazard_light`. | Same convention devices use everywhere |
 | D5 | `delay_ms` fully optional. Absent ⇒ **"multi-device endpoint" mode**: all steps fire back-to-back with no waiting (useful on its own). Present ⇒ inter-step pacing; per-step override allowed. | Owner request |
-| D6 | Loop semantics: `cycle: once \| continuous`; `off_delay_ms: auto \| <duration>`. **Graceful stop**: cancel the inter-phase timer if between phases; an in-flight step-list always finishes so no device ends half-configured; after finishing, a stopped loop starts no further cycles. | Agreed edge case #5 |
+| D6 | Loop semantics: `cycle: once \| continuous`; `off_delay_ms` / `on_delay_ms`: `auto \| <duration>` (gaps before OFF runs / before ON runs respectively; both default to auto). **Graceful stop**: cancel whichever inter-phase timer is armed if between phases; an in-flight step-list always finishes so no device ends half-configured; after finishing, a stopped loop starts no further cycles. | Agreed edge case #5 |
 | D7 | Blocking mutex covers BOTH single runs and loops per instance — nothing can override anything while an instance is busy. Rejections logged at warn level. | "No possibility to override" requirement |
 | D8 | Run state stored in StateService under keys: `sequence.<slug>.active` (bool), `sequence.<slug>.phase` (`'on'\|'off'\|null`), `sequence.<slug>.loop.active` (bool). Bonus: UI status-bar `stateWidget` can render these later for free. | Owner suggested StateService |
 | D9 | All commands sent as `DeviceCommandSource.AUTOMATION` (`src/enum/deviceCommandSource.js`). Keeps origin tracking / human-cooldown logic correct downstream. | No-hacks rule |
@@ -149,7 +149,9 @@ Two forms per entry — **simple** (device list, ON/OFF derived automatically) a
 #                enabled: true
 #                cycle: once | continuous      # once = single ON->OFF pass; continuous = repeat until stopped
 #                off_delay_ms: auto | duration # gap between end of ON run and start of OFF run;
-#                                              # auto = second run starts right when first finishes
+#                                              # auto = phase starts right when the previous one finishes
+#                on_delay_ms: auto | duration  # gap between end of OFF run and next ON run (continuous only);
+#                                              # auto = no wait, same as above
 sequences:
   # Simple form + pacing: ambient lights come up one after another.
   - name: 'Ambient Lights'
@@ -167,6 +169,7 @@ sequences:
       enabled: true
       cycle: continuous
       off_delay_ms: auto
+      on_delay_ms: auto
     on:                               # phase A -- low values
       - device: 'Salon Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }
@@ -180,7 +183,7 @@ Validation rules enforced at container init (warn + skip entry / inert step — 
 - `name` required string; duplicate slugs rejected with an error log.
 - Exactly one of `devices:` or `on:` must be present (`off:` only meaningful with rich form).
 - `delay_ms` / per-step `delay_ms` parse via `temporal.parseDurationMs`; invalid → warn, treat as absent/0.
-- `loop.cycle` ∈ {once, continuous} (default once); `loop.off_delay_ms` = `auto` | duration (default auto).
+- `loop.cycle` ∈ {once, continuous} (default once); `loop.off_delay_ms` / `loop.on_delay_ms` = `auto` | duration (both default auto; the ON-side gap only fires between an OFF run and the next ON run of a continuous cycle).
 - Referenced devices resolved against DeviceContainer; missing ⇒ inert step (D10).
 
 ---
@@ -201,7 +204,7 @@ Private fields (suggested names):
 #stepsOn         // [{deviceName, payload, delayMs}] resolved ON steps
 #stepsOff        // same shape for OFF runs
 #defaultDelayMs  // sequence-level inter-step delay (0 when unset -> endpoint mode)
-#loopConfig      // {cycle: 'once'|'continuous', offDelayMs: number|null(auto)} or null
+#loopConfig      // {cycle: 'once'|'continuous', offDelayMs/onDelayMs: number|null(auto)} or null
 #devices         // Map<deviceName, deviceInstance> resolved in init()
 #busy             // mutex: true while any run (single or loop phase) is active
 #loopActive       // a loop session is engaged (survives across phases incl. timer wait)
@@ -253,8 +256,11 @@ RUNNING_ON --on-run finished-->
     else                    --> WAITING_OFF (TimedAction armed with offDelayMs; instance stays busy)
 WAITING_OFF --timer fired--> RUNNING_OFF        (stopLoop during wait cancels the timer -> IDLE)
 RUNNING_OFF --off-run finished-->
-    cycle==continuous && !#stopRequested? --> RUNNING_ON (next oscillation)
-    else                                  --> IDLE
+    stopRequested?          --> IDLE
+    cycle != continuous?    --> IDLE
+    on_delay_ms == auto?    --> immediately RUNNING_ON (next oscillation)
+    else                    --> WAITING_ON (TimedAction armed with onDelayMs; instance stays busy)
+WAITING_ON --timer fired---> RUNNING_ON         (stopLoop during wait cancels the timer -> IDLE)
 IDLE: #loopActive=false, all state keys cleared, TimedAction released
 ```
 
@@ -265,10 +271,10 @@ Rules of engagement:
   every entry point checks BOTH flags (`#busy || #loopActive`). Nothing can override (D7).
 - The loop driver keeps the instance engaged across phases: it sets `#busy` around each
   phase run and holds `#loopActive` through the inter-phase window.
-- `stopLoop()` semantics (D6): set `#stopRequested`; if in WAITING_OFF cancel the timer
-  and go straight to IDLE; if mid-phase let that step-list finish, then exit without
-  starting further work. Never aborts inside a step-list.
-- Continuous mode with `auto` off-delay produces back-to-back ON/OFF runs = the
+- `stopLoop()` semantics (D6): set `#stopRequested`; if between phases (either wait slot) cancel
+  the armed timer and go straight to IDLE; if mid-phase let that step-list finish, then exit
+  without starting further work. Never aborts inside a step-list.
+- Continuous mode with both gaps at `auto` produces back-to-back ON/OFF runs = the
   hazard-light oscillation effect.
 
 ### 6.2 `SSequenceContainer` (`src/sequence/container/sequenceContainer.js`)
@@ -278,6 +284,8 @@ Mirrors `SDeviceContainer` structure & style (JSDoc sections, singleton tail):
 | Member | Contract |
 |--------|----------|
 | `async init()` | resolve path via `ConfigService.getConfigPath('sequence')`; `section = ConfigService.load(path, 'sequences')`; null → warn "no sequence config -- staying inert" + return; `await section.validate()` → log each error as warning; normalize entries (§5 rules), detect duplicate slugs (error log, skip dupes); instantiate `new SequenceBase(name, cfg)` per entry, `await seq.init()`, register under slug; info-log summary count |
+| `async reloadSequences()` | /config-reload hook: builds a brand-new registry via the shared `#buildRegistry()` WITHOUT touching the live map until success; unreadable file → keep the current registry intact + report `{ok:false}`; otherwise stop engaged loops first (`stopLoop()`+`cleanup()`, D6 graceful semantics) then swap in the new Map; returns `{ok, loaded, added, removed}` slug-diff for UI reporting so `/config reload` picks up sequences.yaml edits without a restart |
+| `isInitialized()` | true once bootstrap ran at least one build attempt — gates the /config-reload probe so half-built containers are never touched |
 | `get(slug)` / `getAll()` / `getNames()` | registry access (Map keyed by slug) |
 | `async callCommand(slug, command)` | resolves + delegates to `run(command)`; unknown slug → warn |
 | `startLoop(slug)` / `stopLoop(slug)` / `isLoopActive(slug)` | delegate to instance loop API |
@@ -342,7 +350,8 @@ Export: `const SequenceContainer = new SSequenceContainer(); Object.freeze(Seque
            loop: { type: 'object', properties: {
                enabled:      { type: 'boolean' },
                cycle:        { enum: ['once', 'continuous'] },
-               off_delay_ms: { type: ['number', 'string'] }
+               off_delay_ms: { type: ['number', 'string'] },
+               on_delay_ms:  { type: ['number', 'string'] }
            }}
        }}}
    }
@@ -365,6 +374,7 @@ with restore). Scenarios:
 - **F** — loop `cycle: continuous`: oscillates repeatedly until `stopLoop()`; stop mid-phase lets that phase finish, then halts (assert exact command count).
 - **G** — missing device: inert step skipped with warning, remaining steps still execute.
 - **H** — container smoke test: init against the shipped `.dist` template resolves entries without crashing; unknown slugs on callCommand/startLoop warn gracefully.
+- **I** — continuous loops honor BOTH inter-phase gaps (`off_delay_ms` before OFF runs, `on_delay_ms` before ON runs) and still halt cleanly; stopping during/after an OFF phase cancels the pre-ON wait so no next ON is ever issued.
 
 Acceptance gate for the whole change: `npm test` passes end-to-end (includes file-conventions, JSDoc coverage, dist-sync gates).
 

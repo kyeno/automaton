@@ -26,7 +26,8 @@ export default {
                     properties: {
                         enabled:      { type: 'boolean' },
                         cycle:        { enum: ['once', 'continuous'] },
-                        off_delay_ms: { type: ['number', 'string'] }
+                        off_delay_ms: { type: ['number', 'string'] },
+                        on_delay_ms:  { type: ['number', 'string'] }
                     }
                 }
             }

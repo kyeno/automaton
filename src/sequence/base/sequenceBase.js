@@ -34,7 +34,7 @@ class SequenceBase {
     #stepsOff = []
     /** Sequence-level inter-step delay (ms); 0 = multi-device endpoint mode. */
     #defaultDelayMs = 0
-    /** Loop option: {cycle: 'once'|'continuous', offDelayMs: number|null(auto)} or null. */
+    /** Loop option: {cycle: 'once'|'continuous', offDelayMs/onDelayMs: number|null(auto)} or null. */
     #loopConfig = null
     /** Referenced devices resolved in init(): Map<deviceName, deviceInstance>. */
     #devices = new Map()
@@ -76,15 +76,19 @@ class SequenceBase {
                 LoggerService.warn(`Sequence "${this.#name}": invalid loop.cycle "${loopRaw.cycle}" -- defaulting to "once"`, 'SequenceBase')
                 cycle = 'once'
             }
-            let offDelayMs = null   // null = auto: second run starts right when the first finishes
-            if (loopRaw.off_delay_ms !== undefined && String(loopRaw.off_delay_ms).trim().toLowerCase() !== 'auto') {
-                offDelayMs = temporal.parseDurationMs(loopRaw.off_delay_ms)
-                if (offDelayMs === null) {
-                    LoggerService.warn(`Sequence "${this.#name}": invalid loop.off_delay_ms "${loopRaw.off_delay_ms}" -- treating as auto`, 'SequenceBase')
-                    offDelayMs = null
+            const parseGap = (value, label) => {
+                //  null = auto: that phase starts right when the previous one finishes.
+                if (value === undefined || String(value).trim().toLowerCase() === 'auto') return null
+                const parsed = temporal.parseDurationMs(value)
+                if (parsed === null) {
+                    LoggerService.warn(`Sequence "${this.#name}": invalid loop.${label} "${value}" -- treating as auto`, 'SequenceBase')
+                    return null
                 }
+                return parsed
             }
-            this.#loopConfig = { cycle, offDelayMs }
+            const offDelayMs = parseGap(loopRaw.off_delay_ms, 'off_delay_ms')   // gap before OFF runs
+            const onDelayMs = parseGap(loopRaw.on_delay_ms, 'on_delay_ms')     // gap before ON runs
+            this.#loopConfig = { cycle, offDelayMs, onDelayMs }
         }
 
         this.#phaseTimer = new TimedAction(`sequence:${this.#slug}`)
@@ -239,7 +243,7 @@ class SequenceBase {
         if (!this.#loopActive) return false
         this.#stopRequested = true
         if (this.#phaseTimer.isActive()) {
-            //  WAITING_OFF -> cancel the inter-phase timer; the driver exits to IDLE immediately.
+            //  Between phases -- cancel the armed inter-phase timer; the driver exits to IDLE now.
             this.#phaseTimer.stop()
             const resolver = this.#interPhaseResolver
             this.#interPhaseResolver = null
@@ -335,9 +339,9 @@ class SequenceBase {
         }
     }
 
-    /** Loop driver: ON run -> optional inter-phase wait -> OFF run -> repeat per cycle config.
-     * A stop request checked between phases exits to IDLE without starting further work.
-     * @private */
+    /** Loop driver: ON run -> optional gap -> OFF run -> optional gap -> repeat per cycle config.
+     * A stop request checked between phases exits to IDLE without starting further work; an armed
+     * inter-phase timer is cancelled by stopLoop()/cleanup(). @private */
     async #driveLoop() {
         while (true) {
             //  Yield one event-loop tick each cycle: with all-zero delays every await resolves as a
@@ -358,6 +362,14 @@ class SequenceBase {
             await this.#executeSteps('OFF')
             if (this.#stopRequested) break
             if (this.#loopConfig.cycle !== 'continuous') break
+
+            //  Gap before the next ON run -- continuous cycles only; same graceful-stop semantics as
+            //  the OFF-side gap (a stop in flight cancels it and exits straight to IDLE).
+            const onDelayMs = this.#loopConfig.onDelayMs
+            if (onDelayMs !== null && onDelayMs > 0) {
+                await this.#interPhaseWait(onDelayMs)
+                if (this.#stopRequested) break
+            }
         }
         this.#exitLoop()
     }
@@ -365,7 +377,7 @@ class SequenceBase {
     /** Wait out the configured inter-phase gap with the TimedAction guarding the slot; resolves
      * when the timer fires or when stopLoop()/cleanup() cancels it early.
      * @private
-     * @param {number} durationMs - Gap between end of ON run and start of OFF run */
+     * @param {number} durationMs - Inter-phase gap in ms (either side) */
     #interPhaseWait(durationMs) {
         return new Promise(resolve => {
             this.#interPhaseResolver = resolve

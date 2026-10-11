@@ -12,6 +12,7 @@ import CommandBase from './base/commandBase.js'
 import I18nLoader from '../../service/i18nLoader.js'
 import TtsService from '../../service/ttsService.js'
 import AiAssistant from '../../ai/aiAssistant.js'
+import SequenceContainer from '../../sequence/container/sequenceContainer.js'
 import channels from '../channels.js'
 
 
@@ -245,6 +246,26 @@ class ConfigCmd extends CommandBase {
         if ((changed.has('ai') || localeChanged || i18nBundleMoved) && AiAssistant.isReady()) {
             const r = await AiAssistant.resetConversation()
             if (r.reset) refreshed.push(`AI conversation cleared (${r.dropped} message(s))`)
+        }
+
+        //  Sequences live in their own file (etc/sequence/sequences.yaml), so they are probed on every
+        //  successful reload whenever the container took part in bootstrap -- engaged loops stop
+        //  gracefully first, then the registry is rebuilt so added/renamed/removed definitions take
+        //  effect without a restart. An unreadable file keeps the current registry intact; processes
+        //  that never initialized the container stay silent here (same convention as i18n/TTS above).
+        if (SequenceContainer.isInitialized()) {
+            const r = await SequenceContainer.reloadSequences()
+            if (!r.ok) {
+                refreshed.push('sequences kept as-is (config unreadable on disk)')
+            } else {
+                /** @type {string[]} */
+                const moved = []
+                if (r.added.length > 0) moved.push(`+${r.added.join(', ')}`)
+                if (r.removed.length > 0) moved.push(`-${r.removed.join(', ')}`)
+                refreshed.push(moved.length > 0
+                    ? `sequences reloaded -- ${r.loaded} registered (${moved.join(' / ')})`
+                    : `sequences reloaded -- ${r.loaded} registered`)
+            }
         }
 
         //  ---- Housekeeping for the UI ------------------------------------------

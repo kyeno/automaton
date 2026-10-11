@@ -659,7 +659,7 @@ Create `<Name>Interaction.js` in `etc/interaction/`, extending `InteractionBase`
 
 ## 6. Sequences (`etc/sequence/sequences.yaml`)
 
-Ordered device choreography with an optional loop driver. Each entry under `sequences:` is one sequence instance — a first-class being alongside devices and automations. Copy `etc/sequence/sequences.yaml.dist` to `sequences.yaml` and customize; a missing file or bad entries warn at startup but never crash it. Full design rationale lives in [doc/architecture/sequence-entity.md](./architecture/sequence-entity.md).
+Ordered device choreography with an optional loop driver. Each entry under `sequences:` is one sequence instance — a first-class being alongside devices and automations. Copy `etc/sequence/sequences.yaml.dist` to `sequences.yaml` and customize; a missing file or bad entries warn at startup but never crash it. Edits on disk take effect immediately through `/config reload` — engaged loops stop gracefully first, then the registry is rebuilt from the fresh file (an unreadable file keeps the current registry intact); no restart needed. Full design rationale lives in [doc/architecture/sequence-entity.md](./architecture/sequence-entity.md).
 
 ### Entry schema
 
@@ -669,7 +669,7 @@ Ordered device choreography with an optional loop driver. Each entry under `sequ
 | `delay_ms` | no | Sequence-level inter-step pause (duration like `"500ms"` / `"2s"`, or plain ms number). Absent ⇒ **multi-device endpoint mode** — every step fires back-to-back |
 | `devices` | simple form | Ordered list of names (or `{device, command?, delay_ms?}` objects). ON sends each device `'ON'`; OFF sends each device `'OFF'` in the same order |
 | `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay_ms?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
-| `loop` | no | Block making this a looping sequence: `enabled: true`, `cycle: once \| continuous`, `off_delay_ms: auto \| duration` (gap between end of ON run and start of OFF run; `auto` = second run starts right when the first finishes) |
+| `loop` | no | Block making this a looping sequence: `enabled: true`, `cycle: once \| continuous`, `off_delay_ms: auto \| duration` (gap between end of ON run and start of OFF run), `on_delay_ms: auto \| duration` (gap between end of OFF run and next ON run; only fires on continuous cycles). `auto` = phase starts right when the previous one finishes |
 
 Exactly one of `devices:` (simple) or `on:` (rich) must be present per entry. Durations parse via `temporal.parseDurationMs()` (`"500ms"`, `"3m 45s"`, plain ms numbers); invalid values warn and degrade to absent/auto. Referenced devices that don't exist make their steps inert with a warning — remaining steps still execute.
 
@@ -694,7 +694,8 @@ sequences:
     loop:
       enabled: true
       cycle: continuous
-      off_delay_ms: auto
+      off_delay_ms: '2s'   # dwell before the OFF swing
+      on_delay_ms: '2s'    # dwell before the next ON swing
     on:                               # phase A -- low values
       - device: 'Salon Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }

@@ -14,7 +14,14 @@
  *     phase finish, then halts (exact command balance asserted);
  *   - G: missing referenced devices are inert steps -- remaining steps still execute;
  *   - H: container smoke test -- init resolves entries from a config file without crashing and
- *     unknown slugs warn gracefully.
+ *     unknown slugs warn gracefully;
+ *   - I: continuous loops honor BOTH inter-phase gaps (off_delay_ms before OFF runs, on_delay_ms
+ *     before ON runs) and still halt cleanly; stopping during/after an OFF phase cancels the
+ *     pre-ON wait so no next ON is ever issued.
+ *   - J: /config reload path -- reloadSequences() rebuilds the live registry from edited disk state:
+ *     added entries go live immediately, removed ones vanish with their engaged loop stopped
+ *     gracefully, renamed definitions change behavior without a restart, and an unreadable file
+ *     keeps the previous registry intact (two-phase safe swap).
  * Uses short real delays (no fake timers); every block restores DeviceContainer before exiting.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -386,6 +393,190 @@ function stubDeviceLookup(table) {
         cfgProto.getConfigPath = origGetConfigPath
         restoreLookup()
         try { fs.unlinkSync(tmpPath) } catch { /* best effort */ }
+    }
+}
+
+{
+    // -- J: /config reload path -- reloadSequences() rebuilds the live registry from disk --------
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automaton-seq-reload-'))
+    const seqFile = path.join(dir, 'sequences.yaml')
+    const jlog = []
+    const jalpha = new MockDevice('JAlpha', jlog)
+    const jbeta = new MockDevice('JBeta', jlog)
+    const jloop = new MockDevice('JLoopDev', jlog)
+    const jgamma = new MockDevice('JGammaDev', jlog)
+    const restoreLookup = stubDeviceLookup({ 'JAlpha': jalpha, 'JBeta': jbeta, 'JLoopDev': jloop, 'JGammaDev': jgamma })
+    const cfgProto = Object.getPrototypeOf(ConfigService)
+    const origGetConfigPath = cfgProto.getConfigPath
+    try {
+        fs.writeFileSync(seqFile, [
+            'sequences:',
+            "  - name: 'Reload Alpha'",
+            "    delay_ms: '30ms'",
+            '    devices:',
+            "      - 'JAlpha'",
+            "      - 'JBeta'",
+            "  - name: 'Reload Beta Loop'",
+            '    loop:',
+            '      enabled: true',
+            '      cycle: continuous',
+            '      off_delay_ms: auto',
+            '      on_delay_ms: auto',
+            '    devices:',
+            "      - 'JLoopDev'",
+            ''
+        ].join('\n'))
+        cfgProto.getConfigPath = (name) => (name === 'sequence' ? seqFile : origGetConfigPath.call(cfgProto, name))
+
+        //  First rebuild replaces whatever scenario H left behind -- stale slugs must be reported removed.
+        let r0 = await SequenceContainer.reloadSequences()
+        assert(r0.ok === true, 'J: first rebuild reports ok')
+        assert(SequenceContainer.isInitialized() === true, 'J: container reports initialized after a build attempt')
+        assert(SequenceContainer.getNames().includes('reload_alpha'), 'J: added simple-form entry registered')
+        assert(SequenceContainer.getNames().includes('reload_beta_loop'), 'J: added looping entry registered')
+        assert(!SequenceContainer.getNames().includes('smoke_simple'), 'J: scenario-H slug gone after the rebuild')
+        assert(r0.removed.includes('smoke_simple') && r0.removed.includes('smoke_loop'), `J: stale slugs named in the report (${r0.removed.join(', ')})`)
+        assert(r0.added.includes('reload_alpha') && r0.added.includes('reload_beta_loop'), `J: new slugs named as added (${r0.added.join(', ')})`)
+
+        //  The v1 definition is live immediately -- original step order honored through the container.
+        const markV1 = jlog.length
+        assert(await SequenceContainer.callCommand('Reload Alpha', 'ON') === true, 'J: freshly built entry runs through the container')
+        assert(jlog.slice(markV1).join('|') === 'JAlpha:ON|JBeta:ON',
+            `J: v1 step order executed (got ${JSON.stringify(jlog.slice(markV1))}))`)
+        //  Engage a continuous loop on the OLD instance, then reload with an edited file mid-oscillation.
+        const betaLoop = SequenceContainer.resolveSequence('Reload Beta Loop')
+        assert(betaLoop !== null && await betaLoop.startLoop() === true, 'J: pre-reload loop engaged on the old instance')
+        let sawOscillation = false
+        for (let i = 0; i < 200 && !sawOscillation; i++) {
+            sawOscillation = jloop.commands.some(c => c.cmd === 'OFF')
+            if (!sawOscillation) await sleep(5)
+        }
+        assert(sawOscillation, 'J: loop was actually oscillating before the reload')
+
+        fs.writeFileSync(seqFile, [
+            'sequences:',
+            "  - name: 'Reload Alpha'",
+            "    delay_ms: '80ms'",
+            '    devices:',
+            "      - 'JBeta'",     // order flipped vs v1 -- must be visible in command order after reload
+            "      - 'JAlpha'",
+            "  - name: 'Reload Gamma'",
+            '    devices:',
+            "      - 'JGammaDev'",
+            ''
+        ].join('\n'))
+
+        const r1 = await SequenceContainer.reloadSequences()
+        assert(r1.ok === true, 'J: mid-loop rebuild reports ok')
+        assert(r1.added.includes('reload_gamma'), `J: newly added slug reported (${r1.added.join(', ')})`)
+        assert(r1.removed.includes('reload_beta_loop'), `J: removed slug reported (${r1.removed.join(', ')})`)
+        assert(!SequenceContainer.getNames().includes('reload_beta_loop'), 'J: removed sequence no longer resolvable by slug')
+        assert(SequenceContainer.resolveSequence('Reload Beta Loop') === null, 'J: friendly-name lookup for the removed entry returns null')
+
+        //  Graceful stop: let any in-flight phase finish, then nothing may fire on the old loop device.
+        await sleep(300)
+        const settledLoopCount = jloop.commands.length
+        await sleep(250)
+        assert(jloop.commands.length === settledLoopCount, 'J: engaged loop halted -- no further commands after teardown')
+        assert(StateService.get('sequence.reload_beta_loop.loop.active') === undefined, 'J: stale loop state key cleared by teardown')
+
+        //  The edited definition is live: flipped step order now executes JBeta before JAlpha.
+        const markV2 = jlog.length
+        assert(await SequenceContainer.callCommand('Reload Alpha', 'ON') === true, 'J: surviving entry re-runnable after rebuild')
+        assert(jlog.slice(markV2).join('|') === 'JBeta:ON|JAlpha:ON',
+            `J: v2 step order executed without a restart (got ${JSON.stringify(jlog.slice(markV2))}))`)
+
+        const markGamma = jlog.length
+        assert(await SequenceContainer.callCommand('Reload Gamma', 'ON') === true, 'J: added sequence runnable through the container')
+        assert(jlog.slice(markGamma).join('|') === 'JGammaDev:ON',
+            `J: new entry reached its device (got ${JSON.stringify(jlog.slice(markGamma))}))`)
+
+        //  Safe-swap negative case: an unreadable file keeps the current registry intact instead of wiping it.
+        cfgProto.getConfigPath = (name) => (name === 'sequence' ? path.join(dir, 'missing.yaml') : origGetConfigPath.call(cfgProto, name))
+        const r2 = await SequenceContainer.reloadSequences()
+        assert(r2.ok === false, 'J: unreadable config reports not-ok instead of crashing')
+        assert(SequenceContainer.getNames().includes('reload_alpha') && SequenceContainer.getNames().includes('reload_gamma'),
+            'J: previous registry kept intact when the fresh read fails')
+
+        await SequenceContainer.cleanupSequences()
+    } finally {
+        cfgProto.getConfigPath = origGetConfigPath
+        restoreLookup()
+        try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+}
+
+{
+    // -- I1: continuous loop honors BOTH inter-phase gaps; still stops cleanly -------
+    const omega = new MockDevice('Omega')
+    const restore = stubDeviceLookup({ 'Omega': omega })
+    try {
+        const seq = new SequenceBase('Dual Gap Oscillator', {
+            loop: { enabled: true, cycle: 'continuous', off_delay_ms: '120ms', on_delay_ms: '120ms' },
+            devices: ['Omega']
+        })
+        await seq.init()
+        assert(await seq.startLoop() === true, 'I1: continuous loop with both gaps started')
+        let total = 0
+        for (let i = 0; i < 400 && total < 8; i++) {
+            total = omega.commands.length
+            if (total >= 8) break
+            await sleep(5)
+        }
+        assert(total >= 8, `I1: oscillated repeatedly despite the configured gaps (${total} commands in window)`)
+        const stopped = seq.stopLoop()
+        assert(stopped === true, 'I1: stopLoop() accepted while looping')
+        await sleep(300)   // past any in-flight phase + remaining gap so the driver has exited
+        const finalTotal = omega.commands.length
+        const onCount = omega.commands.filter(c => c.cmd === 'ON').length
+        const offCount = omega.commands.filter(c => c.cmd === 'OFF').length
+        assert(!seq.isActive() && !seq.isLoopActive(), 'I1: halted after the in-flight work finished')
+        assert(Math.abs(onCount - offCount) <= 1,
+            `I1: phases completed whole -- no half-configured device (on=${onCount} off=${offCount})`)
+        await sleep(200)
+        assert(omega.commands.length === finalTotal, 'I1: no further commands after halt')
+        seq.cleanup()
+    } finally {
+        restore()
+    }
+}
+
+{
+    // -- I2: stop during/after an OFF phase cancels the pre-ON wait; next ON never issued
+    const alpha = new MockDevice('Alpha')
+    const beta = new MockDevice('Beta')
+    const restore = stubDeviceLookup({ 'Alpha': alpha, 'Beta': beta })
+    try {
+        const slug = 'stop_during_on_wait_seq'
+        const seq = new SequenceBase('Stop During On Wait Seq', {
+            loop: { enabled: true, cycle: 'continuous', off_delay_ms: 'auto', on_delay_ms: '400ms' },
+            devices: [{ device: 'Alpha', delay_ms: '60ms' }, { device: 'Beta' }]
+        })
+        await seq.init()
+        await seq.startLoop()
+        //  Each phase takes >=60ms (paced two steps). Once Alpha's first OFF lands we are inside a
+        //  safe zone of ~460ms before any next ON could arrive -- enough to stop and assert.
+        let sawOff = false
+        for (let i = 0; i < 1000 && !sawOff; i++) {
+            sawOff = alpha.commands.some(c => c.cmd === 'OFF')
+            if (!sawOff) await sleep(5)
+        }
+        assert(sawOff, 'I2: reached the first OFF phase')
+        const stopped = seq.stopLoop()
+        assert(stopped === true, 'I2: stopLoop() accepted during/after the OFF phase')
+        await sleep(80)    // lets an in-flight Beta-OFF land if that step-list was still running
+        const settledTotal = alpha.commands.length + beta.commands.length
+        await sleep(250)   // well inside the uncancelled 400ms pre-ON window -> nothing may fire
+        assert(alpha.commands.length + beta.commands.length === settledTotal,
+            `I2: no further commands after halt (${settledTotal} total)`)
+        assert(alpha.commands.filter(c => c.cmd === 'ON').length === 1
+            && beta.commands.filter(c => c.cmd === 'ON').length === 1,
+            'I2: next ON run never issued -- pre-ON wait cancelled (or loop exited before it)')
+        assert(!seq.isActive() && !seq.isLoopActive(), 'I2: went straight to IDLE')
+        assert(StateService.get(`sequence.${slug}.loop.active`) === undefined, 'I2: loop state key cleared at IDLE')
+        seq.cleanup()
+    } finally {
+        restore()
     }
 }
 

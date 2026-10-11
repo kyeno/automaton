@@ -7,7 +7,9 @@
  * ledger reporting, relevance gating of i18n/TTS/AI refreshes (skipped when uninitialized,
  * refreshed with correct state when initialized -- including per-locale tts.yaml / ai.yaml
  * content edits under an UNCHANGED language), window-buffer clearing through ctx, and
- * channel-cache reset so ui.windows changes are picked up without a restart.
+ * channel-cache reset so ui.windows changes are picked up without a restart -- plus the
+ * sequence-registry rebuild wiring (/config reload picks up edited etc/sequence definitions
+ * with add/remove reporting) once the container has taken part in bootstrap.
  *
  * Also unit-tests ConfigBase.refresh() directly (value pickup, error propagation,
  * active-file promotion over its .dist template).
@@ -40,6 +42,7 @@ import LoggerService from '../src/service/loggerService.js'
 import I18nLoader from '../src/service/i18nLoader.js'
 import TtsService from '../src/service/ttsService.js'
 import AiAssistant from '../src/ai/aiAssistant.js'
+import SequenceContainer from '../src/sequence/container/sequenceContainer.js'
 import channels from '../src/ui/channels.js'
 
 let passed = 0
@@ -424,6 +427,68 @@ console.log('\n\u2500\u2500 reload: per-locale i18n file edits take effect witho
         assert(!out.includes('TTS now') && !out.includes('AI conversation cleared'),
             'initialized subsystems untouched by a no-op reload')
     }
+}
+
+console.log('\n\u2500\u2500 reload: sequence registry rebuild \u2500\u2500\n')
+
+{
+    // The container takes part in bootstrap for the first time here -- every earlier section keeps
+    // its "uninitialized subsystem" semantics untouched. Referenced devices resolve as inert steps
+    // with warnings (DeviceContainer out of scope); what's under test is the /config wiring plus
+    // add/remove reporting against the real etc/sequence file on disk.
+    const SEQ_DIR  = path.join(PROJECT_ROOT, 'etc', 'sequence')
+    const SEQ_YAML = path.join(SEQ_DIR, 'sequences.yaml')
+    assert(fs.existsSync(SEQ_DIR), 'etc/sequence directory available for rebuild testing')
+
+    await SequenceContainer.init()
+    assert(SequenceContainer.isInitialized(), 'container reports initialized after a bootstrap attempt')
+
+    const namesBefore = [...SequenceContainer.getNames()].sort().join(',')
+    const h0 = createHarness()
+    await h0.cmd.execute('reload')
+    const out0 = allOutput(h0)
+    assert(out0.includes('sequences reloaded'), '/config reload reports the sequence refresh when the container was initialized')
+    assertEqual([...SequenceContainer.getNames()].sort().join(','), namesBefore, 'no-op rebuild keeps exactly the same registry')
+
+    if (fs.existsSync(SEQ_YAML)) {
+        const originalSeq = fs.readFileSync(SEQ_YAML, 'utf8')
+        try {
+            //  On-disk edit: two brand-new entries replace whatever was configured -- every slug that
+            //  moves in either direction must be named in the report and live immediately.
+            fs.writeFileSync(SEQ_YAML, [
+                'sequences:',
+                "  - name: 'E2E Reload One'",
+                '    devices:',
+                "      - 'E2E Device A'",
+                "  - name: 'E2E Reload Two'",
+                '    devices:',
+                "      - 'E2E Device B'",
+                ''
+            ].join('\n'))
+
+            const beforeSet = new Set(namesBefore.split(',').filter(Boolean))
+            const h1 = createHarness()
+            await h1.cmd.execute('reload')
+            const out1 = allOutput(h1)
+            assert(out1.includes('sequences reloaded -- 2 registered'), 'edited file reported with its new registration count')
+            assertEqual([...SequenceContainer.getNames()].sort().join(','), 'e2e_reload_one,e2e_reload_two',
+                'registry matches the edited disk state exactly -- no restart needed')
+            for (const slug of beforeSet) {
+                if (!['e2e_reload_one', 'e2e_reload_two'].includes(slug)) {
+                    //  report format "-first, rest..." -- a moved slug may sit at any list position
+                    assert(out1.includes(`-${slug}`) || out1.includes(`${slug},`) || out1.includes(`, ${slug}`),
+                        `report names removed slug ${slug}`)
+                }
+            }
+        } finally {
+            fs.writeFileSync(SEQ_YAML, originalSeq)
+            await SequenceContainer.reloadSequences()   // live registry back in sync with restored disk state
+        }
+    } else {
+        console.log('  \u2298 active sequences.yaml absent -- skipping the on-disk edit case (.dist fallback already exercised above)')
+    }
+
+    await SequenceContainer.cleanupSequences()
 }
 
 assert(fs.readFileSync(MAIN_YAML, 'utf8') === originalYaml, 'etc/automaton.yaml restored byte-for-byte at end of suite')
