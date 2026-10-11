@@ -1,6 +1,13 @@
 # TODO -- Zigbee Automaton
 
 ## General
+- UI: Tabular "design" of sensors UI window looks like TOTAL SHIT. Some actual cell
+  spacing and evening up should be introduced.
+- UI: Both design and functionality of 5th window is a total misunderstanding.
+  Instead of log-alike window, it should permanently list the rule-based
+  automations and just re-draw whatever acted last under each one of them.
+- BUG: /config reload is so inherently broken it's probably beyond repair.
+  Consider a fixing attempt and if it fails, remove the functionality altogether.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet
   (machine was rebooted soon), data should get cached immediately after read
 - CONSIDER: home-theater light restore fires on ANY not-playing status, including the
@@ -30,6 +37,16 @@
   (configuration.md section 6, ui commands quick ref + detail). Along the way fixed humanToMs() to accept
   "ms" units as the brief documented, and made the loop driver yield an event-loop tick per cycle so
   zero-delay continuous loops never starve timers/UI.
+- DONE (2026-10-11) -- was: looping sequences had no configurable gap between an OFF run and the
+  next ON run (only off_delay_ms existed). RESOLVED: added symmetric loop.on_delay_ms (auto | duration,
+  default auto; fires only on continuous cycles), parsed in SequenceBase exactly like off_delay_ms and
+  applied as a second inter-phase wait slot in #driveLoop() reusing the same TimedAction/graceful-stop
+  machinery (a stop during either wait cancels it -> straight to IDLE); validator schema extended
+  (src/validators/sequences.js); sequences.yaml(.dist) header comments updated and the Salon Hazard Light
+  entry now sets both gaps ('5s' each in the active config); tests/test-sequences.js scenarios I1/I2
+  (both-gap oscillation + stop-during-pre-ON-wait) green; docs updated (configuration.md section 6,
+  architecture doc D6/state machine/validation rules/test plan). Also restored missing final newlines
+  on etc/sequence/*.yaml flagged by the convention gate.
 - BUG: Many config entries have something_timeout or something_cooldown _ms, while they
   take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
