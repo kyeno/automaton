@@ -108,6 +108,7 @@ const testScripts = [
   'test-config-reload.js',
 
   'test-device-instantiation.js',
+  'test-device-classification.js',
   'test-dualswitch.js',
   'test-automation-instantiation.js',
   'test-automation-cmd.js',
@@ -145,10 +146,12 @@ const testScripts = [
   'test-rule-react-on-change.js',
   'test-tts-greeter.js',
   'test-tts-gardener.js',
+  'test-tts-twilight.js',
   'test-service-instantiation.js',
   'test-origin-classification.js',
   'test-mqtt-publish-hook.js',
   'test-mqtt-dedupe-exempt.js',
+  'test-mqtt-soil-moisture-dedupe.js',
   'test-command-reassert.js',
   'test-dist-sync.js',
   'test-ai-intent-parsing.js',
@@ -167,6 +170,7 @@ const testScripts = [
   'test-rules-window.js',
   'test-rule-match-history.js',
   'test-device-window-header.js',
+  'test-device-window-sensor-columns.js',
   'test-ui-min-width.js',
   // Note: JSDoc coverage + completeness checks live in npm run lint:check
   'test-sound.js',
