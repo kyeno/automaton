@@ -45,6 +45,7 @@ Speakers wired to the resolver:
 | [Weather man](../automations/weatherman.md) | `etc/automation/tts-weatherman.yaml` |
 | [Greeter](../automations/greeter.md) | `etc/automation/tts-greeter.yaml` |
 | Gardener | `etc/automation/tts-gardener.yaml` |
+| [Twilight](../automations/twilight.md) | `etc/automation/tts-twilight.yaml` (per-rule `tts_profile:`) |
 | [Offline alerts](../monitors/offline-alerts.md) | `alerts.<family>_tts_profile` / `alerts.<family>_tts_options` in `etc/automaton.yaml` (plus per-host overrides for the network family) |
 | UI speak window | `ui.tts_profile` in `etc/automaton.yaml` |
 
@@ -62,12 +63,18 @@ sox_effects: "pad 1.2 0.5"           # SoX audio post-processing effects
 
 # OPTIONAL - named framing sets referenced by tts_profile: (see Per-Request Override)
 profiles:
+  greeting:                          # ttsGreeter -- every greeting
+    intro: 'lubecin123-info-computer-sound-299367.mp3'
+    intro_spacing: 0
+  garden:                            # ttsGardener -- every report
+    intro: 'creatorshome-digital-click-357350.mp3'
+    intro_spacing: 0
   # alarm:                           # mission-critical offline alerts
   #   intro: 'alarm.wav'
   #   intro_spacing: -1.5
 ```
 
-A `profiles:` entry carries framing only -- never `output_endpoint`. The audio sink stays `runtime event > locale template > TTS_TCP_ENDPOINT`, so a jingle can never redirect where the voice is played. Profiles are looked up case-insensitively; wave files must exist on the machine running tts-server, only their filenames cross the wire.
+A `profiles:` entry carries framing only -- never `output_endpoint`, and never `model` / `piper_effects` / `sox_effects`: those stay locale-template settings applied to every utterance in the locale. The audio sink stays `runtime event > locale template > TTS_TCP_ENDPOINT`, so a jingle can never redirect where the voice is played. Profiles are looked up case-insensitively; audio files must exist on the machine running tts-server (the filename crosses the wire untouched, so `.wav` and `.mp3` both work as long as the server serves them).
 
 See [Configuration Guide](../configuration.md) for full i18n bundle structure.
 

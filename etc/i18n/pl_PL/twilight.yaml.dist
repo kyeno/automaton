@@ -1,0 +1,21 @@
+# Twilight -- Polish Language Bundle
+# ---------------------------------
+# Szablony wypowiedzi automatyzacji ttsTwilight (komunikaty świtu i zmierzchu cywilnego).
+# Każda sekcja zawiera wiersze podzielone ścieżką wyjścia, jak w pakietach greeter i gardener:
+#   <sekcja>.tts -- wypowiadane dosłownie, gdy use_ai jest wyłączone / AI niedostępne
+#   <sekcja>.ai  -- polecenie wysłane do modelu; model wypowiada własny komunikat
+# Placeholder (uzupełniany w trakcie działania z chwili zdarzenia):
+#   {% time %} -- lokalny czas zdarzenia, zero-wypełniony format 24-godzinny "HH:MM"
+# Cyfry celowo pozostają poza słowami szablonu, żeby Piper TTS i małe modele naturalnie
+# odczytywały godzinę w każdym locale.
+#
+# Szablon -- skopiuj do twilight.yaml i dostosuj zdania. Nazwy sekcji muszą odpowiadać
+# kluczom rules[].sentence z etc/automation/tts-twilight.yaml.
+
+sundawn:
+  tts: 'Dzień dobry. Świt cywilny o godzinie {% time %}.'
+  ai: 'Powiedz krótko i ciepło, że świt cywilny nadszedł o godzinie {% time %} i że dzień się zaczyna.'
+
+sundusk:
+  tts: 'Zmierzch cywilny o godzinie {% time %}. Dzień się skończył.'
+  ai: 'Powiedz krótko, że zmierzch cywilny nadszedł o godzinie {% time %} i że zaczął się wieczór.'

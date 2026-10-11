@@ -1,0 +1,61 @@
+# TTS TWILIGHT -- Configuration
+# Announces civil dawn and civil dusk by voice: one announcement per event, per day, fired at
+# the exact local minute the event happens.
+#
+# How it fires:
+#   * the minute-granularity tick below is anchored to wall-clock minute boundaries, so a tick
+#     lands in the same minute the event instant falls in;
+#   * an event is announced only while it is fresh -- its instant lies within announce_grace of
+#     now -- so a machine that was asleep over dawn announces it late (inside the window) and
+#     never announces yesterday's dawn;
+#   * every rule carries `once: true`, reusing the rule engine's daily marker in Redis: one
+#     announcement per event per day, surviving restarts. A Redis outage fails open, and the
+#     grace window is what bounds the repeats.
+# Manual runs ("/automation run|force TtsTwilightAutomation") preview the next upcoming event
+# immediately and never consume that event's daily slot.
+#
+# Each rule speaks its own section of the twilight i18n bundle
+# (etc/i18n/<locale>/twilight.yaml) and carries its OWN framing keys, so dawn and dusk get
+# different jingles:
+#   tts_profile:  name of a profiles: entry of the active locale's tts.yaml
+#   tts_options:  explicit framing; wins over the profile field by field
+# The only runtime placeholder is {% time %} -- the event's local clock time, "HH:MM".
+#
+# Output routing is the same boolean switch as ttsGreeter / ttsGardener:
+#   use_ai false -> speak the section's tts line directly (default);
+#   use_ai true  + AI available -> send the section's ai instruction to the model, which speaks
+#                   its own announcement; empty reply / error / AI down -> warn log + plain TTS.
+# Reference: doc/automations/twilight.md
+#
+# Template -- copy to tts-twilight.yaml and customize for your home.
+# Civil dawn/dusk come from locale.geo_latitude / locale.geo_longitude in etc/automaton.yaml;
+# with no usable coordinates the automation stays quiet and warns once a day.
+
+use_ai: false                      # true  -> route each announcement through AI -> TTS when available
+                                   #         (warn log + plain TTS sentence if the AI is down);
+                                   # false -> direct TTS only, never touches the AI pipeline
+
+timer_interval: "1m"               # tick driving the announcements -- keep at minute granularity
+announce_grace: "5m"               # announce an event this long after its instant (catch-up window)
+silence_between: null              # "HHmm-HHmm" local window to stay quiet; null = announce at any hour
+
+rules:                             # dawn first, dusk second -- first announceable rule wins per tick
+  - name: 'Civil dawn'
+    event: 'sundawn'               # civil dawn instant computed from locale.geo_* (alias: sunrise)
+    conditions: { hour: { gte: 'sundawn', lt: 'sundusk' } }   # gate: the dawn-to-dusk window
+    sentence: 'twilight.sundawn'
+    once: true                     # one announcement per day (the rule engine's Redis marker)
+    #tts_profile: 'sundawn'        # name a profiles: entry of the active locale's tts.yaml to add a jingle
+    #tts_options:
+    #  intro: 'intro-chime.wav'    # Wave filename played before the announcement
+    #  intro_spacing: -1.5         # Seconds between intro end and speech start; negative = overlap
+
+  - name: 'Civil dusk'
+    event: 'sundusk'               # civil dusk instant computed from locale.geo_* (alias: sunset)
+    conditions: { hour: { gte: 'sundusk' } }   # gate: from dusk on, the dawn window is closed
+    sentence: 'twilight.sundusk'
+    once: true                     # one announcement per day (the rule engine's Redis marker)
+    #tts_profile: 'sundusk'        # name a profiles: entry of the active locale's tts.yaml to add a jingle
+    #tts_options:
+    #  intro: 'intro-chime.wav'    # Wave filename played before the announcement
+    #  intro_spacing: -1.5         # Seconds between intro end and speech start; negative = overlap

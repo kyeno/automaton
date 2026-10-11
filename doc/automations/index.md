@@ -1,6 +1,6 @@
 # Automations
 
-> **In this section:** [Ambient Lights](./ambient-lights.md) · [TTS Weather Man](./weatherman.md) · [TTS Greeter](./greeter.md) · [Home Office Rollers](./home-office-rollers.md) · [Bedroom Rollers](./bedroom-rollers.md) · [Home Theater Mode](./home-theater-mode.md)
+> **In this section:** [Ambient Lights](./ambient-lights.md) · [TTS Weather Man](./weatherman.md) · [TTS Greeter](./greeter.md) · [TTS Gardener](./gardener.md) · [TTS Twilight](./twilight.md) · [Home Office Rollers](./home-office-rollers.md) · [Bedroom Rollers](./bedroom-rollers.md) · [Home Theater Mode](./home-theater-mode.md)
 
 Automaton is at heart a **rule-engine framework**: it evaluates YAML-defined conditions (time-of-day, seasons, sensor thresholds, network presence, video-player status) against live context and dispatches commands to your devices. The automations shipped in `etc/automation/` are **examples** — real, working deployments that each demonstrate a pattern you can adapt. Whatever your home needs, you can express it as your own YAML rules; see the [Configuration Guide](../configuration.md) for the full condition and target syntax.
 
@@ -21,6 +21,18 @@ A rule-based weather announcer that builds a speech message from locale-specific
 Greets people when their computers come back online — but only in proportion to how long they were actually gone. Absence duration comes from the transition history, and YAML-defined greeting windows map it to message buckets (reboot joke / "did you forget something?" / proper welcome), appending a localized absence note (how long ago the host was last seen online below 24h, its full calendar date and clock time beyond) whenever the history provides one. Explicit AI-vs-TTS switch per deployment. Demonstrates data-driven condition windows, dual-case name interpolation (`{% name_vocative %}` / `{% name_genitive %}`), calendar-date rendering through lib/date, and warn-only AI fallback without double-speak.
 
 → [Full documentation](./greeter.md)
+
+## TTS Gardener
+
+Watches soil-moisture flower probes and reports plant hydration by voice. Each plant is banded against YAML thresholds, the announcement follows the **worst** plant, and the reactive gate speaks only when a plant has worsened past the band it was last announced in — so periodic battery blips never re-announce, while recovery lowers the baseline silently and the next drop below a band speaks again. Reads the real zigbee2mqtt `soil_moisture` state property. Demonstrates per-plant severity tracking, daily announce slots, and the friendly-name wiring a sensor-driven automation depends on.
+
+→ [Full documentation](./gardener.md)
+
+## TTS Twilight
+
+Announces civil dawn and civil dusk by voice, on the exact local minute each event happens. A minute-anchored timer computes both civil-twilight instants from the locale's coordinates, a freshness window decides what is still announceable, and YAML `hour:` gates bound to the `sundawn` / `sundusk` shorthands keep the two rules mutually exclusive across the day. Each rule carries its own TTS profile, so dawn and dusk are recognizable by their jingle; `once:` reuses the rule engine's daily Redis marker, and manual runs preview the upcoming event without consuming it. Demonstrates speech-only rules (no `targets:`), sun-shorthand clock gates, and per-rule TTS framing.
+
+→ [Full documentation](./twilight.md)
 
 ## Home Office Rollers
 

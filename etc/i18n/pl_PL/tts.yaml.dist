@@ -37,6 +37,12 @@ profiles:
   # greeting:                     # greeter + gardener reports
   #   intro: 'hello.wav'
   #   outro: 'bye.wav'
+  # sundawn:                      # ttsTwilight -- civil dawn announcement
+  #   intro: 'dawn.wav'
+  #   intro_spacing: 0
+  # sundusk:                      # ttsTwilight -- civil dusk announcement
+  #   intro: 'dusk.wav'
+  #   intro_spacing: 0
   # report:                       # weatherman periodic reports
   #   intro: 'weather.wav'
   #   outro: 'weather_end.wav'

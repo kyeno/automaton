@@ -1,0 +1,21 @@
+# Twilight -- English Language Bundle
+# ----------------------------------
+# Speech templates for the ttsTwilight automation (civil dawn / civil dusk announcements).
+# Each section holds per-output-path lines like the greeter and gardener bundles:
+#   <section>.tts -- spoken verbatim when use_ai is off / AI unavailable
+#   <section>.ai  -- instruction sent to the model; it speaks its own announcement
+# Placeholder (filled at run time from the event instant):
+#   {% time %} -- the event's local clock time, zero-padded 24-hour "HH:MM"
+# Digits stay out of the template words on purpose so Piper TTS and small models read the
+# clock time naturally in any locale.
+#
+# Template -- copy to twilight.yaml and customize the sentences. Section names must match the
+# rules[].sentence keys of etc/automation/tts-twilight.yaml.
+
+sundawn:
+  tts: 'Good morning. Civil dawn at {% time %}.'
+  ai: 'Announce briefly and warmly that civil dawn has arrived at {% time %} and that the day is beginning.'
+
+sundusk:
+  tts: 'Civil dusk at {% time %}. The day is done.'
+  ai: 'Announce briefly that civil dusk has arrived at {% time %} and that evening has begun.'
