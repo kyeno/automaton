@@ -5,26 +5,28 @@
 #   <bucket>.tts -- spoken verbatim when use_ai is off / AI unavailable
 #   <bucket>.ai  -- instruction sent to the model; it speaks its own report
 # Placeholders (filled at run time from live sensor state):
-#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN)", driest first
+#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- name of the single driest plant
-#   {% driest_moisture %}  -- that plant's raw moisture value (digits only)
+#   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
 # Keep numeric values out of the template words where possible so Piper TTS and small
 # models read digits naturally in any locale; unit words stay in the sentences themselves.
+# Every ai line tells the model to work from the data given alone: the automation has
+# already read the probes, and a model that goes hunting for tools wastes the report.
 #
 # Template copy ships as gardener.yaml.dist.
 
 critical:
   tts: 'Attention! Soil moisture has dropped dangerously low on {% affected_flowers %}. The driest one, {% driest_flower %}, sits at just {% driest_moisture %}. Water them immediately!'
-  ai: 'Announce urgently that these plants are on the verge of drying out completely: {% affected_flowers %}. The most critical one is {% driest_flower %} with a reading of {% driest_moisture %}. Urge immediate watering.'
+  ai: 'Do not use tools -- base your answer only on the provided information. Announce urgently that these plants are on the verge of drying out completely: {% affected_flowers %}. The most critical one is {% driest_flower %} with a reading of {% driest_moisture %}. Urge immediate watering.'
 
 dry:
   tts: 'Your garden needs attention: {% affected_flowers %}. Moisture is running low -- water {% driest_flower %} first.'
-  ai: 'Report that these plants are getting thirsty: {% affected_flowers %}. Start with {% driest_flower %}, currently at {% driest_moisture %}. Suggest watering soon.'
+  ai: 'Do not use tools -- base your answer only on the provided information. Report that these plants are getting thirsty: {% affected_flowers %}. Start with {% driest_flower %}, currently at {% driest_moisture %}. Suggest watering soon.'
 
 slightly_dry:
   tts: 'Heads up: soil moisture is dipping on {% affected_flowers %}. Nothing urgent yet, but keep an eye on them.'
-  ai: 'Mention casually that these plants are starting to dry out: {% affected_flowers %}. No panic needed, just worth checking before it gets worse.'
+  ai: 'Do not use tools -- base your answer only on the provided information. Mention casually that these plants are starting to dry out: {% affected_flowers %}. No panic needed, just worth checking before it gets worse.'
 
 healthy:
   tts: 'All your plants are well hydrated. Soil moisture looks good across the board -- no watering needed right now.'
-  ai: 'Give a brief, pleasant all-clear that every plant in the garden is properly hydrated and nothing needs watering today.'
+  ai: 'Do not use tools -- base your answer only on the provided information. Give a brief, pleasant all-clear that every plant in the garden is properly hydrated and nothing needs watering today.'

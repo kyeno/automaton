@@ -5,26 +5,28 @@
 #   <bucket>.tts -- spoken verbatim when use_ai is off / AI unavailable
 #   <bucket>.ai  -- instruction sent to the model; it speaks its own report
 # Placeholders (filled at run time from live sensor state):
-#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN)", driest first
+#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- name of the single driest plant
-#   {% driest_moisture %}  -- that plant's raw moisture value (digits only)
+#   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
 # Keep numeric values out of the template words where possible so Piper TTS and small
 # models read digits naturally in any locale; unit words stay in the sentences themselves.
+# Every ai line tells the model to work from the data given alone: the automation has
+# already read the probes, and a model that goes hunting for tools wastes the report.
 #
 # Template -- copy to gardener.yaml and customize sentences for your home.
 
 critical:
   tts: 'Uwaga! Wilgotność podłoża spadła do niebezpiecznych wartości: {% affected_flowers %}. Najbardziej przesuszone jest {% driest_flower %}, z odczytem tylko {% driest_moisture %}. Podlej je natychmiast!'
-  ai: 'Ogłoś pilnie, że te rośliny są na skraju całkowitego wyschnięcia: {% affected_flowers %}. Najgroźniejszy przypadek to {% driest_flower %} z odczytem {% driest_moisture %}. Wezwij do natychmiastowego podlania.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Ogłoś pilnie, że te rośliny są na skraju całkowitego wyschnięcia: {% affected_flowers %}. Najgroźniejszy przypadek to {% driest_flower %} z odczytem {% driest_moisture %}. Wezwij do natychmiastowego podlania.'
 
 dry:
   tts: 'Twój ogród potrzebuje uwagi: {% affected_flowers %}. Wilgotność spada -- zacznij podlewać od {% driest_flower %}.'
-  ai: 'Poinformuj, że te rośliny zaczynają się suszyć: {% affected_flowers %}. Zacznij od {% driest_flower %}, które ma teraz {% driest_moisture %}. Zaproponuj wczesne podlanie.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Poinformuj, że te rośliny zaczynają się suszyć: {% affected_flowers %}. Zacznij od {% driest_flower %}, które ma teraz {% driest_moisture %}. Zaproponuj wczesne podlanie.'
 
 slightly_dry:
   tts: 'Hej, wilgotność podłoża zaczyna spadać: {% affected_flowers %}. Nic jeszcze pilnego, ale warto mieć je na oku.'
-  ai: 'Wspomnij mimochodem, że te rośliny zaczynają tracić wilgoć: {% affected_flowers %}. Bez paniki, ale lepiej sprawdzić zanim będzie gorzej.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Wspomnij mimochodem, że te rośliny zaczynają tracić wilgoć: {% affected_flowers %}. Bez paniki, ale lepiej sprawdzić zanim będzie gorzej.'
 
 healthy:
   tts: 'Wszystkie Twoje rośliny są dobrze nawodnione. Wilgotność podłoża wygląda świetnie -- nic nie wymaga podlania.'
-  ai: 'Ogłoś krótko i z przyjemnością, że wszystkie rośliny w ogrodzie mają odpowiednią wilgotność i dziś nikt nie potrzebuje wody.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Ogłoś krótko i z przyjemnością, że wszystkie rośliny w ogrodzie mają odpowiednią wilgotność i dziś nikt nie potrzebuje wody.'

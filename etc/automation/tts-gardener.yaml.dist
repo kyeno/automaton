@@ -5,11 +5,19 @@
 # Two ways in:
 #   * reactive  -- any state change on a listed flower sensor triggers an evaluation;
 #                  speech fires ONLY when some plant has worsened past its last announced
-#                  band (per-flower severity tracking), so periodic battery-sensor blips at
-#                  the same level never re-announce; recovery lowers the baseline silently
-#                  and the next drop below a band speaks again;
+#                  band (per-flower severity tracking) AND the worst plant reached a band
+#                  marked "reactive: true" below, so periodic battery-sensor blips at the
+#                  same level never re-announce and a slow drift into "Getting dry" waits
+#                  for the scheduled report instead; recovery lowers the baseline silently
+#                  and the next drop below a band speaks again. Event reports ignore
+#                  announce_times entirely -- they speak on their own -- and are throttled
+#                  by event_cooldown below so the TTS server never voices a report on top
+#                  of the one before it;
 #   * scheduled -- a full status report (even "everything's fine") at each announce_times
 #                  slot once per day, driven by the minute-granularity tick timer below.
+#                  Each slot consumes the shared once-per-day marker (Redis key
+#                  "auto:TtsGardenerAutomation:once:announce_slot_HHmm"), so a restart
+#                  inside the grace window cannot re-fire a slot that already spoke.
 # Manual runs ("/automation run|force TtsGardenerAutomation") always speak immediately.
 #
 # Output routing is a precise boolean switch (use_ai) like ttsGreeter:
@@ -22,18 +30,18 @@
 # to tune freely -- keep them contiguous or accept that gaps degrade to the healthy band.
 # Each rule's "sentence" names a section of the gardener i18n bundle
 # (etc/i18n/<locale>/gardener.yaml), which holds tts/ai lines with runtime placeholders:
-#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN)", driest first
+#   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- name of the single driest plant
-#   {% driest_moisture %}  -- that plant's raw moisture value (digits only)
-# Numeric values stay out of template words on purpose so Piper TTS and small models read
-# digits naturally in any locale; unit words live in the sentences themselves.
+#   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
+# The percent sign travels inside the value, not inside the template words, so the plain TTS
+# path (AI down) speaks the unit too -- a bare "21" was read as a number with nothing on it.
 # Reference: doc/automations/gardener.md
 #
 # Template -- copy to tts-gardener.yaml and customize for your home.
 
 triggers_zigbee: [Flower Sensor One, Flower Sensor Two]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
 
-moisture_property: 'moisture'    # state key carrying the percent value on those devices (z2m exposure-dependent)
+moisture_property: 'soil_moisture'    # state key carrying the percent value (z2m exposes soil probes as soil_moisture)
 
 use_ai: false                    # true  -> route each announcement through AI -> TTS when available
                                  #         (warn log + plain TTS sentence if the AI is down);
@@ -42,7 +50,7 @@ use_ai: false                    # true  -> route each announcement through AI -
 # OPTIONAL -- spoken framing for every report, on both output paths. Name a profile from the
 # active locale's tts.yaml profiles: registry, and override single fields with tts_options
 # (explicit fields win over the profile). Remove both to keep plain speech.
-#tts_profile: 'chime'
+tts_profile: ''                  # empty = plain speech; name a profiles: entry to add jingles
 #tts_options:
 #  intro: 'intro-chime.wav'      # Wave filename played before the report
 #  outro: null                   # Wave filename played after the report
@@ -51,20 +59,27 @@ use_ai: false                    # true  -> route each announcement through AI -
 announce_times: ["0830", "1900"] # local HHmm slots for the twice-daily status report (each fires once per day)
 timer_interval: "1m"            # tick driving announce_times scheduling -- keep at minute granularity
 silence_between: "2300-0600"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
+event_cooldown: "5m"            # minimum gap between two event-driven reports, garden-wide ("5m", "300s", plain ms); 0 disables
 
 rules:                          # most severe first -- first matching band wins per plant
+                                # reactive: true  -> a drop into this band may speak on its own
+                                # reactive: false -> this band is reported by the slots only
   - name: 'Critical drought'
     conditions: { moisture: { lte: 20 } }
     sentence: 'gardener.critical'
+    reactive: true
 
   - name: 'Needs watering'
     conditions: { moisture: { lte: 35 } }
     sentence: 'gardener.dry'
+    reactive: true
 
   - name: 'Getting dry'
     conditions: { moisture: { lte: 50 } }
     sentence: 'gardener.slightly_dry'
+    reactive: false
 
   - name: 'Healthy'
     conditions: { moisture: { gt: 50 } }
     sentence: 'gardener.healthy'
+    reactive: false

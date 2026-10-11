@@ -2,6 +2,9 @@
  * TTS Gardener Automation.
  * Watches soil-moisture flower sensors and announces plant hydration.
  * status by voice, with sentences chosen from moisture thresholds tuned in YAML.
+ * Event-driven reports speak only on a worsening that reached a "reactive" band and are
+ * throttled by a garden-wide cooldown; scheduled announce_times reports consume a shared
+ * once-per-day marker so each slot speaks once a day across restarts.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  * @author Ratan M. Kyeno
@@ -21,6 +24,7 @@ import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
 import TtsService from '../../src/service/ttsService.js'
+import temporal from '../../src/lib/date.js'
 import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import { PROJECT_ROOT } from '../../src/lib/projectRoot.js'
 
@@ -34,6 +38,9 @@ const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
 /** Grace window (minutes) after a configured announce slot during which the next tick. */
 const SLOT_GRACE_MINUTES = 5
 
+/** Default gap between two event-driven reports, garden-wide ("5m"). */
+const DEFAULT_EVENT_COOLDOWN_MS = 5 * 60_000
+
 export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
 
     /** @type {Record<string, unknown>|null} Cached gardener i18n bundle; reloaded on every run. */
@@ -43,8 +50,10 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      * @type {Map<string, number>} */
     #lastAnnouncedSeverity = new Map()
 
-    /** "HHmm" slot key -> local date ("YYYY-MM-DD") of the day that slot was last spoken. */
-    #slotLastSpokenDate = new Map()
+    /** Epoch ms of the last report this automation voiced; gates event runs by the configured
+     *  re-announcement cooldown. In-memory only -- a restart starts uncooled.
+     * @type {number|null} */
+    #lastSpokenAt = null
 
     //  -- Construction & lifecycle ------------------------------------------
 
@@ -93,13 +102,20 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         const kind = this.#runKind(triggerSource)
         let dueSlot = null
         if (kind === 'slot') {
-            dueSlot = this.dueAnnounceSlot(new Date())
+            dueSlot = await this.dueAnnounceSlot(new Date())
             if (!dueSlot) {
                 this.log('Timer tick with no announce slot due -- staying quiet', 'debug')
                 return
             }
             this.log(`Scheduled status report for slot ${dueSlot}`, 'info')
         }
+
+        //  Event runs are throttled by the re-announcement cooldown: soil probes report in
+        //  bursts and creep across a band boundary, so one utterance per window is what keeps
+        //  the TTS server from voicing a report on top of the one before it. Severities are
+        //  deliberately NOT recorded here -- an escalation swallowed by the cooldown must
+        //  still be heard as an escalation once the window expires.
+        if (kind === 'event' && this.#cooldownActive()) return
 
         const readings = this.readFlowerMoisture()
         if (readings.length === 0) {
@@ -123,7 +139,7 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
             if (idx != null && idx < worstIdx) worstIdx = idx
         }
 
-        // Event gating: react only to worsening since the last announced state.
+        // Event gating: react only to a worsening that reached a band allowed to speak.
         if (kind === 'event') {
             const worsened = readings.some(r =>
                 (severities.get(r.name) ?? 0) > (this.#lastAnnouncedSeverity.get(r.name) ?? 0))
@@ -133,16 +149,28 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
                 this.log('No plant worsened since the last announcement -- staying quiet', 'debug')
                 return
             }
+            if (!rules[worstIdx].reactive) {
+                //  Baseline moves, speech does not: a band marked "reactive: false" is reported
+                //  by the scheduled slots only, and the next drop into an urgent band speaks.
+                this.#recordSeverities(readings, severities)
+                this.log(`Worst plant reached the non-reactive band "${rules[worstIdx].name}" -- slots only`, 'debug')
+                return
+            }
         }
 
         const tokens = this.#tokensFor(readings, severities)
         const spoken = await this.speakBucket(rules[worstIdx].section, tokens)
         if (!spoken) return   // missing template already warned; do not consume any state below
 
-        //  Record current severities AFTER successful speech so repeats of the same state.
+        //  Record current severities AFTER successful speech, so repeats of the same state stay
+        //  quiet; a run that spoke nothing (missing template) never moves the baseline.
         this.#recordSeverities(readings, severities)
+        this.#lastSpokenAt = Date.now()
         if (dueSlot != null) {
-            this.#slotLastSpokenDate.set(dueSlot, this.#dayKey(new Date()))
+            //  Consume the slot's daily budget exactly like every other "once" rule does: a
+            //  Redis marker, so a restart inside the grace window cannot re-fire a slot that
+            //  already spoke, and a forced/manual run never eats one.
+            await this.markActedToday(this.#slotRule(dueSlot), null)
         }
     }
 
@@ -174,12 +202,14 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
     //  -- Testable seams ------------------------------------------------------
 
     /** Read the current moisture value from every configured flower sensor via the live
+     *  state. The state key is config.moisture_property, defaulting to the soil_moisture
+     *  property zigbee2mqtt exposes on capacitive soil probes.
      * @returns {Array<{name: string, moisture: number}>} Usable readings (possibly empty) */
     readFlowerMoisture() {
         const out = []
         const property = typeof this.config?.moisture_property === 'string' && this.config.moisture_property.trim()
             ? this.config.moisture_property.trim()
-            : 'moisture'
+            : 'soil_moisture'
 
         for (const name of this.#configuredFlowers()) {
             let device = null
@@ -219,19 +249,39 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         return null
     }
 
-    /** Which announce slot (if any) is due at `now`: inside its grace window.
+    /** Which announce slot (if any) is due at `now`: inside its grace window and with its
+     *  once-per-day marker still unconsumed. Slots reuse the shared "once" marker machinery
+     *  of the rule engine, so a consumed slot survives a restart and a Redis outage fails
+     *  open exactly like every other once-rule does.
      * @param {Date} [now=new Date()] - Moment to evaluate
-     * @returns {string|null} Due slot key ("HHmm"), or null when no slot is due */
-    dueAnnounceSlot(now = new Date()) {
-        const dayKey = this.#dayKey(now)
+     * @returns {Promise<string|null>} Due slot key ("HHmm"), or null when no slot is due */
+    async dueAnnounceSlot(now = new Date()) {
         const nowMin = now.getHours() * 60 + now.getMinutes()
         for (const slot of this.#announceSlots()) {
-            if (this.#slotLastSpokenDate.get(slot.key) === dayKey) continue
-            if (nowMin >= slot.minutes && nowMin < slot.minutes + SLOT_GRACE_MINUTES) {
-                return slot.key
+            if (nowMin < slot.minutes || nowMin >= slot.minutes + SLOT_GRACE_MINUTES) continue
+            if (await this.hasActedToday(this.#slotRule(slot.key), null)) {
+                this.log(`Slot ${slot.key} already announced today -- staying quiet`, 'debug')
+                continue
             }
+            return slot.key
         }
         return null
+    }
+
+    /** Redis key of one announce slot's once-per-day marker.
+     * @param {string} slotKey - Slot key ("HHmm")
+     * @returns {string} Marker key ("auto:<name>:once:announce_slot_HHmm") */
+    slotMarkerKey(slotKey) {
+        return this.onceMarkerKey(this.#slotRule(slotKey), null)
+    }
+
+    /** The synthetic once-rule standing in for one announce slot. It declares no conditions,
+     *  so the base gives every slot its own all-day marker.
+     * @private
+     * @param {string} slotKey - Slot key ("HHmm")
+     * @returns {{name: string, conditions: Record<string, never>, once: true}} Slot rule */
+    #slotRule(slotKey) {
+        return { name: `announce slot ${slotKey}`, conditions: {}, once: true }
     }
 
     /** Resolve one configured bucket section, fill its runtime placeholders.
@@ -302,10 +352,13 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         return true
     }
 
-    /** Clear in-memory announcement state (per-flower severities + consumed slots) */
+    /** Clear in-memory announcement state (per-flower severities + the event cooldown). The
+     *  once-per-day slot markers themselves live in Redis under the base's
+     *  `auto:<name>:once:<slug>` keys and expire with their own TTL.
+     *  @returns {void} */
     resetState() {
         this.#lastAnnouncedSeverity.clear()
-        this.#slotLastSpokenDate.clear()
+        this.#lastSpokenAt = null
     }
 
     //  -- Config & bundle helpers ---------------------------------------------
@@ -353,9 +406,11 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         return out
     }
 
-    /** Normalized rules in YAML order (most severe first by convention): name.
+    /** Normalized rules in YAML order (most severe first by convention): name,
+     *  band conditions, bundle section, and the `reactive` flag deciding whether an
+     *  event-driven report may speak in this band (default true when the key is absent).
      * @private
-     * @returns {Array<{name: string, conditions: Record<string, unknown>, section: string}>} Usable rules */
+     * @returns {Array<{name: string, conditions: Record<string, unknown>, section: string, reactive: boolean}>} Usable rules */
     rules() {
         const out = []
         const raw = this.config?.rules
@@ -373,29 +428,50 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
             out.push({
                 name: String(rule.name ?? `rule-${index + 1}`),
                 conditions: (rule.conditions && typeof rule.conditions === 'object') ? rule.conditions : {},
-                section
+                section,
+                reactive: rule.reactive !== false
             })
         })
         return out
     }
 
-    /** Local calendar-day key ("YYYY-MM-DD") used to scope once-per-day slot consumption.
+    /** Re-announcement window for event-driven reports, from config.event_cooldown. Accepts
+     *  the usual duration forms ("5m", "300s", plain milliseconds); 0 disables the throttle.
      * @private
-     * @param {Date} date - Moment to key on
-     * @returns {string} Day key */
-    #dayKey(date) {
-        const m = String(date.getMonth() + 1).padStart(2, '0')
-        const d = String(date.getDate()).padStart(2, '0')
-        return `${date.getFullYear()}-${m}-${d}`
+     * @returns {number} Cooldown window in milliseconds (>= 0) */
+    #eventCooldownMs() {
+        const raw = this.config?.event_cooldown
+        if (raw === null || raw === undefined) return DEFAULT_EVENT_COOLDOWN_MS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms === null || ms < 0) {
+            this.log(`Invalid event_cooldown ${JSON.stringify(raw)} (expected e.g. "5m" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_EVENT_COOLDOWN_MS)})`, 'warn')
+            return DEFAULT_EVENT_COOLDOWN_MS
+        }
+        return ms
     }
 
-    /** Runtime placeholder values for sentence interpolation.
+    /** Whether an event-driven report must stay quiet because the previous one is still
+     *  cooling down. Slot reports and manual runs are never gated here.
+     * @private
+     * @returns {boolean} true when this event run is suppressed */
+    #cooldownActive() {
+        const windowMs = this.#eventCooldownMs()
+        if (windowMs <= 0 || this.#lastSpokenAt === null) return false
+        const elapsedMs = Date.now() - this.#lastSpokenAt
+        if (elapsedMs >= windowMs) return false
+        this.log(`Event report suppressed -- ${Math.round(elapsedMs / 1000)}s since the last report (cooldown ${temporal.millisecondsToHumanReadable(windowMs)})`, 'debug')
+        return true
+    }
+
+    /** Runtime placeholder values for sentence interpolation. Moisture is carried as a
+     *  percentage string so the plain TTS path (AI down) speaks the unit too: a bare "21"
+     *  was read as a number with nothing attached to it.
      * @private
      * @param {Array<{name: string, moisture: number}>} readings - Live readings this run
      * @param {Map<string, number>} severities - Per-flower severity from execute()
      * @returns {Record<string, string>} Token map */
     #tokensFor(readings, severities) {
-        const fmt = (v) => Number.isFinite(v) ? String(Number(v.toFixed(1))) : ''
+        const fmt = (v) => Number.isFinite(v) ? `${Number(v.toFixed(1))}%` : ''
         const sorted = [...readings].sort((a, b) => a.moisture - b.moisture)
         const affected = sorted.filter(r => (severities.get(r.name) ?? 0) > 0)
             .map(r => `${r.name} (${fmt(r.moisture)})`)
