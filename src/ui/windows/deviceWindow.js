@@ -209,7 +209,7 @@ class DeviceWindow extends BaseWindow {
         for (const { name, device } of sensors) {
             const stateLast = device.getStateLast?.() || {}
             const temperature = stateLast.temperature ?? null
-            const humidity = stateLast.humidity ?? null
+            const humidity = stateLast.humidity ?? stateLast.soil_moisture ?? null
             const pressure = stateLast.pressure ?? null
             const illuminance = stateLast.illuminance ?? null
             const battery = stateLast.battery ?? null

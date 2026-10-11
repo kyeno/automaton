@@ -775,6 +775,7 @@ class SToolBuilder {
             // Environmental sensors
             'temperature',
             'humidity',
+            'soil_moisture',
             'illuminance',
             'pressure',
             // Power/energy monitoring
@@ -798,6 +799,7 @@ class SToolBuilder {
         const NUMERIC_SENSORS = new Set([
             'temperature',
             'humidity',
+            'soil_moisture',
             'illuminance',
             'pressure',
             'power',
@@ -811,6 +813,7 @@ class SToolBuilder {
         // Temperature gets no suffix since LLM already adds "stopnia" correctly in Polish.
         const SENSOR_UNITS = Object.freeze({
             humidity: '%',
+            soil_moisture: '%',
             position: '%',
             battery:  '%',
             power:    'W',

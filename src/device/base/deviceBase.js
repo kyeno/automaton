@@ -94,6 +94,10 @@ const TEMPERATURE_CHANGE_THRESHOLD = 0.5
  * @type {number} */
 const HUMIDITY_CHANGE_THRESHOLD = 1
 
+/** Minimum meaningful soil-moisture change (%).
+ * @type {number} */
+const SOIL_MOISTURE_CHANGE_THRESHOLD = 1
+
 /** Maximum length for truncated log summaries.
  * @type {number} */
 const SUMMARY_TRUNCATE_LENGTH = 80
@@ -1441,6 +1445,14 @@ export default class DeviceBase {
             const diff = Math.abs(Number(newPayload.humidity) - Number(old.humidity))
             if (diff > HUMIDITY_CHANGE_THRESHOLD) return true
         } else if ('humidity' in newPayload || 'humidity' in old) {
+            return true
+        }
+
+        //  Compare soil moisture with threshold (capacitive flower probes).
+        if ('soil_moisture' in newPayload && 'soil_moisture' in old) {
+            const diff = Math.abs(Number(newPayload.soil_moisture) - Number(old.soil_moisture))
+            if (diff > SOIL_MOISTURE_CHANGE_THRESHOLD) return true
+        } else if ('soil_moisture' in newPayload || 'soil_moisture' in old) {
             return true
         }
 

@@ -62,7 +62,7 @@ const SEMANTIC_KEYS = Object.freeze(new Set([
     //  Core actuator state.
     'state', 'position', 'action', 'action_group',
     //  Environmental sensors.
-    'temperature', 'humidity', 'illuminance', 'brightness',
+    'temperature', 'humidity', 'soil_moisture', 'illuminance', 'brightness',
     //  Power metrics.
     'power', 'energy', 'current', 'voltage',
     //  Safety / climate.
