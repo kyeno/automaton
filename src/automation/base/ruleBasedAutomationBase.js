@@ -658,7 +658,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         if ((dispatchedCount > 0 || humanSkippedCount > 0 || invokedCount > 0) && triggerData?.force !== true) {
             for (const rule of matchingRules) {
                 if (rule.once) {
-                    await this.#markActedToday(rule, context.timeOfDay)
+                    await this.markActedToday(rule, context.timeOfDay)
                 }
             }
         }
@@ -1001,16 +1001,18 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * nested in an `any_of` gates the rule just as a top-level one does, so it must scope the
      * `once` marker too -- otherwise a rule whose window list lives inside an `any_of` gets a
      * single all-day budget and an early firing silently eats the later window's slot.
-     * @private
+     *
+     * Protected API: also drives the marker keys of speech automations that reuse
+     * {@link hasActedToday} / {@link markActedToday} instead of the device flow.
      * @param {Record<string, unknown>|null|undefined} conds - Condition group from YAML
      * @returns {boolean} true when a `time_of_day` gate exists at any depth */
-    #declaresTimeWindow(conds) {
+    declaresTimeWindow(conds) {
         if (!conds || typeof conds !== 'object' || Array.isArray(conds)) return false
         if (conds['time_of_day'] !== undefined) return true
         for (const list of [conds.any_of, conds.all_of]) {
             if (!Array.isArray(list)) continue
             for (const sub of list) {
-                if (this.#declaresTimeWindow(sub)) return true
+                if (this.declaresTimeWindow(sub)) return true
             }
         }
         return false
@@ -1019,24 +1021,29 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     /** Build the Redis key for a rule's daily "once" marker. Rules that declare a
      * `time_of_day` gate -- at the top level or nested in `any_of`/`all_of` -- get one slot
      * per window, so a pre-dawn firing never consumes the dusk slot.
-     * @private
+     *
+     * Protected API -- see {@link hasActedToday} / {@link markActedToday}.
      * @param {Object} rule - Rule object carrying an `once: true` flag
      * @param {string|null} period - Context time-of-day period ('morning' ... 'night')
      * @returns {string} Redis key for the marker */
-    #onceMarkerKey(rule, period) {
+    onceMarkerKey(rule, period) {
         const base = `auto:${this.name}:once:${slugify(rule.name)}`
-        const declaresWindow = this.#declaresTimeWindow(rule.conditions)
+        const declaresWindow = this.declaresTimeWindow(rule.conditions)
         return declaresWindow && typeof period === 'string' && period !== '' ? `${base}:${period}` : base
     }
 
     /** Check whether an `once` rule has already consumed its action slot today.
-     * @private
+     *
+     * Protected API shared by the device flow and by speech automations that speak
+     * instead of commanding devices: the marker lives in Redis under
+     * `auto:<automation>:once:<slug>` (suffixed with the period for rules declaring a
+     * `time_of_day` gate) and fails open -- a Redis outage reports "not yet acted".
      * @param {Object} rule - Rule object carrying an `once: true` flag
      * @param {string|null} [period] - Context time-of-day period; scopes the lookup per window
      * @returns {Promise<boolean>} true if this rule already acted in this window today */
-    async #hasActedToday(rule, period) {
+    async hasActedToday(rule, period) {
         try {
-            const stored = await CacheService.get(this.#onceMarkerKey(rule, period))
+            const stored = await CacheService.get(this.onceMarkerKey(rule, period))
             return Boolean(stored && stored.date === temporal.getLocalDayString())
         } catch (_) {
             //  Redis unavailable / parse issue -- allow the automation to proceed.
@@ -1045,14 +1052,16 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /** Consume an `once` rule's action slot for this window by writing its marker.
-     * @private
+     *
+     * Protected API -- see {@link hasActedToday}. Forced runs deliberately do not call
+     * this, so a manual poke never eats the day's slot.
      * @param {Object} rule - Rule object carrying an `once: true` flag
      * @param {string|null} [period] - Context time-of-day period; scopes the write per window
      * @returns {Promise<void>} */
-    async #markActedToday(rule, period) {
+    async markActedToday(rule, period) {
         try {
             const ok = await CacheService.set(
-                this.#onceMarkerKey(rule, period),
+                this.onceMarkerKey(rule, period),
                 { date: temporal.getLocalDayString(), at: Date.now() },
                 ONCE_MARKER_TTL_SECONDS
             )
