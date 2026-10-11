@@ -44,15 +44,16 @@ Add new buckets freely — e.g., a *"long weekend"* window with its own line. Th
 Both output paths accept the shared jingle keys, resolved once per greeting by [TTS framing profiles](../installation/tts-integration.md) (`src/lib/ttsProfiles.js`):
 
 ```yaml
-# OPTIONAL -- profile from the active locale's tts.yaml profiles: registry
-tts_profile: 'greeting'
-tts_options:                        # explicit framing, wins over the profile field by field
-  intro: 'hello.wav'                # wave played before the greeting
-  outro: null                       # wave played after the greeting
-  intro_spacing: -1.5               # negative = overlap intro with speech start
+tts_profile: 'greeting'                 # shipped default -- entry of the locale tts.yaml profiles:
+#tts_options:                           # explicit framing, wins over the profile field by field
+#  intro: 'hello.wav'                   # wave played before the greeting
+#  outro: null                          # wave played after the greeting
+#  intro_spacing: -1.5                  # negative = overlap intro with speech start
 ```
 
-On the AI path the resolved framing travels through `AiAssistant.processMessage(..., { tts })`, so the model's own spoken greeting carries it; on the plain-TTS path and on the AI-failure fallback it is spread straight into the `tts:speak` payload. Remove both keys (the shipped default) and every greeting stays a plain `{ text }` utterance.
+The shipped config points `tts_profile:` at the `greeting:` entry of `etc/i18n/{locale}/tts.yaml`, whose `intro:` is `lubecin123-info-computer-sound-299367.mp3` with `intro_spacing: 0`; retune the jingle there, or uncomment the `tts_options:` block to override single fields for this automation alone. Set `tts_profile: ''` (the `.dist` template default) and every greeting stays a plain `{ text }` utterance.
+
+On the AI path the resolved framing travels through `AiAssistant.processMessage(..., { tts })`, so the model's own spoken greeting carries it; on the plain-TTS path and on the AI-failure fallback it is spread straight into the `tts:speak` payload.
 
 ## Language Bundles
 

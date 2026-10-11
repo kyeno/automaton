@@ -26,7 +26,7 @@ use_ai: false                        # true  -> route each greeting through AI -
 # OPTIONAL -- spoken framing for every greeting, on both output paths. Name a profile from the
 # active locale's tts.yaml profiles: registry, and override single fields with tts_options
 # (explicit fields win over the profile). Remove both to keep plain speech.
-#tts_profile: 'chime'
+tts_profile: ''                  # empty = plain speech; name a profiles: entry to add jingles
 #tts_options:
 #  intro: 'intro-chime.wav'          # Wave filename played before the greeting
 #  outro: null                       # Wave filename played after the greeting
