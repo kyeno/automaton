@@ -151,7 +151,7 @@ Available widget types for the status bar:
 ```yaml
 ui:
   layout:
-    min_width: 60           # below this terminal width the UI shows a resize warning instead of rendering
+    min_width: 74           # below this terminal width the UI shows a resize warning instead of rendering
   window_settings:
     max_buffer_lines: 2000  # per-window buffer cap (warning: >5000 raises memory/crash risk)
 ```

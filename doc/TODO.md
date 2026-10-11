@@ -1,8 +1,14 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- UI: Tabular "design" of sensors UI window looks like TOTAL SHIT. Some actual cell
-  spacing and evening up should be introduced.
+- Twilight: Don't say "civil dusk" or "civil dawn" in Twilight's automation TTS files
+  Just say things like "It's sunrise now, it's gonna get bright soon" or "It's past sunset,
+  it's gonna darken soon." Be creative with that. Feel free to add the hour and mention this
+  is calendar sundawn/sundusk for the day. Pass that to AI too.
+- Add extra automation for Gardener (or build it in current one) that will store the current values
+  once per 24 hours and then compare with previous values from 24 hours ago. If one of the humidity 
+  values is identical (didn't move a muscle), warn that this particular sensor might've gotten stuck
+  and needs poking (it happens with those moisture sensors)
 - UI: Both design and functionality of 5th window is a total misunderstanding.
   Instead of log-alike window, it should permanently list the rule-based
   automations and just re-draw whatever acted last under each one of them.
@@ -26,27 +32,6 @@
 - Integrate automated IR remote
 
 ## Architecture
-- DONE (2026-10-10) -- was: Implement the new *sequence* being per the approved brief in
-  doc/architecture/sequence-entity.md (phases 1-7; design fully settled, nothing open). RESOLVED:
-  SequenceBase (ordered steps, blocking mutex, optional loop driver with graceful stop + state keys
-  sequence.<slug>.{active,phase,loop.active}) and SSequenceContainer singleton (config load, duplicate-slug/form
-  validation, name/slug resolution, command/loop APIs, shutdown cleanup) under src/sequence/; wired into
-  main.js startup/shutdown after DeviceContainer; etc/sequence/sequences.yaml.dist template + shallow
-  validator (src/validators/sequences.js); /sequence UI command (list/run/loop start|stop with tab
-  completion); tests/test-sequences.js scenarios A-H registered in bin/automaton-test; docs updated
-  (configuration.md section 6, ui commands quick ref + detail). Along the way fixed humanToMs() to accept
-  "ms" units as the brief documented, and made the loop driver yield an event-loop tick per cycle so
-  zero-delay continuous loops never starve timers/UI.
-- DONE (2026-10-11) -- was: looping sequences had no configurable gap between an OFF run and the
-  next ON run (only off_delay_ms existed). RESOLVED: added symmetric loop.on_delay_ms (auto | duration,
-  default auto; fires only on continuous cycles), parsed in SequenceBase exactly like off_delay_ms and
-  applied as a second inter-phase wait slot in #driveLoop() reusing the same TimedAction/graceful-stop
-  machinery (a stop during either wait cancels it -> straight to IDLE); validator schema extended
-  (src/validators/sequences.js); sequences.yaml(.dist) header comments updated and the Salon Hazard Light
-  entry now sets both gaps ('5s' each in the active config); tests/test-sequences.js scenarios I1/I2
-  (both-gap oscillation + stop-during-pre-ON-wait) green; docs updated (configuration.md section 6,
-  architecture doc D6/state machine/validation rules/test plan). Also restored missing final newlines
-  on etc/sequence/*.yaml flagged by the convention gate.
 - BUG: Many config entries have something_timeout or something_cooldown _ms, while they
   take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
@@ -63,13 +48,6 @@
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 - CONSIDER: "ZigbeeMonitor" sharing the same "state change" logic as other monitors and populate that via local EventBus. Log real Zigbee state changes ONLY as trace; every higher level - via EventBus.
 - CONSIDER: Dropping db's shm and wal to original DB more often, not just on quit?
-- DONE (2026-10-10) -- was: teach CommandCorrelator.#evaluate() to recognize multi-channel suffixed echoes
-  ({state_left/state_right}, {brightness_l1/brightness_l2}) so AUTOMATION commands on
-  DualSwitch/DualDimmer consume their instant tokens via real echo matching instead of
-  expiring by TTL. Today's fallback keeps attribution correct (origin set at publish +
-  "preserve origin" inside the token window) but delays human-override detection until
-  token expiry. Context: dual-switch work 2026-09; current semantics pinned by section D
-  of tests/test-command-reassert.js section F. RESOLVED: register() derives per-channel expectations from the payload JSON; #evaluate() confirms on STATE channels (numeric fallback when no state); DeviceBase.#isCommandRedundant() proves {state_*,brightness_*,position_*} no-ops; DualDimmer correlates its split publishes onto STATE via options.correlateAs. See doc/ht-lights-bug.md finding #2.
 - LATER: Improve JSDoc generation (it's very messy and buggy) -- avoid `@ignore` on documented
   classes since it silently drops all their method pages from doc/api output; also fix
   module longnames coming out as "<file>\n<copyright>" for lib/* headers

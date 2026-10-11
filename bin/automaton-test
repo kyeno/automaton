@@ -171,6 +171,7 @@ const testScripts = [
   'test-rule-match-history.js',
   'test-device-window-header.js',
   'test-device-window-sensor-columns.js',
+  'test-device-window-table.js',
   'test-ui-min-width.js',
   // Note: JSDoc coverage + completeness checks live in npm run lint:check
   'test-sound.js',

@@ -11,8 +11,10 @@
 import AnsiColors from '../../enum/ansiColors.js'
 import { visibleLen } from '../../lib/terminal.js'
 
-/** Default minimum usable slot width below which rendering is suppressed. */
-const DEFAULT_MIN_SLOT_WIDTH = 50
+/** Default minimum usable slot width below which rendering is suppressed. The
+ *  device window sizes its table columns to the content they hold, so the
+ *  narrowest layout that keeps a full fleet row on one line is 74 columns. */
+const DEFAULT_MIN_SLOT_WIDTH = 74
 
 //  UiLayoutManager.
 

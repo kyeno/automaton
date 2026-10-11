@@ -10,25 +10,53 @@
 
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import EventBus from '../../service/eventBus.js'
-import { padVisible, colCell } from '../../lib/terminal.js'
+import { measureColumns, renderRow } from '../../lib/terminal.js'
 import { interpolateTokens } from '../../lib/string.js'
 import temporal from '../../lib/date.js'
 import solar from '../../lib/sun.js'
 import AnsiColors from '../../enum/ansiColors.js'
 import BaseWindow from './baseWindow.js'
 
-//  Column widths (fixed-width alignment, no tabs)
+//  Section column layouts.
+//  Widths are NOT fixed: measureColumns() sizes every column to the longest
+//  text it actually holds (header label included), and renderRow() wraps each
+//  cell in one leading and one trailing space. Columns shared by more than one
+//  section (name, batt) are sized across all of them, so the sections of the
+//  window line up against each other instead of drifting.
+//
+//  Batt belongs to the battery-powered sections only. Mechanisms sit on mains
+//  power and report no battery at all, so their table has no Batt column --
+//  a permanently empty column would only steal width from the rest of the row.
 
-const NAME_W = 35
-const STATE_W = 16
-const ORIGIN_W = 11
-const BATT_W = 5
-const TEMP_W = 7
-const HUMID_W = 6
-const PRESS_W = 8
-const LIGHT_W = 7
-const ACTION_W = 10
-const LASTSEEN_W = 8
+const NAME_COL = { key: 'name', header: 'Name', align: 'left' }
+const BATT_COL = { key: 'batt', header: 'Batt', align: 'right' }
+
+const SENSOR_COLUMNS = [
+    NAME_COL,
+    { key: 'temp', header: 'Temp', align: 'right' },
+    { key: 'humid', header: 'Humid', align: 'right' },
+    { key: 'press', header: 'Press', align: 'right' },
+    { key: 'light', header: 'Light', align: 'right' },
+    BATT_COL,
+]
+
+const MECHANISM_COLUMNS = [
+    NAME_COL,
+    { key: 'state', header: 'State', align: 'right' },
+    { key: 'origin', header: 'Origin', align: 'right' },
+]
+
+const REMOTE_COLUMNS = [
+    NAME_COL,
+    { key: 'action', header: 'Action', align: 'right' },
+    BATT_COL,
+]
+
+const UNCLASSIFIED_COLUMNS = [
+    NAME_COL,
+    { key: 'lastseen', header: 'Last seen', align: 'right' },
+    BATT_COL,
+]
 
 //  DeviceWindow.
 
@@ -121,33 +149,29 @@ class DeviceWindow extends BaseWindow {
         remotes.sort((a, b) => a.name.localeCompare(b.name))
         unclassified.sort((a, b) => a.name.localeCompare(b.name))
 
+        //  Build every section's cell model first: the column widths have to be
+        //  measured across the whole frame, so a column shared by two sections
+        //  (name, batt) comes out the same width in both of them.
+        const sections = []
+        if (sensors.length > 0) sections.push(this.#buildSensors(sensors))
+        if (mechanisms.length > 0) sections.push(this.#buildMechanisms(mechanisms))
+        if (remotes.length > 0) sections.push(this.#buildRemotes(remotes))
+        if (unclassified.length > 0) sections.push(this.#buildUnclassified(unclassified))
+
+        const widths = measureColumns(sections)
+
         const lines = []
 
         //  -- Date / solar header -------------------------------------------
         this.#renderHeader(lines)
 
-        //  -- Sensors section -------------------------------------------
-        if (sensors.length > 0) {
-            this.#renderSensors(sensors, lines)
-        }
-
-        //  -- Mechanisms section ----------------------------------------
-        if (mechanisms.length > 0) {
-            lines.push('')
-            this.#renderMechanisms(mechanisms, lines)
-        }
-
-        //  -- Remotes section -------------------------------------------
-        if (remotes.length > 0) {
-            lines.push('')
-            this.#renderRemotes(remotes, lines)
-        }
-
-        //  -- Unclassified section --------------------------------------
-        if (unclassified.length > 0) {
-            lines.push('')
-            this.#renderUnclassified(unclassified, lines)
-        }
+        //  -- Device sections (sensors, mechanisms, remotes, unclassified) ----
+        sections.forEach((section, index) => {
+            if (index > 0) {
+                lines.push('')
+            }
+            this.#renderSection(section, widths, lines)
+        })
 
         //  -- Summary footer --------------------------------------------
         const totalDevices = sensors.length + mechanisms.length + remotes.length + unclassified.length
@@ -168,8 +192,10 @@ class DeviceWindow extends BaseWindow {
         this.#lastRenderedLines = lines
 
         //  Clear buffer and push all current lines for a fresh dashboard view.
+        //  Preformatted: the table's cell padding is significant whitespace, and the
+        //  plain print() path word-wraps and collapses it back into glued columns.
         this.clear()
-        lines.forEach(line => this.print(line))
+        this.printPreformatted(lines.join('\n'))
     }
 
     /** Compare two rendered line arrays element-wise for strict equality.
@@ -185,26 +211,47 @@ class DeviceWindow extends BaseWindow {
         return true
     }
 
-    //  -- Section renderers --------------------------------------------------
+    //  -- Section builders -----------------------------------------------------
 
-    /** Render the Sensors section.
+    /** Paint one section: its title, a header row, its data rows and any trailing
+     *  summary lines. Header and data rows go through the very same renderer, so a
+     *  header label always sits in the exact cell boundaries of its column.
+     * @private
+     * @param {Object} section - Section model produced by a #build* builder
+     * @param {Record<string, number>} widths - Column widths measured over the whole frame
+     * @param {Array<string>} lines - Row buffer that receives the rendered section */
+    #renderSection(section, widths, lines) {
+        const alignOf = {}
+        for (const column of section.columns) {
+            alignOf[column.key] = column.align
+        }
+
+        lines.push(section.title)
+        lines.push(renderRow(
+            section.columns.map((column) => ({
+                key: column.key,
+                text: column.header,
+                color: AnsiColors.dim,
+                align: column.align,
+            })),
+            widths
+        ))
+
+        for (const row of section.rows) {
+            lines.push(renderRow(row.map((cell) => ({ ...cell, align: alignOf[cell.key] })), widths))
+        }
+
+        for (const extra of section.trailing) {
+            lines.push(extra)
+        }
+    }
+
+    /** Build the Sensors section model.
      * @private
      * @param {Array<Object>} sensors - Sensor device instances collected by the caller
-     * @param {Array<string>} lines - Row buffer that receives the rendered section */
-    #renderSensors(sensors, lines) {
-        const header = AnsiColors.bold + AnsiColors.cyan +
-            '-- Sensors (' + sensors.length + ') --' + AnsiColors.reset
-        lines.push(header)
-
-        //  Header row (spaces between columns for readability)
-        let hdr = ''
-        hdr += 'Name'.padEnd(NAME_W)
-        hdr += ' Temp'.padEnd(TEMP_W + 1)
-        hdr += ' Humid'.padEnd(HUMID_W + 1)
-        hdr += ' Press'.padStart(PRESS_W)
-        hdr += ' Light'.padStart(LIGHT_W)
-        hdr += ' Batt'.padStart(BATT_W)
-        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
+     * @returns {Object} Section model: title, columns, rows, trailing lines */
+    #buildSensors(sensors) {
+        const rows = []
 
         for (const { name, device } of sensors) {
             const stateLast = device.getStateLast?.() || {}
@@ -214,72 +261,36 @@ class DeviceWindow extends BaseWindow {
             const illuminance = stateLast.illuminance ?? null
             const battery = stateLast.battery ?? null
 
-            let line = ''
+            rows.push([
+                { key: 'name', text: name, color: AnsiColors.bold },
+                { key: 'temp', text: temperature != null ? Number(temperature).toFixed(1) + '*C' : '' },
+                { key: 'humid', text: humidity != null ? String(humidity) + '%' : '' },
+                { key: 'press', text: pressure != null ? Math.round(pressure) + 'hPa' : '' },
+                { key: 'light', text: illuminance != null ? Math.round(illuminance) + 'lx' : '' },
+                {
+                    key: 'batt',
+                    text: battery != null ? String(battery) + '%' : '',
+                    color: battery != null ? this.#getBatteryColor(battery) : '',
+                },
+            ])
+        }
 
-            //  Name column (bold name, padded to NAME_W visible width)
-            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
-
-            //  Temperature column (right-aligned, formatted as "24.2*C")
-            if (temperature != null) {
-                const tempStr = Number(temperature).toFixed(1) + '*C'
-                line += ' ' + tempStr.padStart(TEMP_W)
-            } else {
-                line += ' '.repeat(TEMP_W + 1)
-            }
-
-            //  Humidity column (spaced from temp with a separator space)
-            if (humidity != null) {
-                const humStr = String(humidity) + '% '
-                line += ' ' + humStr.padStart(HUMID_W + 1)
-            } else {
-                line += ' '.repeat(HUMID_W + 2)
-            }
-
-            //  Pressure column.
-            if (pressure != null) {
-                const pressStr = `${Math.round(pressure)}hPa`
-                line += pressStr.padStart(PRESS_W)
-            } else {
-                line += ' '.repeat(PRESS_W)
-            }
-
-            //  Illuminance column.
-            if (illuminance != null) {
-                const lxStr = Math.round(illuminance) + 'lx'
-                line += lxStr.padStart(LIGHT_W)
-            } else {
-                line += '-'.padStart(LIGHT_W)
-            }
-
-            //  Battery column (color-coded warning)
-            if (battery != null) {
-                const battColor = this.#getBatteryColor(battery)
-                line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
-            } else {
-                line += ' '.repeat(BATT_W)
-            }
-
-            lines.push(line)
+        return {
+            title: AnsiColors.bold + AnsiColors.cyan +
+                '-- Sensors (' + sensors.length + ') --' + AnsiColors.reset,
+            columns: SENSOR_COLUMNS,
+            rows,
+            trailing: [],
         }
     }
 
-    /** Render the Mechanisms section.
+    /** Build the Mechanisms section model.
      * @private
      * @param {Array<Object>} mechanisms - Mechanism device instances collected by the caller
-     * @param {Array<string>} lines - Row buffer that receives the rendered section */
-    #renderMechanisms(mechanisms, lines) {
+     * @returns {Object} Section model: title, columns, rows, trailing lines */
+    #buildMechanisms(mechanisms) {
         let totalOn = 0, totalOff = 0, totalUnknown = 0
-
-        const header = AnsiColors.bold + AnsiColors.cyan +
-            '-- Mechanisms (' + mechanisms.length + ') --' + AnsiColors.reset
-        lines.push(header)
-
-        let hdr = ''
-        hdr += 'Name'.padEnd(NAME_W)
-        hdr += 'State'.padStart(STATE_W)
-        hdr += 'Origin'.padStart(ORIGIN_W)
-        hdr += 'Batt'.padStart(BATT_W)
-        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
+        const rows = []
 
         for (const { name, device } of mechanisms) {
             const stateLast = device.getStateLast?.() || {}
@@ -287,7 +298,6 @@ class DeviceWindow extends BaseWindow {
 
             const rawState = stateLast.state || stateLast.power_on_state || ''
             const position = stateLast.position ?? null
-            const battery = stateLast.battery ?? null
 
             let status
             const channels = device.getChannels?.()
@@ -329,96 +339,66 @@ class DeviceWindow extends BaseWindow {
                 totalUnknown++
             }
 
-            let line = ''
-
-            //  Name column.
-            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
-
-            //  State column (cyan, right-aligned)
-            line += colCell(status, AnsiColors.cyan, STATE_W, 'right')
-
-            //  Origin column (color-coded, right-aligned)
-            const oColor = this.#getOriginColor(origin)
-            line += colCell(origin, oColor, ORIGIN_W, 'right')
-
-            //  Battery column.
-            if (battery != null) {
-                const battColor = this.#getBatteryColor(battery)
-                line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
-            } else {
-                line += ' '.repeat(BATT_W)
-            }
-
-            lines.push(line)
+            rows.push([
+                { key: 'name', text: name, color: AnsiColors.bold },
+                { key: 'state', text: status, color: AnsiColors.cyan },
+                { key: 'origin', text: origin, color: this.#getOriginColor(origin) },
+            ])
         }
 
-        //  Mechanisms summary.
-        lines.push(
-            AnsiColors.dim + '  ON: ' + totalOn + ' | OFF: ' + totalOff + ' | Unknown: ' + totalUnknown + AnsiColors.reset
-        )
+        return {
+            title: AnsiColors.bold + AnsiColors.cyan +
+                '-- Mechanisms (' + mechanisms.length + ') --' + AnsiColors.reset,
+            columns: MECHANISM_COLUMNS,
+            rows,
+            //  Mechanisms summary.
+            trailing: [
+                AnsiColors.dim + '  ON: ' + totalOn + ' | OFF: ' + totalOff + ' | Unknown: ' + totalUnknown + AnsiColors.reset,
+            ],
+        }
     }
 
-    /** Render the Remotes section.
+    /** Build the Remotes section model.
      * @private
      * @param {Array<Object>} remotes - Remote device instances collected by the caller
-     * @param {Array<string>} lines - Row buffer that receives the rendered section */
-    #renderRemotes(remotes, lines) {
-        const header = AnsiColors.bold + AnsiColors.cyan +
-            '-- Remotes (' + remotes.length + ') --' + AnsiColors.reset
-        lines.push(header)
-
-        let hdr = ''
-        hdr += 'Name'.padEnd(NAME_W)
-        hdr += 'Action'.padStart(ACTION_W)
-        hdr += 'Batt'.padStart(BATT_W)
-        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
+     * @returns {Object} Section model: title, columns, rows, trailing lines */
+    #buildRemotes(remotes) {
+        const rows = []
 
         for (const { name, device } of remotes) {
             const stateLast = device.getStateLast?.() || {}
             const action = stateLast.action ?? null
             const battery = stateLast.battery ?? null
 
-            let line = ''
+            rows.push([
+                { key: 'name', text: name, color: AnsiColors.bold },
+                { key: 'action', text: action != null ? String(action) : '', color: AnsiColors.grey },
+                {
+                    key: 'batt',
+                    text: battery != null ? String(battery) + '%' : '',
+                    color: battery != null ? this.#getBatteryColor(battery) : '',
+                },
+            ])
+        }
 
-            //  Name column.
-            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
-
-            //  Action column (grey, right-aligned)
-            if (action != null && action !== '') {
-                line += colCell(String(action), AnsiColors.grey, ACTION_W, 'right')
-            } else {
-                line += ' '.repeat(ACTION_W)
-            }
-
-            //  Battery column.
-            if (battery != null) {
-                const battColor = this.#getBatteryColor(battery)
-                line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
-            } else {
-                line += ' '.repeat(BATT_W)
-            }
-
-            lines.push(line)
+        return {
+            title: AnsiColors.bold + AnsiColors.cyan +
+                '-- Remotes (' + remotes.length + ') --' + AnsiColors.reset,
+            columns: REMOTE_COLUMNS,
+            rows,
+            trailing: [],
         }
     }
 
-    /** Render the Unclassified section -- devices the container resolved to DummyDevice
+    /** Build the Unclassified section model -- devices the container resolved to DummyDevice
      *  because no type mapping matched their friendly name. They are listed here, never
      *  as mechanisms: a dummy answers power commands by faking a state change, so a
      *  mechanism row for a soil probe is a lie about the hardware.
      * @private
      * @param {Array<Object>} unclassified - Device instances without a resolved type
-     * @param {Array<string>} lines - Row buffer that receives the rendered section */
-    #renderUnclassified(unclassified, lines) {
-        const header = AnsiColors.bold + AnsiColors.yellow +
-            '-- Unclassified (' + unclassified.length + ') --' + AnsiColors.reset
-        lines.push(header)
-
-        let hdr = ''
-        hdr += 'Name'.padEnd(NAME_W)
-        hdr += 'Last seen'.padStart(LASTSEEN_W)
-        hdr += 'Batt'.padStart(BATT_W)
-        lines.push(AnsiColors.dim + hdr + AnsiColors.reset)
+     * @returns {Object} Section model: title, columns, rows, trailing lines */
+    #buildUnclassified(unclassified) {
+        const rows = []
 
         for (const { name, device } of unclassified) {
             const stateLast = device.getStateLast?.() || {}
@@ -431,28 +411,26 @@ class DeviceWindow extends BaseWindow {
                 if (!Number.isNaN(when.getTime())) seenText = temporal.formatClockTime(when)
             }
 
-            let line = ''
-
-            //  Name column.
-            line += padVisible(AnsiColors.bold + name + AnsiColors.reset, NAME_W, 'left')
-
-            //  Last seen column (grey, right-aligned).
-            line += colCell(seenText, AnsiColors.grey, LASTSEEN_W, 'right')
-
-            //  Battery column.
-            if (battery != null) {
-                const battColor = this.#getBatteryColor(battery)
-                line += colCell(String(battery) + '%', battColor, BATT_W, 'right')
-            } else {
-                line += ' '.repeat(BATT_W)
-            }
-
-            lines.push(line)
+            rows.push([
+                { key: 'name', text: name, color: AnsiColors.bold },
+                { key: 'lastseen', text: seenText, color: AnsiColors.grey },
+                {
+                    key: 'batt',
+                    text: battery != null ? String(battery) + '%' : '',
+                    color: battery != null ? this.#getBatteryColor(battery) : '',
+                },
+            ])
         }
 
-        lines.push(
-            AnsiColors.dim + '  No type mapping -- check these names against etc/device/zigbee.yaml' + AnsiColors.reset
-        )
+        return {
+            title: AnsiColors.bold + AnsiColors.yellow +
+                '-- Unclassified (' + unclassified.length + ') --' + AnsiColors.reset,
+            columns: UNCLASSIFIED_COLUMNS,
+            rows,
+            trailing: [
+                AnsiColors.dim + '  No type mapping -- check these names against etc/device/zigbee.yaml' + AnsiColors.reset,
+            ],
+        }
     }
 
     //  -- Private Helpers --------------------------------------------------

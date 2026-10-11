@@ -58,6 +58,51 @@ export function colCell(text, color, width, align = 'left') {
         : color + raw + spaces + AnsiColors.reset
 }
 
+//  Table Layout Utilities.
+
+/** Compute the visible width of every table column from the content it holds.
+ *  A column is as wide as the longest text in it -- the header label counts
+ *  too -- and columns shared by several sections (the device window's Name
+ *  and Batt) take the widest value seen in any of them, so the sections line
+ *  up against each other. renderRow() adds one leading and one trailing space
+ *  on top of the returned width.
+ * @param {Array<{columns: Array<{key: string, header: string}>, rows: Array<Array<{key: string, text: string}>>}>} sections - Sections sharing one width map
+ * @returns {Record<string, number>} Column key to content width in visible characters */
+export function measureColumns(sections) {
+        const widths = {}
+        for (const section of sections) {
+            for (const column of section.columns ?? []) {
+                widths[column.key] = Math.max(widths[column.key] ?? 0, visibleLen(column.header ?? ''))
+            }
+            for (const row of section.rows ?? []) {
+                for (const cell of row) {
+                    widths[cell.key] = Math.max(widths[cell.key] ?? 0, visibleLen(String(cell.text ?? '')))
+                }
+            }
+        }
+        for (const key of Object.keys(widths)) {
+            widths[key] = Math.max(1, widths[key])
+        }
+        return widths
+}
+
+/** Render one table line: every cell padded to its column width and wrapped in
+ *  one leading and one trailing space, so no two columns can ever touch. An
+ *  empty cell renders as full-width blanks, keeping the grid intact.
+ * @param {Array<{key: string, text: string, color?: string, align?: 'left'|'right'}>} cells - Cells in display order
+ * @param {Record<string, number>} widths - Column widths from measureColumns()
+ * @returns {string} The rendered line */
+export function renderRow(cells, widths) {
+        let line = ''
+        for (const cell of cells) {
+            const width = widths[cell.key] ?? 1
+            const color = cell.color ?? ''
+            const body = padVisible(String(cell.text ?? ''), width, cell.align ?? 'left')
+            line += ' ' + (color ? color + body + AnsiColors.reset : body) + ' '
+        }
+        return line
+}
+
 //  Text Wrapping Utilities.
 
 /** Word-aware wrap that preserves ANSI escape sequences.

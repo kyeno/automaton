@@ -35,7 +35,7 @@ console.log('\ntest-ui-min-width\n')
 // -- Default floor -----------------------------------------------------------
 {
     const lm = new UiLayoutManager(makeTerm(100, 40)) // main slot width == 100
-    assertEqual(lm.minSlotWidth, 50, 'default minimum render width is 50')
+    assertEqual(lm.minSlotWidth, 74, 'default minimum render width is 74')
     assertEqual(lm.isTooNarrow(), false, '100-col terminal renders normally at default floor')
 }
 
@@ -52,23 +52,32 @@ console.log('\ntest-ui-min-width\n')
 
 // -- Lowering the floor allows narrower terminals ----------------------------
 {
-    const lm = new UiLayoutManager(makeTerm(60, 30)) // main slot width == 60
-    assertEqual(lm.isTooNarrow(), false, '60-col terminal OK at default floor (50)')
-    lm.setMinWidth(70)
-    assertEqual(lm.isTooNarrow(), true, 'raising floor to 70 now suppresses a 60-col terminal')
-    lm.setMinWidth(40)
-    assertEqual(lm.isTooNarrow(), false, 'lowering floor to 40 re-enables the 60-col terminal')
+    const lm = new UiLayoutManager(makeTerm(80, 30)) // main slot width == 80
+    assertEqual(lm.isTooNarrow(), false, '80-col terminal OK at default floor (74)')
+    lm.setMinWidth(90)
+    assertEqual(lm.isTooNarrow(), true, 'raising floor to 90 now suppresses an 80-col terminal')
+    lm.setMinWidth(60)
+    assertEqual(lm.isTooNarrow(), false, 'lowering floor to 60 re-enables the 80-col terminal')
+}
+
+// -- The device table floor --------------------------------------------------
+//  The devices window sizes its columns to the content they hold, so a 60-col
+//  terminal -- fine under the old 50 floor -- is now below the floor: the widest
+//  full-fleet row needs 74 columns to stay on one line.
+{
+    const lm = new UiLayoutManager(makeTerm(60, 30))
+    assertEqual(lm.isTooNarrow(), true, '60-col terminal is suppressed at the 74 floor')
 }
 
 // -- Invalid values are ignored ---------------------------------------------
 {
     const lm = new UiLayoutManager(makeTerm(100, 40))
     lm.setMinWidth('wide')   // not a number
-    assertEqual(lm.minSlotWidth, 50, 'non-numeric value is ignored')
+    assertEqual(lm.minSlotWidth, 74, 'non-numeric value is ignored')
     lm.setMinWidth(-5)       // non-positive
-    assertEqual(lm.minSlotWidth, 50, 'negative value is ignored')
+    assertEqual(lm.minSlotWidth, 74, 'negative value is ignored')
     lm.setMinWidth(NaN)      // NaN
-    assertEqual(lm.minSlotWidth, 50, 'NaN is ignored')
+    assertEqual(lm.minSlotWidth, 74, 'NaN is ignored')
     lm.setMinWidth(2.9)      // fractional -> floored
     assertEqual(lm.minSlotWidth, 2, 'fractional width is floored to an integer')
 }
