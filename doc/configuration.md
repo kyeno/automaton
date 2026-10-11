@@ -230,7 +230,7 @@ logger:
     trace: var/log/trace.log
 ```
 
-Uses Winston for structured logging with file rotation; non-absolute paths resolve relative to the project root. A fifth **TRACE** level (raw MQTT payloads, token lifecycle events) routes exclusively to the dedicated `trace` log file -- never to the console or UI log window. Passing `--no-trace` at startup suppresses the stream entirely.
+Uses Winston for structured logging with file rotation; non-absolute paths resolve relative to the project root. A fifth **TRACE** level (raw MQTT payloads, token lifecycle events, rule-miss explanations from rule-based automations) routes exclusively to the dedicated `trace` log file -- never to the console or UI log window. Passing `--no-trace` at startup suppresses the stream entirely.
 
 ---
 

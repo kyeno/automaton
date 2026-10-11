@@ -390,10 +390,11 @@ export default class AutomationBase {
 
     /** Helper method to log messages associated with this automation.
      * @param {string} message - The message to log
-     * @param {string} level - Log level ('info', 'debug', 'warn', 'error') */
+     * @param {string} level - Log level ('info', 'debug', 'trace', 'warn', 'error') */
     log(message, level = 'info') {
         const context = `Auto:${this.name}`
         switch (level.toLowerCase()) {
+            case 'trace': LoggerService.trace(message, context); break
             case 'debug': LoggerService.debug(message, context); break
             case 'warn':  LoggerService.warn(message, context); break
             case 'error': LoggerService.error(message, context); break

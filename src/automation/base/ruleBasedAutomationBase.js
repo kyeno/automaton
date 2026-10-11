@@ -16,6 +16,7 @@ import solar from '../../lib/sun.js'
 import CacheService from '../../service/cacheService.js'
 import DatabaseService from '../../service/databaseService.js'
 import LoggerService from '../../service/loggerService.js'
+import StateService from '../../service/stateService.js'
 import EventBus from '../../service/eventBus.js'
 import { parseDocument as yamlParseDocument } from 'yaml'
 import { slugify, toTargetKey } from '../../lib/string.js'
@@ -61,9 +62,13 @@ const SCALAR_CONDITION_KEYS = Object.freeze(new Set([
 ]))
 
 /** Rule-miss explanations cost a few cache lookups per unmatched rule, so they run only
- * where DEBUG logs are actually routed (mirrors LoggerService.debug visibility).
- * @type {boolean} */
-const RULE_MISS_EXPLANATION_ENABLED = process.env.NODE_ENV !== 'production'
+ * where TRACE logs are actually routed (mirrors the trace-file transport: off in production,
+ * off when the stream was suppressed at startup with --no-trace). Evaluated lazily because
+ * the --no-trace flag lands in StateService only after this module has been imported.
+ * @returns {boolean} True when rule-miss explanations should be produced */
+function ruleMissExplanationEnabled() {
+    return process.env.NODE_ENV !== 'production' && !StateService.get('cli.noTrace')
+}
 
 /** Legacy kebab-case condition keys that were unified to snake_case.
  * @type {Readonly<Record<string,string>>} */
@@ -585,18 +590,20 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             try {
                 const match = await this.conditionsMatch(rule.conditions, context)
                 if (!match) {
-                    //  Debug-only diagnosis: name the gate that rejected the rule, so a silently
+                    //  TRACE-only diagnosis: name the gate that rejected the rule, so a silently
                     //  skipped rule (a sun/clock gate in particular) is diagnosable from the log.
-                    if (RULE_MISS_EXPLANATION_ENABLED) {
-                        this.log(`Rule skipped: "${rule.name}" - ${await this.explainRuleMiss(rule.conditions, context)}`, 'debug')
+                    //  High-volume and noise-heavy (every unmatched rule on every trigger), so it
+                    //  stays out of DEBUG -- the debug log and the UI log window.
+                    if (ruleMissExplanationEnabled()) {
+                        this.log(`Rule skipped: "${rule.name}" - ${await this.explainRuleMiss(rule.conditions, context)}`, 'trace')
                     }
                     continue
                 }
 
                 //  Per-rule daily "once" marker -- at most one action per calendar day, and
                 //  one per time-of-day window for rules that declare a `time_of_day` gate.
-                if (rule.once && triggerData?.force !== true && await this.#hasActedToday(rule, context.timeOfDay)) {
-                    const scope = this.#declaresTimeWindow(rule.conditions) ? ` during ${context.timeOfDay}` : ''
+                if (rule.once && triggerData?.force !== true && await this.hasActedToday(rule, context.timeOfDay)) {
+                    const scope = this.declaresTimeWindow(rule.conditions) ? ` during ${context.timeOfDay}` : ''
                     this.log(`Rule "${rule.name}" already acted today${scope}, skipping`, 'debug')
                     continue
                 }
