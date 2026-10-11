@@ -1,10 +1,6 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Twilight: Don't say "civil dusk" or "civil dawn" in Twilight's automation TTS files
-  Just say things like "It's sunrise now, it's gonna get bright soon" or "It's past sunset,
-  it's gonna darken soon." Be creative with that. Feel free to add the hour and mention this
-  is calendar sundawn/sundusk for the day. Pass that to AI too.
 - Add extra automation for Gardener (or build it in current one) that will store the current values
   once per 24 hours and then compare with previous values from 24 hours ago. If one of the humidity 
   values is identical (didn't move a muscle), warn that this particular sensor might've gotten stuck

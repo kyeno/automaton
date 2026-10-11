@@ -20,6 +20,9 @@
 #   tts_profile:  name of a profiles: entry of the active locale's tts.yaml
 #   tts_options:  explicit framing; wins over the profile field by field
 # The only runtime placeholder is {% time %} -- the event's local clock time, "HH:MM".
+# The bundles speak plain household wording: no "civil dawn"/"civil dusk" in the sentences, and
+# each ai line carries the event facts (the calendar sundawn/sundusk of the day plus the hour)
+# to the model, so an AI-composed announcement says the same thing in its own words.
 #
 # Output routing is the same boolean switch as ttsGreeter / ttsGardener:
 #   use_ai false -> speak the section's tts line directly (default);

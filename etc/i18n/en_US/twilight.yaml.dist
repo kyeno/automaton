@@ -1,6 +1,6 @@
 # Twilight -- English Language Bundle
 # ----------------------------------
-# Speech templates for the ttsTwilight automation (civil dawn / civil dusk announcements).
+# Speech templates for the ttsTwilight automation (dawn / dusk announcements).
 # Each section holds per-output-path lines like the greeter and gardener bundles:
 #   <section>.tts -- spoken verbatim when use_ai is off / AI unavailable
 #   <section>.ai  -- instruction sent to the model; it speaks its own announcement
@@ -9,13 +9,18 @@
 # Digits stay out of the template words on purpose so Piper TTS and small models read the
 # clock time naturally in any locale.
 #
+# Wording rule: the spoken announcement never says "civil dawn" / "civil dusk" -- that is
+# survey language, not what anyone says at home. The lines say what the light is doing, name
+# the hour, and call the event the calendar sundawn / sundusk of the day; the ai lines carry
+# those same facts to the model and repeat the ban, so an improvised announcement stays plain.
+#
 # Template -- copy to twilight.yaml and customize the sentences. Section names must match the
 # rules[].sentence keys of etc/automation/tts-twilight.yaml.
 
 sundawn:
-  tts: 'Good morning. Civil dawn at {% time %}.'
-  ai: 'Announce briefly and warmly that civil dawn has arrived at {% time %} and that the day is beginning.'
+  tts: "Good morning. It's sunrise now, {% time %} -- the calendar sundawn of today. It's gonna get bright soon."
+  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundawn of today: sunrise at {% time %}. Say briefly and warmly, in your own words, that it's sunrise now, that it's gonna get bright soon, and that this is today's sundawn. Never say 'civil dawn'."
 
 sundusk:
-  tts: 'Civil dusk at {% time %}. The day is done.'
-  ai: 'Announce briefly that civil dusk has arrived at {% time %} and that evening has begun.'
+  tts: "It's past sunset, {% time %} -- the calendar sundusk of today. It's gonna darken soon."
+  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundusk of today: sunset at {% time %}. Say briefly, in your own words, that it's past sunset, that it's gonna darken soon, and that this is today's sundusk. Never say 'civil dusk'."

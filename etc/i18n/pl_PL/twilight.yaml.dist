@@ -1,6 +1,6 @@
 # Twilight -- Polish Language Bundle
 # ---------------------------------
-# Szablony wypowiedzi automatyzacji ttsTwilight (komunikaty świtu i zmierzchu cywilnego).
+# Szablony wypowiedzi automatyzacji ttsTwilight (komunikaty świtu i zmierzchu).
 # Każda sekcja zawiera wiersze podzielone ścieżką wyjścia, jak w pakietach greeter i gardener:
 #   <sekcja>.tts -- wypowiadane dosłownie, gdy use_ai jest wyłączone / AI niedostępne
 #   <sekcja>.ai  -- polecenie wysłane do modelu; model wypowiada własny komunikat
@@ -9,13 +9,18 @@
 # Cyfry celowo pozostają poza słowami szablonu, żeby Piper TTS i małe modele naturalnie
 # odczytywały godzinę w każdym locale.
 #
+# Zasada sformułowań: komunikat nigdy nie mówi "świt cywilny" / "zmierzch cywilny" -- to
+# terminologia pomiarowa, nie język domowy. Wiersze mówią, co robi światło, podają godzinę i
+# nazywają zdarzenie kalendarzowym świtem / zmierzchem danego dnia; wiersze ai przekazują te
+# same fakty modelowi i powtarzają zakaz, żeby improwizowany komunikat pozostał zwyczajny.
+#
 # Szablon -- skopiuj do twilight.yaml i dostosuj zdania. Nazwy sekcji muszą odpowiadać
 # kluczom rules[].sentence z etc/automation/tts-twilight.yaml.
 
 sundawn:
-  tts: 'Dzień dobry. Świt cywilny o godzinie {% time %}.'
-  ai: 'Powiedz krótko i ciepło, że świt cywilny nadszedł o godzinie {% time %} i że dzień się zaczyna.'
+  tts: 'Dzień dobry. Wschód słońca, {% time %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
+  ai: 'Nie używaj narzędzi -- oprzyj wypowiedź wyłącznie na podanych informacjach. Jest kalendarzowy świt tego dnia: wschód słońca o {% time %}. Powiedz krótko i ciepło, własnymi słowami, że jest wschód słońca, że będzie coraz jaśniej i że to dzisiejszy kalendarzowy świt. Nigdy nie mów "świt cywilny".'
 
 sundusk:
-  tts: 'Zmierzch cywilny o godzinie {% time %}. Dzień się skończył.'
-  ai: 'Powiedz krótko, że zmierzch cywilny nadszedł o godzinie {% time %} i że zaczął się wieczór.'
+  tts: 'Zachód słońca, {% time %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
+  ai: 'Nie używaj narzędzi -- oprzyj wypowiedź wyłącznie na podanych informacjach. Jest kalendarzowy zmierzch tego dnia: zachód słońca o {% time %}. Powiedz krótko, własnymi słowami, że jest po zachodzie słońca, że będzie coraz ciemniej i że to dzisiejszy kalendarzowy zmierzch. Nigdy nie mów "zmierzch cywilny".'

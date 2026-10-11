@@ -60,15 +60,17 @@ Sentences live in `etc/i18n/{locale}/twilight.yaml`, one section per rule with a
 
 ```yaml
 sundawn:
-  tts: 'Dzień dobry. Świt cywilny o godzinie {% time %}.'
-  ai: 'Powiedz krótko i ciepło, że świt cywilny nadszedł o godzinie {% time %} i że dzień się zaczyna.'
+  tts: 'Dzień dobry. Wschód słońca, {% time %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
+  ai: 'Nie używaj narzędzi -- ... Jest kalendarzowy świt tego dnia: wschód słońca o {% time %}. ... Nigdy nie mów "świt cywilny".'
 
 sundusk:
-  tts: 'Zmierzch cywilny o godzinie {% time %}. Dzień się skończył.'
-  ai: 'Powiedz krótko, że zmierzch cywilny nadszedł o godzinie {% time %} i że zaczął się wieczór.'
+  tts: 'Zachód słońca, {% time %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
+  ai: 'Nie używaj narzędzi -- ... Jest kalendarzowy zmierzch tego dnia: zachód słońca o {% time %}. ... Nigdy nie mów "zmierzch cywilny".'
 ```
 
 - `{% time %}` → the event's own civil-twilight instant, zero-padded 24-hour clock (`05:40`, `18:20`) — always 24h so TTS never disambiguates AM/PM
+
+**No survey jargon out loud.** Civil dawn and civil dusk are the *instants* the automation works with; they are not words anyone says at home, so the shipped sentences never name them. They say what the light is doing ("it's gonna get bright soon", "it's gonna darken soon"), they name the hour, and they call the event the calendar sundawn / sundusk of the day. The `ai` line carries the same facts to the model — the calendar sundawn/sundusk of the day and its clock time — and repeats the ban, so an improvised announcement stays as plain as the spoken one.
 
 That is the only placeholder, so a bundle that names no placeholder at all is complete. The `tts` line is spoken verbatim on the plain-TTS path (and as the fallback when AI fails); the `ai` line is an *instruction* to the model — never read aloud itself. Digits stay out of the template words on purpose so Piper TTS and small models read the clock time naturally in any locale.
 
