@@ -12,6 +12,8 @@
  *   F) execute() off-guard -- both AI and TTS unavailable skips the run entirely
  *   G) execute() forceFirst -- the "/automation force <name> first" debug poke
  *      renders the dated line at a mid-session clock time
+ *   J) getClockWords() -- the spoken clock from the locale's language generator
+ *      (declined words in pl, null where the locale has no generator)
  *
  * Pure clock + config only -- no Redis/MQTT/AI providers needed; dates are passed
  * explicitly so no global Date stubbing is required.
@@ -380,6 +382,36 @@ console.log('── clock-bound parsing ──\n')
     for (const input of rejected) {
         assert(temporal.parseClockHour(input) === null, `parseClockHour(${JSON.stringify(input)}) rejected as not a clock time`)
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// J. getClockWords() -- the spoken clock from the locale's language generator
+// ---------------------------------------------------------------------------
+console.log('── getClockWords() ──\n')
+{
+    const isPolish = String(dir).toLowerCase().startsWith('pl')
+    const words = temporal.getClockWords(D(6, 18))
+    if (isPolish) {
+        //  The form a TTS engine cannot derive from digits: the hour agrees with the
+        //  feminine noun godzina, so 06:18 is "szósta osiemnaście", never "sześć 18".
+        assert(words === 'szósta osiemnaście', `pl locale (${dir}) speaks 06:18 as declined words ("${words}")`)
+        assert(temporal.getClockWords(D(17, 37)) === 'piąta trzydzieści siedem', '17:37 is read on the 12-hour clock, not as the seventeenth hour')
+        assert(temporal.getClockWords(D(12, 0)) === 'dwunasta', 'an exact hour carries no minutes word')
+    } else {
+        assert(words === null, `locale ${dir} has no word generator -> null, so templates keep their digit clock`)
+    }
+    assert(temporal.getClockWords('not a moment') === null, 'a value that is not a moment yields null')
+
+    //  The weatherman opening line is the consumer of this gate: every token of the
+    //  bundle's time_sentence must be filled, or the TTS engine reads braces aloud.
+    const wm = new TtsWeatherManAutomation()
+    await wm.init()
+    const line = wm.buildTimeSentence(D(9, 32), wmBundle)
+    await wm.cleanup()
+    assert(line.length > 0, `time sentence renders from the active bundle ("${line}")`)
+    assert(!line.includes('{%'), 'no unresolved placeholder survives the time sentence -- time_words included')
+    if (isPolish) assert(!/\d/.test(line), 'the Polish opening line hands TTS words, not digits to decline')
 }
 
 

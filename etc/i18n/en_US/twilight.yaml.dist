@@ -4,10 +4,18 @@
 # Each section holds per-output-path lines like the greeter and gardener bundles:
 #   <section>.tts -- spoken verbatim when use_ai is off / AI unavailable
 #   <section>.ai  -- instruction sent to the model; it speaks its own announcement
-# Placeholder (filled at run time from the event instant):
-#   {% time %} -- the event's local clock time, zero-padded 24-hour "HH:MM"
-# Digits stay out of the template words on purpose so Piper TTS and small models read the
+# Placeholders (filled at run time from the EVENT instant, never the running clock):
+#   {% time %}        -- the event's local clock time, zero-padded 24-hour "HH:MM"
+#   {% time_of_day %} -- localized day-period word from date.yaml: "in the morning",
+#                        "in the afternoon", "in the evening", "at night"
+#   {% hours %}       -- the event hour in the locale's time_format (12h or 24h)
+#   {% minutes %}     -- the event minutes, unpadded
+# The tts line speaks the clock in digits and adds the day-period word: Piper TTS reads the
 # clock time naturally in any locale.
+#
+# The ai line hands the model the clock in parts and asks for it in words -- a TTS engine
+# reading digits says "six eighteen", which is exactly how English says it, so the only rule
+# the English instruction needs is "words, not digits".
 #
 # Wording rule: the spoken announcement never says "civil dawn" / "civil dusk" -- that is
 # survey language, not what anyone says at home. The lines say what the light is doing, name
@@ -18,9 +26,9 @@
 # rules[].sentence keys of etc/automation/tts-twilight.yaml.
 
 sundawn:
-  tts: "Good morning. It's sunrise now, {% time %} -- the calendar sundawn of today. It's gonna get bright soon."
-  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundawn of today: sunrise at {% time %}. Say briefly and warmly, in your own words, that it's sunrise now, that it's gonna get bright soon, and that this is today's sundawn. Never say 'civil dawn'."
+  tts: "Good morning. It's sunrise now, {% time %} {% time_of_day %} -- the calendar sundawn of today. It's gonna get bright soon."
+  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundawn of today: sunrise at {% time %}, that is {% hours %} {% minutes %} {% time_of_day %}. Say the time in words, never digits: {% hours %} {% minutes %} {% time_of_day %} is read as the hour in words, then the minutes, then the day period. Say briefly and warmly, in your own words, that it's sunrise now, that it's gonna get bright soon, and that this is today's sundawn. Never say 'civil dawn'."
 
 sundusk:
-  tts: "It's past sunset, {% time %} -- the calendar sundusk of today. It's gonna darken soon."
-  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundusk of today: sunset at {% time %}. Say briefly, in your own words, that it's past sunset, that it's gonna darken soon, and that this is today's sundusk. Never say 'civil dusk'."
+  tts: "It's past sunset, {% time %} {% time_of_day %} -- the calendar sundusk of today. It's gonna darken soon."
+  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundusk of today: sunset at {% time %}, that is {% hours %} {% minutes %} {% time_of_day %}. Say the time in words, never digits: {% hours %} {% minutes %} {% time_of_day %} is read as the hour in words, then the minutes, then the day period. Say briefly, in your own words, that it's past sunset, that it's gonna darken soon, and that this is today's sundusk. Never say 'civil dusk'."

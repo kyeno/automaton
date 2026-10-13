@@ -391,12 +391,31 @@ export default class TtsTwilightAutomation extends RuleBasedAutomationBase {
         this.log('Civil dawn/dusk unresolvable -- set locale.geo_latitude and locale.geo_longitude in etc/automaton.yaml', 'warn')
     }
 
-    /** Runtime placeholder values for sentence interpolation.
+    /** Runtime placeholder values for sentence interpolation, built from the EVENT instant and
+     * never from the running clock -- a catch-up tick four minutes after dawn must speak dawn's
+     * hour and dawn's day-part. {% time %} stays the unambiguous zero-padded 24-hour form;
+     * {% time_words %} is the same moment spelled in words by the locale's language generator
+     * (lib/date owns it; digits when the locale has none), so the plain TTS path speaks
+     * "szósta osiemnaście" and the model is handed finished words instead of being asked to
+     * inflect digits; {% hours %} / {% minutes %} / {% time_of_day %} carry the moment as
+     * 12-hour parts plus the localized day-period word.
      * @private
      * @param {number} instantMs - Event instant in epoch ms
      * @returns {Record<string, string>} Token map */
     #tokensFor(instantMs) {
-        return { time: temporal.formatClockTime(new Date(instantMs)) }
+        const when = new Date(instantMs)
+        const hour24 = when.getHours()
+        const clock = temporal.formatClockTime(when)
+        const period = temporal.getCurrentTimePeriod(when)
+        //  The raw period name is the last-resort word, so a bundle can never lose its sentence.
+        const timeOfDay = (period && (temporal.getPeriodWords()[period] || period)) || ''
+        return {
+            time: clock,
+            time_words: temporal.getClockWords(when) || clock,
+            hours: String(I18nLoader.is12HourFormat() ? ((hour24 + 11) % 12) + 1 : hour24),
+            minutes: String(when.getMinutes()),
+            time_of_day: timeOfDay
+        }
     }
 
     /** Load the twilight i18n bundle for the active locale.

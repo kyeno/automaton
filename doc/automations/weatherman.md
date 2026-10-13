@@ -155,7 +155,7 @@ Two placeholder types are supported inside i18n strings:
 | `{{ DeviceName.property }}` | `{{ Outdoor Temperature.temperature }}` | Live sensor value from Zigbee2MQTT (locale-formatted numbers) |
 | `{% time %}` | `{% time %}` | Current local time using the configured `time_format` |
 
-If a device or property isn't found during interpolation, it resolves to `"N/A"`. The clock-part tokens (`{% hours %}`, `{% minutes %}`, `{% time_of_day %}`, `{% date %}`, `{% next_interval %}`) are pre-resolved internally by the automation — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md). With `add_proverb: true`, the `{% proverb %}` token in the `ai_proverb` / `tts_proverb` keys is pre-resolved the same way, from a random line of `etc/i18n/{locale}/proverbs.txt`.
+If a device or property isn't found during interpolation, it resolves to `"N/A"`. The clock-part tokens (`{% time_words %}`, `{% hours %}`, `{% minutes %}`, `{% time_of_day %}`, `{% date %}`, `{% next_interval %}`) are pre-resolved internally by the automation — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md). With `add_proverb: true`, the `{% proverb %}` token in the `ai_proverb` / `tts_proverb` keys is pre-resolved the same way, from a random line of `etc/i18n/{locale}/proverbs.txt`.
 
 ## Closing Proverb
 
@@ -190,7 +190,7 @@ warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 # ... further warning_* / soothing_* sentence keys
 ```
 
-A Polish bundle (`pl_PL/weatherman.yaml`) ships with the same keys, including `time_sentence` templates whose clock parts are pre-rendered as plain digits so tiny models never convert a clock string into words. To add support for another language, create a new `weatherman.yaml` in your locale directory with translated keys matching those used in the automation's YAML config.
+A Polish bundle (`pl_PL/weatherman.yaml`) ships with the same keys, including `time_sentence` templates whose clock is pre-rendered **in words** (`{% time_words %}` → *dziewiąta trzydzieści dwa*, computed by `src/lib/polish.js` through `src/lib/date.js`) so tiny models never convert a clock string into words and the TTS engine never has to decline one. To add support for another language, create a new `weatherman.yaml` in your locale directory with translated keys matching those used in the automation's YAML config.
 
 ## File Map
 

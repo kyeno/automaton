@@ -17,6 +17,7 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { PROJECT_ROOT } from './projectRoot.js'
+import { clockWords as polishClockWords } from './polish.js'
 
 
 /** Root directory containing per-locale i18n subdirectories (holds date.yaml). */
@@ -280,12 +281,14 @@ class STemporal {
 
 
     /** Parse a human-readable duration string into milliseconds.
-     * @param {string} text - Human-readable duration, e.g. "500ms", "1h" or "3m 45s"
+     * @param {string} text - Human-readable duration, e.g. "500ms", "1h" or "3m 45s".
+     *                        Components may be space-separated; a number and its unit must
+     *                        be adjacent, so "1 h" is not a duration.
      * @returns {number|null} Total milliseconds; null when the input is not a string, */
     humanToMs(text) {
         if (typeof text !== 'string') return null
         const trimmed = text.trim()
-        if (!/^(\d+\s*(?:ms|[dhms])\s*)+$/i.test(trimmed)) return null
+        if (!/^(\d+(?:ms|[dhms])\s*)+$/i.test(trimmed)) return null
 
         let total = 0
         for (const match of trimmed.matchAll(/(\d+)\s*(ms|[dhms])/gi)) {
@@ -456,6 +459,18 @@ class STemporal {
     getPeriodWords() {
         const bundle = this.loadDateBundle() ?? {}
         return (bundle.period_words && typeof bundle.period_words === 'object') ? bundle.period_words : {}
+    }
+
+    /** Localized spoken clock words for a moment -- the hour in words the way the language
+     * names it, generated in code so a template (and the model behind it) never has to
+     * inflect digits: pl_PL "06:18" is "szósta osiemnaście", not "sześć osiemnaście".
+     * @param {Date} [date=new Date()] - Moment to spell
+     * @returns {string|null} Spoken clock words, or null when the active locale has no
+     *          generator (every caller then keeps its own digit-based wording) */
+    getClockWords(date = new Date()) {
+        const locale = String(I18nLoader.getLocale() ?? '').trim().toLowerCase()
+        if (!locale.startsWith('pl')) return null
+        return polishClockWords(date) || null
     }
 
     /** Localized duration-unit words for `{% next_interval %}` (day/hour/minute/

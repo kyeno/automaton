@@ -19,7 +19,11 @@
 # different jingles:
 #   tts_profile:  name of a profiles: entry of the active locale's tts.yaml
 #   tts_options:  explicit framing; wins over the profile field by field
-# The only runtime placeholder is {% time %} -- the event's local clock time, "HH:MM".
+# Runtime placeholders, all taken from the EVENT instant: {% time %} -- the event's local clock
+# time, "HH:MM"; {% time_of_day %} -- the localized day-period word from date.yaml ("rano",
+# "wieczorem"); {% hours %} and {% minutes %} -- the same moment in the locale's clock parts
+# (12-hour when locale.time_format is "12h"), which is what the ai lines use to make the model
+# voice the hour in words ("szósta osiemnaście rano") instead of reading digits.
 # The bundles speak plain household wording: no "civil dawn"/"civil dusk" in the sentences, and
 # each ai line carries the event facts (the calendar sundawn/sundusk of the day plus the hour)
 # to the model, so an AI-composed announcement says the same thing in its own words.

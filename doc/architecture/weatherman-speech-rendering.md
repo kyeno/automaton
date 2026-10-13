@@ -46,13 +46,16 @@ The clock fraction selects a variant template with fallback to the `default` ent
 | any other | `default` | Shipped ("Jest 32 minut po godzinie 9 rano") |
 | `30` / `45` / `15` | `half_past` / `quarter_to` / `quarter_past` | Reserved hooks — auto-selected if a locale bundle defines them; no translations shipped yet |
 
-The templates use three interpolation tokens pre-resolved from the run's shared clock instant:
+The templates use the interpolation tokens below, all pre-resolved from the run's shared clock instant:
 
 | Token | Resolves To | Example (pl, 12h) |
 |-------|-------------|--------------------|
+| `{% time_words %}` | The whole clock spoken in words, from the language generator behind `src/lib/date.js` → `getClockWords()`; the digit clock (`HH:MM`) where the locale's language has no generator | `dwudziesta trzydzieści dwa` |
 | `{% hours %}` | Hour number respecting the configured `time_format` (1–12 or 0–23) | `9` |
 | `{% minutes %}` | Minute of the hour as a plain integer | `32` |
 | `{% time_of_day %}` | Localized day-period word from `period_words`, keyed by the same five periods used in rule conditions (`morning/noon/afternoon/evening/night`) | `rano` |
+
+`{% time_words %}` exists because a TTS engine reading `9:32` says *"dziewięć trzydzieści dwa"*, while Polish names the hour with the feminine ordinal agreeing with *godzina* — *"dziewiąta trzydzieści dwa"*. The forms are computed by [`src/lib/polish.js`](../../src/lib/polish.js) (numerals 0-999, hour ordinals on the 12-hour clock), so neither the TTS engine nor the model declines a digit string; the shipped `pl_PL` templates use it in every `time_sentence` variant and the `ai_prefix` instruction is reduced to *"Godziny nie zapisuj cyframi"*. A locale without a generator gets the digit clock from the same token, so a template written with `{% time_words %}` renders in every language.
 
 Missing period words degrade to the raw English period name. Because the frame always states "minutes past H" plus a period word, midnight and noon stay unambiguous even with bare digits (*"godzina 12 w nocy"* vs *"w południe"*).
 

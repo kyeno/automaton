@@ -344,6 +344,9 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             date: dated ? this.#buildDateFragment(now) : '',
             hours: String(I18nLoader.is12HourFormat() ? ((h24 + 11) % 12) + 1 : h24),
             minutes: String(now.getMinutes()),
+            //  Spoken clock words when the locale's language can generate them (pl_PL:
+            //  "szósta osiemnaście"); the digit clock otherwise, so a template never loses it.
+            time_words: temporal.getClockWords(now) || temporal.formatClockTime(now),
             time_of_day: (period && words[period]) || period || '',
         })
     }

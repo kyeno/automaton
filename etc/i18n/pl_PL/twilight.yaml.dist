@@ -4,10 +4,22 @@
 # Każda sekcja zawiera wiersze podzielone ścieżką wyjścia, jak w pakietach greeter i gardener:
 #   <sekcja>.tts -- wypowiadane dosłownie, gdy use_ai jest wyłączone / AI niedostępne
 #   <sekcja>.ai  -- polecenie wysłane do modelu; model wypowiada własny komunikat
-# Placeholder (uzupełniany w trakcie działania z chwili zdarzenia):
-#   {% time %} -- lokalny czas zdarzenia, zero-wypełniony format 24-godzinny "HH:MM"
-# Cyfry celowo pozostają poza słowami szablonu, żeby Piper TTS i małe modele naturalnie
-# odczytywały godzinę w każdym locale.
+# Placeholders (uzupełniane w trakcie działania z CHWILI ZDARZENIA, nigdy z bieżącego zegara):
+#   {% time %}        -- lokalny czas zdarzenia, zero-wypełniony format 24-godzinny "HH:MM"
+#   {% time_words %}  -- ta sama chwila wypowiedziana słownie: "szósta osiemnaście" -- godzina
+#                        na zegarze 12-godzinnym, żeńskim porządkownikiem od słowa "godzina",
+#                        minuty liczebnikiem głównym, bez słowa minut co pełną godzinę. Liczy
+#                        ją kod (src/lib/polish.js przez src/lib/date.js); w locale bez
+#                        generatora token zwraca cyfry, więc zdanie nigdy się nie gubi.
+#   {% time_of_day %} -- lokalne słowo pory dnia z date.yaml: "rano", "w południe",
+#                        "po południu", "wieczorem", "w nocy"
+#   {% hours %}       -- godzina zdarzenia w formacie z locale.time_format (12h lub 24h)
+#   {% minutes %}     -- minuty zdarzenia, bez wypełniania zerem
+# Godzina jest w polskim rodzaju żeńskiego: mówi się "szósta osiemnaście", nigdy
+# "sześć osiemnaście". Silnik TTS czytający cyfry nie umie tego sam, więc formy godzinowe
+# liczy kod -- wiersz tts mówi godzinę słownie i nie potrzebuje żadnej instrukcji, a wiersz
+# ai dostaje gotowe słowa zamiast gramatycznego wykładu. Mały model nie musi odmieniać cyfr,
+# więc prompt jest krótki i tani.
 #
 # Zasada sformułowań: komunikat nigdy nie mówi "świt cywilny" / "zmierzch cywilny" -- to
 # terminologia pomiarowa, nie język domowy. Wiersze mówią, co robi światło, podają godzinę i
@@ -18,9 +30,9 @@
 # kluczom rules[].sentence z etc/automation/tts-twilight.yaml.
 
 sundawn:
-  tts: 'Dzień dobry. Wschód słońca, {% time %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
-  ai: 'Nie używaj narzędzi -- oprzyj wypowiedź wyłącznie na podanych informacjach. Jest kalendarzowy świt tego dnia: wschód słońca o {% time %}. Powiedz krótko i ciepło, własnymi słowami, że jest wschód słońca, że będzie coraz jaśniej i że to dzisiejszy kalendarzowy świt. Nigdy nie mów "świt cywilny".'
+  tts: 'Dzień dobry. Wschód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Jest kalendarzowy świt tego dnia: wschód słońca, {% time_words %} {% time_of_day %}. Powiedz krótko i ciepło, własnymi słowami, że jest wschód słońca, że będzie coraz jaśniej i że to dzisiejszy kalendarzowy świt. Godziny nie zapisuj cyframi. Nigdy nie mów "świt cywilny".'
 
 sundusk:
-  tts: 'Zachód słońca, {% time %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
-  ai: 'Nie używaj narzędzi -- oprzyj wypowiedź wyłącznie na podanych informacjach. Jest kalendarzowy zmierzch tego dnia: zachód słońca o {% time %}. Powiedz krótko, własnymi słowami, że jest po zachodzie słońca, że będzie coraz ciemniej i że to dzisiejszy kalendarzowy zmierzch. Nigdy nie mów "zmierzch cywilny".'
+  tts: 'Zachód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Jest kalendarzowy zmierzch tego dnia: zachód słońca, {% time_words %} {% time_of_day %}. Powiedz krótko, własnymi słowami, że jest po zachodzie słońca, że będzie coraz ciemniej i że to dzisiejszy kalendarzowy zmierzch. Godziny nie zapisuj cyframi. Nigdy nie mów "zmierzch cywilny".'

@@ -130,6 +130,7 @@ const testScripts = [
   'test-weatherman-video-suppression.js',
   'test-weatherman-proverb.js',
   'test-date-helper.js',
+  'test-polish-words.js',
   'test-random-line.js',
   'test-tts-options-passthrough.js',
   'test-tts-profiles.js',

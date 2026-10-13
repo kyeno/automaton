@@ -7,11 +7,12 @@
  * malformed-rule warnings, the mutual exclusivity of the two sun gates, dawn/dusk firing inside
  * the announce grace window (before / at / after the instant, stale events rejected), one
  * announcement per event per day with independent dawn and dusk markers, Redis-down fail-open,
- * per-rule intro framing reaching both the direct-TTS payload and the AI pipeline, use_ai happy
- * path plus empty-reply / thrown-error / AI-down fallbacks without double-speak, silence_between
- * suppression with force bypass, forced runs not consuming the daily slot, manual runs previewing
- * the next upcoming event without consuming it, missing coordinates staying silent, and the
- * minute-anchored timer arming an interval only after its first boundary tick.
+ * per-rule intro framing reaching both the direct-TTS payload and the AI pipeline, the runtime
+ * placeholders interpolated from the event instant (clock, clock parts, localized day-period word),
+ * use_ai happy path plus empty-reply / thrown-error / AI-down fallbacks without double-speak,
+ * silence_between suppression with force bypass, forced runs not consuming the daily slot, manual
+ * runs previewing the next upcoming event without consuming it, missing coordinates staying silent,
+ * and the minute-anchored timer arming an interval only after its first boundary tick.
  *
  * Expected speech is derived from the ACTIVE locale's twilight bundle at runtime, so the same
  * assertions hold under pl_PL or en_US. Solar instants are stubbed to fixed local times, Date is
@@ -71,6 +72,9 @@ const DAWN_CLOCK = '05:40'
 const DUSK_CLOCK = '18:20'
 
 const localeDir = I18nLoader.getLocale()
+/** The shipped pl_PL bundle speaks the clock in declined words; every other locale keeps
+ * the digit clock (the generator gate in lib/date returns null for them). */
+const isPolish = String(localeDir).toLowerCase().startsWith('pl')
 const bundlePath = resolve(ROOT, 'etc', 'i18n', localeDir, 'twilight.yaml')
 const bundle = yamlParse(fs.readFileSync(bundlePath, 'utf8'))
 console.log(`\n(using ${localeDir} twilight bundle)\n`)
@@ -89,6 +93,24 @@ function expectedText(section, channel, tokens) {
     assert(typeof tpl === 'string' && tpl.trim() !== '', `${section}.${channel} exists in active bundle`)
     return String(tpl).replace(/\{%\s*([a-z_]+)\s*%}/g, (_m, key) => tokens[key])
 }
+
+/** Test-side mirror of the automation's token map for one event instant: the clock string, the
+ * locale's clock parts (12-hour when the locale asks for it) and the localized day-period word,
+ * all derived from the EVENT instant through lib/date -- never from the running clock. */
+function eventTokens(hour, minute, clock) {
+    const when = new Date(2026, 7, 15, hour, minute, 0, 0)
+    const period = temporal.getCurrentTimePeriod(when)
+    const words = temporal.getPeriodWords()
+    return {
+        time: clock,
+        time_words: temporal.getClockWords(when) || clock,
+        hours: String(I18nLoader.is12HourFormat() ? ((hour + 11) % 12) + 1 : hour),
+        minutes: String(minute),
+        time_of_day: (period && (words[period] || period)) || ''
+    }
+}
+const DAWN_TOKENS = eventTokens(DAWN_HOUR, DAWN_MINUTE, DAWN_CLOCK)
+const DUSK_TOKENS = eventTokens(DUSK_HOUR, DUSK_MINUTE, DUSK_CLOCK)
 
 // Solar stub: fixed civil dawn/dusk on the stubbed calendar day; flippable to "no geo".
 const solarProto = Object.getPrototypeOf(solar)
@@ -217,10 +239,23 @@ try {
     for (const section of ['sundawn', 'sundusk']) {
         assert(typeof bundle[section]?.tts === 'string' && bundle[section].tts.trim(), `${section}.tts present`)
         assert(typeof bundle[section]?.ai === 'string' && bundle[section].ai.trim(), `${section}.ai present`)
-        assert(bundle[section].tts.includes('{% time %}'), `${section}.tts carries the {% time %} placeholder`)
+        assert(bundle[section].tts.includes(isPolish ? '{% time_words %}' : '{% time %}'), `${section}.tts speaks the clock the way its locale spells it`)
+        assert(bundle[section].tts.includes('{% time_of_day %}'), `${section}.tts carries the {% time_of_day %} placeholder`)
+        assert(bundle[section].ai.includes('{% time_of_day %}'), `${section}.ai carries the day-period word`)
+        assert(isPolish
+            ? bundle[section].ai.includes('{% time_words %}')
+            : (bundle[section].ai.includes('{% hours %}') && bundle[section].ai.includes('{% minutes %}')), `${section}.ai carries the clock in the shape its locale needs`)
         assert(ttsTemplate.profiles?.[section] !== undefined, `active tts.yaml defines the ${section} framing profile`)
     }
+    const dawnTokens = eventTokens(DAWN_HOUR, DAWN_MINUTE, DAWN_CLOCK)
+    const duskTokens = eventTokens(DUSK_HOUR, DUSK_MINUTE, DUSK_CLOCK)
+    assert(dawnTokens.time_of_day.trim() !== '' && duskTokens.time_of_day.trim() !== '', 'the active locale resolves a day-period word for dawn and dusk')
+    assert(dawnTokens.time_of_day !== duskTokens.time_of_day, 'dawn and dusk land in different day periods')
+    assert(dawnTokens.hours === '5' && duskTokens.hours === (I18nLoader.is12HourFormat() ? '6' : '18'), 'the clock parts follow the locale time format (18:20 is 6 PM in a 12-hour locale)')
+    assert(ttsTemplate.profiles?.sundawn?.intro === 'soumages-bird-sound-2-370343.mp3' && ttsTemplate.profiles?.sundawn?.intro_spacing === -1, 'the dawn profile frames the announcement with the bird intro, one second overlapped')
+    assert(ttsTemplate.profiles?.sundusk?.intro === 'freesound_community-cricket-chirp-101026.mp3' && ttsTemplate.profiles?.sundusk?.intro_spacing === 0, 'the dusk profile frames the announcement with the cricket intro, no gap')
     assert(Array.isArray(shippedConfig.rules) && shippedConfig.rules.length === 2, 'shipped config ships exactly two rules')
+    assert(shippedConfig.use_ai === true, 'shipped config routes announcements through the model, so the hour is spoken in words')
     assert(shippedConfig.rules[0]?.event === 'sundawn' && shippedConfig.rules[1]?.event === 'sundusk', 'shipped rules announce civil dawn then civil dusk')
     assert(shippedConfig.rules.every(r => r.once === true), 'shipped rules consume the once-per-day marker')
     assert(shippedConfig.rules.every(r => typeof r.tts_profile === 'string' && r.tts_profile.trim()), 'each shipped rule names its own TTS profile')
@@ -282,7 +317,10 @@ try {
             resetSeen()
             await twilight.execute({ trigger: 'timer' })
             assert(seen.tts.length === 1, 'dawn tick speaks exactly once')
-            assert(seen.tts[0]?.text === expectedText('sundawn', 'tts', { time: DAWN_CLOCK }), 'speech is the dawn line carrying the event clock time')
+            assert(seen.tts[0]?.text === expectedText('sundawn', 'tts', DAWN_TOKENS), 'speech is the dawn line carrying the event clock time')
+            assert(isPolish
+                ? seen.tts[0].text.includes('piąta czterdzieści') && !seen.tts[0].text.includes(DAWN_CLOCK)
+                : seen.tts[0].text.includes(DAWN_CLOCK), 'the plain TTS path speaks the dawn hour the way its locale spells it')
             assert(seen.tts[0]?.intro === 'dawn-intro.wav' && seen.tts[0]?.intro_spacing === -1.5, 'the rule\'s own framing rides the utterance')
             assert(markerStore.size === 1, 'the dawn announcement consumes its daily marker')
             assert(lastPrompt == null && seen.periodic.length === 0, 'no AI involvement on the direct-TTS path')
@@ -346,7 +384,7 @@ try {
             resetSeen()
             await twilight.execute({ trigger: 'timer' })
             assert(seen.tts.length === 1, 'dusk tick speaks exactly once')
-            assert(seen.tts[0]?.text === expectedText('sundusk', 'tts', { time: DUSK_CLOCK }), 'speech is the dusk line carrying the dusk clock time')
+            assert(seen.tts[0]?.text === expectedText('sundusk', 'tts', DUSK_TOKENS), 'speech is the dusk line carrying the dusk clock time')
             assert(seen.tts[0]?.intro === 'dusk-intro.wav' && seen.tts[0]?.intro_spacing === undefined, 'dusk carries dusk framing with no spacing override')
         } finally { restore() }
     }
@@ -386,9 +424,14 @@ try {
             clearMarkers()
             resetSeen()
             await twilight.execute({ trigger: 'timer' })
-            const dawnAi = expectedText('sundawn', 'ai', { time: DAWN_CLOCK })
+            const dawnAi = expectedText('sundawn', 'ai', DAWN_TOKENS)
             assert(seen.system.length === 1 && seen.system[0].text === dawnAi, 'the bundle ai instruction is echoed to the UI')
             assert(lastPrompt === dawnAi, 'the model receives the interpolated dawn instruction')
+            assert(lastPrompt.includes(DAWN_TOKENS.time_of_day), 'the dawn instruction names the day period the event falls in')
+            assert(isPolish
+                ? lastPrompt.includes(DAWN_TOKENS.time_words) && lastPrompt.includes('nie zapisuj cyframi')
+                : lastPrompt.includes(`${DAWN_TOKENS.hours} ${DAWN_TOKENS.minutes}`) && /in words/.test(lastPrompt), 'the instruction carries the clock in the shape its locale needs')
+            assert(!/sześć \d/.test(lastPrompt) && !/\bsix \d/.test(lastPrompt), 'the instruction never hands the model a digit-spelled hour')
             assert(seen.periodic.length === 1 && seen.periodic[0].text === 'Model dawn announcement', 'the model reply is surfaced for rendering')
             assert(seen.tts.length === 0, 'no direct TTS emission when the AI voiced the announcement')
             assert(markerStore.size === 1, 'the AI-path announcement consumes the daily marker too')
@@ -401,7 +444,7 @@ try {
             setAi({ available: true, reply: '' })
             clearMarkers()
             await twilight.execute({ trigger: 'timer' })
-            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundawn', 'tts', { time: DAWN_CLOCK }), 'an empty AI reply falls back to the plain TTS sentence')
+            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundawn', 'tts', DAWN_TOKENS), 'an empty AI reply falls back to the plain TTS sentence')
 
             resetSeen()
             setAi({ available: true, reply: '', failWith: 'provider down' })
@@ -430,7 +473,7 @@ try {
             assert(seen.tts.length === 0, 'dawn inside the silent window is suppressed')
             resetSeen()
             await twilight.execute({ trigger: 'timer', force: true })
-            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundawn', 'tts', { time: DAWN_CLOCK }), 'a forced run bypasses the silent period and speaks')
+            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundawn', 'tts', DAWN_TOKENS), 'a forced run bypasses the silent period and speaks')
             assert(markerStore.size === 0, 'a forced run does not consume the daily marker')
         } finally { restore() }
     }
@@ -444,7 +487,7 @@ try {
             clearMarkers()
             resetSeen()
             await twilight.execute({ trigger: 'manual' })
-            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundusk', 'tts', { time: DUSK_CLOCK }), 'a mid-day manual run previews the dusk event still ahead')
+            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundusk', 'tts', DUSK_TOKENS), 'a mid-day manual run previews the dusk event still ahead')
             assert(markerStore.size === 0, 'the preview leaves the daily marker untouched')
         } finally { restore() }
     }
@@ -454,7 +497,9 @@ try {
             clearMarkers()
             resetSeen()
             await twilight.execute({ trigger: 'manual' })
-            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundawn', 'tts', { time: DAWN_CLOCK }), 'a pre-dawn manual run previews the dawn event still ahead')
+            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundawn', 'tts', DAWN_TOKENS), 'a pre-dawn manual run previews the dawn event still ahead')
+            const nightWord = temporal.getPeriodWords()[temporal.getCurrentTimePeriod(new Date(2026, 7, 15, 3, 0))] || ''
+            assert(seen.tts[0].text.includes(DAWN_TOKENS.time_of_day) && !seen.tts[0].text.includes(nightWord), 'the previewed dawn speaks the dawn day-period word, not the period of the 03:00 clock')
         } finally { restore() }
     }
     {
@@ -463,7 +508,7 @@ try {
             clearMarkers()
             resetSeen()
             await twilight.execute({ trigger: 'manual' })
-            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundusk', 'tts', { time: DUSK_CLOCK }), 'after both events a manual run previews the most recent one')
+            assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('sundusk', 'tts', DUSK_TOKENS), 'after both events a manual run previews the most recent one')
         } finally { restore() }
     }
 

@@ -79,6 +79,12 @@ function periodWord(now) {
     return (period && temporal.getPeriodWords()[period]) || period || ''
 }
 
+/** time_words token exactly as buildTimeSentence() computes it: the declined spoken clock
+ * where the locale's language can generate it, the digit clock everywhere else. */
+function timeWordsToken(now) {
+    return temporal.getClockWords(now) || temporal.formatClockTime(now)
+}
+
 // ---------------------------------------------------------------------------
 // A. generic frame
 // ---------------------------------------------------------------------------
@@ -88,11 +94,16 @@ console.log('\n── buildTimeSentence(): default frame ──\n')
     assert(temporal.getCurrentTimePeriod(now) === 'evening', 'sanity: 21:00 in August is evening')
     const out = wm.buildTimeSentence(now)
     let expected = String(bundle.time_sentence.default)
+        .replace('{% time_words %}', timeWordsToken(now))
         .replace('{% hours %}', hoursToken(now))
         .replace('{% minutes %}', '32')
         .replace('{% time_of_day %}', periodWord(now))
     assert(out === expected, `default frame renders clock parts → "${out}"`)
     assert(!out.includes('{%'), 'no unresolved placeholders leak into output')
+    if (String(dir).toLowerCase().startsWith('pl')) {
+        assert(out.includes(timeWordsToken(now)), `pl frame speaks the clock in declined words ("${timeWordsToken(now)}")`)
+        assert(!/\d/.test(out), 'the Polish clock sentence carries no digits for TTS to decline')
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +115,7 @@ console.log('\n── buildTimeSentence(): exact hour ──\n')
     assert(temporal.getCurrentTimePeriod(now) === 'morning', 'sanity: 09:00 in August is morning')
     const out = wm.buildTimeSentence(now)
     let expected = String(bundle.time_sentence.exact_hour)
+        .replace('{% time_words %}', timeWordsToken(now))
         .replace('{% hours %}', hoursToken(now))
         .replace('{% time_of_day %}', periodWord(now))
     assert(out === expected, `exact-hour template selected at :00 → "${out}"`)
@@ -125,6 +137,7 @@ console.log('\n── buildTimeSentence(): midnight / noon ambiguity ──\n')
         assert(hoursToken(midnight) === '0', '24h format keeps midnight as hour 0')
     }
     let expectedMid = String(bundle.time_sentence.exact_hour)
+        .replace('{% time_words %}', timeWordsToken(midnight))
         .replace('{% hours %}', hoursToken(midnight))
         .replace('{% time_of_day %}', periodWord(midnight))
     const outMid = wm.buildTimeSentence(midnight)
@@ -170,6 +183,7 @@ console.log('\n── buildTimeSentence(): degradation & fail-open ──\n')
     assert(wm.buildTimeSentence(D(9, 45), withHalf) === 'DEF', ':45 without quarter_to stays on default')
     // ...but shipped bundles keep the generic frame (no translations yet).
     let expectedShipped = String(bundle.time_sentence.default)
+        .replace('{% time_words %}', timeWordsToken(D(9, 30)))
         .replace('{% hours %}', hoursToken(D(9, 30)))
         .replace('{% minutes %}', '30')
         .replace('{% time_of_day %}', periodWord(D(9, 30)))
