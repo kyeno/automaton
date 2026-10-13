@@ -8,6 +8,9 @@
  *   B) TTS service side -- a local HTTP stand-in captures the actual POST bodies;
  *      events emitted with intro/outro/intro_spacing must carry them verbatim while
  *      plain { text } events keep the clean request shape.
+ *   C) Missing-jingle resilience -- a stand-in that answers the tts-server's real
+ *      "intro file not found" HTTP 400 must end up with the same text spoken plain,
+ *      retried once, and with no retry when there is no framing to drop.
  *
  * No Redis/MQTT/AI needed; the only network traffic is loopback to our own stub server.
  *
@@ -107,14 +110,27 @@ assert(
 console.log('\n\u2500\u2500 TtsService request body passthrough \u2500\u2500\n')
 
 const received = []
+//  Two failure modes the real tts-server has, flipped per section: `rejectFraming` refuses any
+//  request that carries a framing jingle -- what happens when the intro file is missing, so the
+//  service must retry the utterance plain; `rejectAlways` refuses everything, an unrelated
+//  server-side failure the service must report instead of retrying.
+let rejectFraming = false
+let rejectAlways = false
 const server = http.createServer((req, res) => {
     let body = ''
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
+        let payload = null
         try {
-            received.push(JSON.parse(body))
+            payload = JSON.parse(body)
         } catch (_) {
-            received.push(null)   // unparseable body -> assertions below fail loudly
+            payload = null   // unparseable body -> assertions below fail loudly
+        }
+        received.push(payload)
+        if (rejectAlways || (rejectFraming && (payload?.intro || payload?.outro))) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'BadRequest', detail: `"intro" file '${payload?.intro ?? 'unknown'}' not found in /home/ai/tts-server/sounds/` }))
+            return
         }
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end('{}')
@@ -154,6 +170,41 @@ try {
     } else {
         for (const label of ['jingle fields', 'plain shape']) assert(false, `skipped: ${label}`)
     }
+} finally {
+    TtsService.cleanup()
+}
+
+// ---------------------------------------------------------------------------
+// C. Missing jingle -- the server rejects the whole request, service retries plain
+// ---------------------------------------------------------------------------
+console.log('\n\u2500\u2500 Missing jingle falls back to plain speech \u2500\u2500\n')
+
+try {
+    //  Section B's cleanup() disarms the service, so re-arm it against the same (still open)
+    //  endpoint before exercising the rejection path.
+    await TtsService.refreshConfig()
+    assert(TtsService.isEnabled(), 'service re-armed after cleanup')
+
+    rejectFraming = true
+    received.length = 0
+
+    const spoke = await TtsService.speak('Zachód słońca, szósta dwanaście wieczorem', { intro: 'missing-cricket.mp3', intro_spacing: 0 })
+    assert(spoke === true, 'utterance whose jingle is missing still gets spoken')
+    assert(received.length === 2, 'exactly one framing retry, no retry storm')
+    assert(received[0]?.intro === 'missing-cricket.mp3', 'first attempt carried the framing')
+    assert(
+        received[1]?.intro === undefined && received[1]?.outro === undefined && received[1]?.intro_spacing === undefined,
+        'retry drops every framing field'
+    )
+    assert(received[1]?.text === 'Zachód słońca, szósta dwanaście wieczorem', 'retry keeps the text verbatim')
+
+    //  A rejection that is not about framing must not be retried -- there is nothing left to drop.
+    rejectFraming = false
+    rejectAlways  = true
+    received.length = 0
+    const failed = await TtsService.speak('Plain utterance')
+    assert(failed === false, 'plain request rejected for another reason reports failure')
+    assert(received.length === 1, 'no framing retry when there is no framing to drop')
 } finally {
     TtsService.cleanup()
     await new Promise(resolve => server.close(resolve))

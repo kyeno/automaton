@@ -19,16 +19,17 @@
 #
 # Wording rule: the spoken announcement never says "civil dawn" / "civil dusk" -- that is
 # survey language, not what anyone says at home. The lines say what the light is doing, name
-# the hour, and call the event the calendar sundawn / sundusk of the day; the ai lines carry
-# those same facts to the model and repeat the ban, so an improvised announcement stays plain.
+# the hour, and call the event the calendar sundawn / sundusk of the day; the ai lines hand the
+# model those same facts in the same order, so an improvised announcement stays plain and always
+# says the hour out loud.
 #
 # Template -- copy to twilight.yaml and customize the sentences. Section names must match the
 # rules[].sentence keys of etc/automation/tts-twilight.yaml.
 
 sundawn:
   tts: "Good morning. It's sunrise now, {% time %} {% time_of_day %} -- the calendar sundawn of today. It's gonna get bright soon."
-  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundawn of today: sunrise at {% time %}, that is {% hours %} {% minutes %} {% time_of_day %}. Say the time in words, never digits: {% hours %} {% minutes %} {% time_of_day %} is read as the hour in words, then the minutes, then the day period. Say briefly and warmly, in your own words, that it's sunrise now, that it's gonna get bright soon, and that this is today's sundawn. Never say 'civil dawn'."
+  ai: "Say in your own words that dawn has come, that it is {% hours %} {% minutes %} {% time_of_day %}, that the sun has just risen, that it's gonna get bright soon, and that you will start the daytime home automations shortly. Say the hour in words, never digits. Do not use tools -- base your announcement only on the information given."
 
 sundusk:
-  tts: "It's past sunset, {% time %} {% time_of_day %} -- the calendar sundusk of today. It's gonna darken soon."
-  ai: "Do not use tools -- base your announcement only on the information given. It is the calendar sundusk of today: sunset at {% time %}, that is {% hours %} {% minutes %} {% time_of_day %}. Say the time in words, never digits: {% hours %} {% minutes %} {% time_of_day %} is read as the hour in words, then the minutes, then the day period. Say briefly, in your own words, that it's past sunset, that it's gonna darken soon, and that this is today's sundusk. Never say 'civil dusk'."
+  tts: "It's sunset, {% time %} {% time_of_day %} -- the calendar sundusk of today. It's gonna darken soon."
+  ai: "Say in your own words that dusk has come, that it is {% hours %} {% minutes %} {% time_of_day %}, that the sun has just set, that it's gonna darken soon, and that you will start the evening home automations shortly. Say the hour in words, never digits. Do not use tools -- base your announcement only on the information given."

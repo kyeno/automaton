@@ -30,6 +30,9 @@ const DEFAULT_LOCALE = 'pl_PL'
 /** HTTP request timeout in milliseconds. */
 const REQUEST_TIMEOUT_MS = 5000
 
+/** Cap on the response body kept for logging -- a rejection reason is a short JSON line. */
+const RESPONSE_BODY_LIMIT = 400
+
 /** Event channel this service subscribes to. */
 const SPEAK_CHANNEL = 'tts:speak'
 
@@ -162,7 +165,24 @@ class STtsService {
         if (!this.#enabled || !this.#template) return false
 
         const payload = this.#buildPayload(text, opts)
-        return this.#post(payload)
+        let result = await this.#post(payload)
+        if (result.ok) return true
+
+        //  A jingle the server does not have makes it reject the WHOLE request, which would
+        //  silence the announcement itself. Drop the framing and say the words plainly -- the
+        //  sentence matters more than the tune, and the warning below names the missing file.
+        if (payload.intro || payload.outro) {
+            LoggerService.warn(
+                `TTS: request rejected (${result.detail || `HTTP ${result.status}`}) -- retrying without framing`,
+                'TtsService'
+            )
+            delete payload.intro
+            delete payload.outro
+            delete payload.intro_spacing
+            result = await this.#post(payload)
+        }
+
+        return result.ok
     }
 
     //  -- Private Helpers --------------------------------------------------
@@ -304,7 +324,8 @@ class STtsService {
 
     /** Send a POST request to the TTS API endpoint.
      * @param {Object} payload - The JSON body to send.
-     * @returns {Promise<boolean>} True if the request completed without error.
+     * @returns {Promise<{ok:boolean, status:number, detail:string}>} ok is true when the server
+     *          accepted the request; detail carries the server's own rejection reason.
      * @private */
     #post(payload) {
         return new Promise((resolve) => {
@@ -327,38 +348,64 @@ class STtsService {
                 }
 
                 const req = transport.request(options, (res) => {
-                    //  Consume response data to free up memory.
-                    res.resume()
+                    //  Keep a bounded slice of the body -- on rejection it names the reason.
+                    let raw = ''
+                    res.setEncoding('utf8')
+                    res.on('data', (chunk) => {
+                        if (raw.length < RESPONSE_BODY_LIMIT) {
+                            raw += chunk.slice(0, RESPONSE_BODY_LIMIT - raw.length)
+                        }
+                    })
                     res.on('end', () => {
-                        const ok = res.statusCode >= 200 && res.statusCode < 300
+                        const ok     = res.statusCode >= 200 && res.statusCode < 300
+                        const detail = this.#extractDetail(raw)
                         if (!ok) {
                             LoggerService.warn(
-                                `TTS API returned HTTP ${res.statusCode}`,
+                                `TTS API returned HTTP ${res.statusCode}${detail ? ` -- ${detail}` : ''}`,
                                 'TtsService'
                             )
                         }
-                        resolve(ok)
+                        resolve({ ok, status: res.statusCode, detail })
                     })
                 })
 
                 req.on('error', (err) => {
                     LoggerService.error(`TTS request error: ${err.message}`, 'TtsService')
-                    resolve(false)
+                    resolve({ ok: false, status: 0, detail: err.message })
                 })
 
                 req.on('timeout', () => {
                     req.destroy()
                     LoggerService.error('TTS request timed out', 'TtsService')
-                    resolve(false)
+                    resolve({ ok: false, status: 0, detail: 'request timed out' })
                 })
 
                 req.write(body)
                 req.end()
             } catch (error) {
                 LoggerService.error(`TTS POST failed: ${error.message}`, 'TtsService')
-                resolve(false)
+                resolve({ ok: false, status: 0, detail: error.message })
             }
         })
+    }
+
+    /** Pull the server's own explanation out of a response body.
+     * @param {string} raw - Raw response body, possibly empty and possibly JSON.
+     * @returns {string} Short human-readable reason; '' when the body says nothing.
+     * @private */
+    #extractDetail(raw) {
+        const text = String(raw ?? '').trim()
+        if (!text) return ''
+
+        try {
+            const data   = JSON.parse(text)
+            const reason = data?.detail ?? data?.error ?? data?.message
+            if (typeof reason === 'string' && reason.trim()) return reason.trim()
+        } catch (_) {
+            //  Not JSON -- the plain body is the best explanation available.
+        }
+
+        return text
     }
 
     /** Gracefully unsubscribe from EventBus during shutdown. */

@@ -24,15 +24,16 @@
 # Zasada sformułowań: komunikat nigdy nie mówi "świt cywilny" / "zmierzch cywilny" -- to
 # terminologia pomiarowa, nie język domowy. Wiersze mówią, co robi światło, podają godzinę i
 # nazywają zdarzenie kalendarzowym świtem / zmierzchem danego dnia; wiersze ai przekazują te
-# same fakty modelowi i powtarzają zakaz, żeby improwizowany komunikat pozostał zwyczajny.
+# same fakty modelowi w tej samej kolejności, więc improwizowany komunikat pozostaje zwyczajny
+# i zawsze wymawia godzinę.
 #
 # Szablon -- skopiuj do twilight.yaml i dostosuj zdania. Nazwy sekcji muszą odpowiadać
 # kluczom rules[].sentence z etc/automation/tts-twilight.yaml.
 
 sundawn:
   tts: 'Dzień dobry. Wschód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
-  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Jest kalendarzowy świt tego dnia: wschód słońca, {% time_words %} {% time_of_day %}. Powiedz krótko i ciepło, własnymi słowami, że jest wschód słońca, że będzie coraz jaśniej i że to dzisiejszy kalendarzowy świt. Godziny nie zapisuj cyframi. Nigdy nie mów "świt cywilny".'
+  ai: 'Powiedz własnymi słowami, że nastał świt, jest {% time_words %} {% time_of_day %}, słońce właśnie wzeszło, że będzie coraz jaśniej i że lada moment włączysz dzienne automatyki domowe. Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach.'
 
 sundusk:
   tts: 'Zachód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
-  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Jest kalendarzowy zmierzch tego dnia: zachód słońca, {% time_words %} {% time_of_day %}. Powiedz krótko, własnymi słowami, że jest po zachodzie słońca, że będzie coraz ciemniej i że to dzisiejszy kalendarzowy zmierzch. Godziny nie zapisuj cyframi. Nigdy nie mów "zmierzch cywilny".'
+  ai: 'Powiedz własnymi słowami, że nastał zmierzch, jest {% time_words %} {% time_of_day %}, słońce właśnie zaszło, że będzie coraz ciemniej i że lada moment włączysz wieczorne automatyki domowe. Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach.'

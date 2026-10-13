@@ -37,6 +37,7 @@ tts_options:                # explicit framing; wins over the profile key by key
 - **Precedence:** the named profile forms the base, an explicit `tts_options` block overrides it field by field, and an empty/absent shape yields no framing at all -- the request keeps the plain `{ model, text, output_endpoint }` body.
 - **Malformed entries never break speech.** A wrong type or an empty filename is dropped with a warning; an unknown profile name warns once per name (not once per utterance) and contributes nothing.
 - **Both output paths are covered.** On the AI path the framing travels through `AiAssistant.processMessage(..., { tts })` so the model's own spoken reply carries it; on direct TTS and on AI-failure fallback it is spread straight into the emission.
+- **A missing jingle costs the chime, not the announcement.** The tts-server validates `intro` / `outro` filenames and refuses the **whole** request when a file is absent, so `TtsService` retries the utterance once with `intro`, `outro` and `intro_spacing` dropped, and logs the server's own reason (`TTS API returned HTTP 400 -- "intro" file ... not found`). A rejection with no framing left to drop is reported as a failure and never retried.
 
 Speakers wired to the resolver:
 
