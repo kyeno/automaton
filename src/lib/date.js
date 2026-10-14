@@ -40,6 +40,15 @@ const SEASONS = {
 /** @type {Record<string, number>} */
 const CLOCK_WORD_HOURS = { midnight: 0, noon: 12 }
 
+//  Sun-event anchors accepted as `hour:` bounds -- a named sun instant shifted by a fixed offset.
+//  'predusk' is civil dusk 30 minutes ahead: the moment lamps are worth switching on, so a rule
+//  can say "dusk, a little before" instead of hard-coding a clock time that drifts by hours
+//  across the year. Like the sun shorthands they resolve against the real civil instants from
+//  lib/sun, so an unconfigured location leaves them unresolvable and the gate fails closed.
+/** Offset in hours from the sun instant each anchor hangs on (negative = earlier).
+ * @type {Record<string, number>} */
+const SUN_OFFSET_ANCHORS = Object.freeze({ predusk: -0.5 })
+
 //  Day-period partition (fixed round-clock boundaries)
 
 /** Fixed day-period partition of hours 0-23 -- identical every month of the year.
@@ -396,6 +405,25 @@ class STemporal {
     isClockWordBound(value) {
         const text = (typeof value === 'string') ? value.trim().toLowerCase() : null
         return (text !== null && CLOCK_WORD_HOURS[text] !== undefined)
+    }
+
+    /** Whether a clock-bound token names a sun-event anchor ('predusk') -- a real civil instant
+     *  shifted by a fixed offset. Such tokens need the sun context to resolve, exactly like
+     *  'sunrise'/'sunset', and must never be compared as raw strings.
+     * @param {number|string} value - Raw clock-bound token.
+     * @returns {boolean} True when the token is a recognised sun-event offset anchor. */
+    isSunAnchorBound(value) {
+        const text = (typeof value === 'string') ? value.trim().toLowerCase() : null
+        return (text !== null && SUN_OFFSET_ANCHORS[text] !== undefined)
+    }
+
+    /** Offset (in hours) a sun-event anchor token carries relative to the sun instant it hangs on.
+     * @param {number|string} value - Raw clock-bound token.
+     * @returns {number|null} Offset hours (negative = earlier), or null when the token is not a
+     *          sun-event anchor. */
+    sunAnchorOffsetHours(value) {
+        const text = (typeof value === 'string') ? value.trim().toLowerCase() : null
+        return (text !== null && SUN_OFFSET_ANCHORS[text] !== undefined) ? SUN_OFFSET_ANCHORS[text] : null
     }
 
     /** Render a fractional hour as a zero-padded "HH:MM" clock string.

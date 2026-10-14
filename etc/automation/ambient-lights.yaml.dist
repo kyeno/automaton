@@ -42,12 +42,13 @@ rules:
       Hallway_Cupboard_Outlet: OFF    # Safety net: the cupboard lamp never survives into daylight
       Living_Room_Switch: OFF
 
-  # Dark-window rule: fires once per window when it gets dark enough. Two independent windows,
-  # each with its own `once:` slot (the budget splitter reads `time_of_day` gates at any depth):
-  # an unguarded `evening` arm, and an `afternoon` arm gated on civil dusk
-  # (`hour: { gte: sunset }`) because in winter dusk lands inside `afternoon`. The sun gate is
-  # what keeps a gloomy mid-afternoon (illuminance below threshold) from lighting the lamps
-  # hours before dusk -- the periods are fixed clock bands with no sun awareness of their own.
+  # Dark-window rule: fires once per window when it gets dark enough, and never earlier than
+  # `predusk` -- civil dusk 30 minutes ahead (`sunset` resolves to civil dusk in Automaton).
+  # Both windows are top-level, so each gets its own `once:` slot (the budget splitter reads
+  # `time_of_day` gates at any depth) and the sun floor covers BOTH: `afternoon` because winter
+  # dusk lands inside it, `evening` because the fixed clock band starts at 18:00 while June dusk
+  # is 21:00. The floor is what keeps a gloomy mid-afternoon from lighting the lamps hours before
+  # dusk -- the periods are fixed clock bands with no sun awareness of their own.
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
     # Re-assert at this one daily transition: paired lamps must flip together even when a cached
@@ -55,12 +56,9 @@ rules:
     # world, and no-op suppression would then desync the pair (doc/BUGS.md issue 3).
     reassert_state: true
     conditions:
+      time_of_day: [afternoon, evening]
+      hour: { gte: predusk }   # civil dusk minus 30 min; the floor for every window
       illuminance: { lt: 900 }
-      any_of:
-        - time_of_day: [evening]
-        - all_of:
-            - time_of_day: [afternoon]
-            - hour: { gte: sunset }   # winter dusk lands inside `afternoon`
     targets:
       Kitchen_Outlet: ON
       Hallway_Outlet: ON

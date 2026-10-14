@@ -375,6 +375,7 @@ The optional `hour:` condition gates rules against the **actual local clock hour
 | `hour: { gt: 22 }` / `{ gte: 23 }` | After / at-or-after that hour |
 | `hour: { lt: 5 }` / `{ lte: 2 }` | Before / up-to-and-including that hour |
 | `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | At/after real first light, before/at real end of day (also `sundawn`/`sundusk`) |
+| `hour: { gte: 'predusk' }` | At/after **civil dusk minus 30 minutes** -- a dusk-anchored offset (see below) |
 | `hour: { gte: 1230 }` / `{ lte: '12:30' }` | At/after 12:30, before/at 12:30 -- minute-precision clock bounds |
 
 Unlike `time_of_day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
@@ -392,6 +393,8 @@ Values in `0..23` stay plain hours, so `hour: { gte: 23 }` keeps its existing me
 **Sun tokens are civil twilight.** `sundawn`/`sunrise` and `sundusk`/`sunset` resolve to the *civil* twilight boundaries -- the sun 6° below the horizon, when the sky is effectively day -- not the geometric disc edge. At 52°N that is roughly 33 minutes earlier than sunrise in the morning and 34 minutes later than sunset in the evening, and the gap widens with latitude. This is deliberate: rules gated on "daylight" that read a street illuminance sensor must not fire in pre-dawn darkness, and civil twilight is the boundary that matches what the sensor reports. The geometric instants stay available in the automation context as `sunrise`/`sunset` for rules that genuinely want the disc edge.
 
 **Named clock anchors (`midnight`, `noon`).** A bound may name a fixed point on the axis instead of spelling out a number: `hour: { gte: 'midnight' }` and `hour: { gte: 'noon' }` resolve to `00:00` and `12:00`. They are accepted in any bound slot, case-insensitively and with surrounding whitespace ignored; an unrecognised word fails closed like any malformed bound.
+
+**Dusk-anchored offset (`predusk`).** A bound may also name a *sun event shifted by a fixed offset*: `hour: { gte: 'predusk' }` resolves to today's civil dusk **30 minutes ahead** -- the moment lamps are worth switching on, while the sky is still dimming, rather than at the very end of twilight. It is written for rules that mean "a little before dusk" and cannot afford a hard-coded clock time, which drifts by hours across the year. Like the sun tokens it hangs on, `predusk` is resolved from the real civil instants computed from `locale.geo_latitude`/`locale.geo_longitude`, so it inherits their civil-twilight meaning and **fails closed when no location is configured**. It is accepted in `hour:` bounds and as a candidate in the merged gates below. The offset is applied on the current calendar day, so at extreme latitudes where civil dusk lands just after midnight the floor sits below the axis start and a `gte` bound is trivially satisfied.
 
 **The hour axis starts at midnight and never wraps.** Bounds compare on one day's axis running `00:00 → 23:59`, so a bound pair cannot cross midnight: `hour: { gte: 22, lt: 6 }` is unsatisfiable and matches nothing, and a rule that means "the whole night" must be written as an explicit OR -- `any_of: [{ hour: { gte: sunset } }, { hour: { lt: sunrise } }]`. Two consequences are worth remembering:
 
@@ -415,6 +418,7 @@ Each candidate resolves to an absolute instant on the current day:
 |----------------|-------------|
 | `"sundusk"` / `"sunset"` | today's civil dusk (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
 | `"sundawn"` / `"sunrise"` | today's civil dawn |
+| `"predusk"` | today's civil dusk **minus 30 minutes** (a sun event with a fixed offset; fails closed without geo) |
 | `19` or `{ hour: 19 }` | today at 19:00 local |
 | `1230` / `'12:30'` | today at 12:30 local (minute-precision clock time, same spellings as `hour:` bounds) |
 | `'morning'` / `{ 'time_of_day': 'morning' }` | the start-of-day hour of that period (e.g. morning -> 05:00) |

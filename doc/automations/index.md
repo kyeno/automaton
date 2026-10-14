@@ -6,7 +6,7 @@ Automaton is at heart a **rule-engine framework**: it evaluates YAML-defined con
 
 ## Ambient Lights
 
-Manages ambient lighting across two daily windows: turns off leftover lights in the morning once natural light becomes sufficient, and switches on socket-powered lamps at dusk. Demonstrates asymmetric per-rule target sets and daily `once:` markers that let humans keep full control after each rule fires.
+Manages ambient lighting across two daily windows: turns off leftover lights in the morning once natural light becomes sufficient, and switches on socket-powered lamps from `predusk` — civil dusk 30 minutes ahead. Demonstrates asymmetric per-rule target sets and daily `once:` markers that let humans keep full control after each rule fires.
 
 → [Full documentation](./ambient-lights.md)
 

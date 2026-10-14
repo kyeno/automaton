@@ -5,7 +5,8 @@
  * fabricated sensor contexts against a self-contained rule set modeled on
  * ambient-lights.yaml.dist (no local configuration required):
  *   - bright morning turns off every listed device (sockets + wall switch)
- *   - the "Settled dusk" rule (afternoon/evening) turns on only the outlets
+ *   - the "Settled dusk" rule (afternoon/evening) turns on only the outlets, and never before
+ *     `predusk` (civil dusk minus 30 minutes) -- inert 45 min before dusk, live 15 min before it
  *   - still-bright evening does nothing
  *   - per-window once semantics: one slot per time window per calendar day
  *   - both shipped configs flag the settled-dusk rule with reassert_state so a stale cache can
@@ -107,6 +108,35 @@ function stubDate(monthIndex, day = 15, hour = 12) {
     global.Date = FakeDate
     return () => { global.Date = RealDate }
 }
+/**
+ * Stub global Date to an exact epoch instant. Used by the dusk scenarios: the settled-dusk rule
+ * is floored on `predusk` (civil dusk minus 30 minutes), so a scenario that exercises it has to
+ * pin "now" relative to that day's real dusk instead of running at whatever hour the suite does.
+ * @param {number} ms - Epoch milliseconds to pin the clock to.
+ * @returns {Function} Restore function returning the original Date
+ */
+function stubAtMs(ms) {
+    const RealDate = global.Date
+    class FakeDate extends RealDate {
+        constructor(...args) { if (args.length === 0) super(ms); else super(...args) }
+        static now() { return ms }
+    }
+    global.Date = FakeDate
+    return () => { global.Date = RealDate }
+}
+
+/**
+ * Epoch ms of an instant `offsetMs` past the civil dusk of the CURRENT real day -- the canonical
+ * "dusk has settled" clock. Offsets from the computed dusk (not wall times) keep the assertions
+ * deterministic at any latitude and in any season.
+ * @param {number} [offsetMs=900000] - Offset from civil dusk (negative = before dusk).
+ * @returns {number} Epoch milliseconds
+ */
+function duskInstant(offsetMs = 15 * 60_000) {
+    return solar.getSunTimes(new Date()).sundusk.getTime() + offsetMs
+}
+
+
 
 /**
  * Create a minimal device stub recording every received command.
@@ -171,21 +201,18 @@ writeFileSync(TEST_CONFIG_PATH, [
     '      Hallway_Cupboard_Outlet: OFF',
     '      Living_Room_Switch: OFF',
     '',
-    // Settled dusk: two independent windows -- an unguarded evening arm and an afternoon arm
-    // gated on civil dusk (`hour: { gte: sunset }`). Each keeps its own `once:` slot, and the
-    // sun gate keeps a gloomy mid-afternoon from lighting the lamps before dusk has settled.
+    // Settled dusk: both dusk windows at the top level, floored on `predusk` -- civil dusk 30
+    // minutes ahead. Each window keeps its own `once:` slot, and the single sun floor covers
+    // both, so a gloomy mid-afternoon can never light the lamps before dusk has settled.
     // reassert_state mirrors the shipped configs: paired lamps must flip together even when a
     // cached state is stale (an earlier unconfirmed command left it pre-command).
     "  - name: 'Settled dusk - turn on ambient lamps'",
     '    once: true',
     '    reassert_state: true',
     '    conditions:',
+    '      time_of_day: [afternoon, evening]',
+    "      hour: { gte: 'predusk' }",
     '      illuminance: { lt: 900 }',
-    '      any_of:',
-    '        - time_of_day: [evening]',
-    '        - all_of:',
-    '            - time_of_day: [afternoon]',
-    "            - hour: { gte: 'sunset' }",
     '    targets:',
     '      Kitchen_Outlet: ON',
     '      Hallway_Outlet: ON',
@@ -298,8 +325,13 @@ console.log('\n── Ambient lights execution ──\n')
 let devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
 for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
 
-// Settled dusk -> ON only for the two outlets; the wall switch stays untouched
-devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+// Settled dusk -> ON only for the two outlets; the wall switch stays untouched. The clock is
+// pinned just past that day's civil dusk: the rule is floored on `predusk`, so a scenario that
+// exercises it must sit above that floor whatever hour the suite happens to run at.
+{
+    const restoreDusk = stubAtMs(duskInstant())
+    try { devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' }) } finally { restoreDusk() }
+}
 for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
 for (const id of ALL_IDS.filter(id => !AMBIENT_ON_IDS.includes(id))) expectPayload(devices, id, null)
 
@@ -322,6 +354,40 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         for (const id of ALL_IDS) expectPayload(devices, id, null)
     } finally {
         restoreClock()
+        cacheProto.get = origGet
+        cacheProto.set = origSet
+    }
+}
+
+// The `predusk` floor in a winter afternoon (regression for the season gap): the floor is civil
+// dusk 30 minutes ahead, and it covers EVERY window the dusk rule lists -- `afternoon` included,
+// which is where winter dusk lands. Probe instants are offsets from that day's computed civil
+// dusk, so the assertions hold at any latitude: 45 minutes before dusk stays dark, 15 minutes
+// before it lights the lamps.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    cacheProto.get = async () => undefined   // no markers: only the gate decides
+    cacheProto.set = async () => true
+    // Read that day's civil dusk with the clock parked on the 15th of December, then probe
+    // relative to it. December dusk sits deep inside the `afternoon` window.
+    const readDecDusk = stubDate(11 /* December */, 15, 12)
+    const decDusk = solar.getSunTimes(new Date()).sundusk.getTime()
+    readDecDusk()
+    try {
+        const beforeFloor = stubAtMs(decDusk - 45 * 60_000)
+        try {
+            const devices = await runScenario({ illuminance: 50, timeOfDay: 'afternoon' })
+            for (const id of ALL_IDS) expectPayload(devices, id, null)
+        } finally { beforeFloor() }
+
+        const pastFloor = stubAtMs(decDusk - 15 * 60_000)
+        try {
+            const devices = await runScenario({ illuminance: 50, timeOfDay: 'afternoon' })
+            for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        } finally { pastFloor() }
+    } finally {
         cacheProto.get = origGet
         cacheProto.set = origSet
     }
@@ -411,8 +477,12 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
             `pre-dawn hand-offs consumed no budget (${JSON.stringify([...onceStore.keys()])})`)
 
         // The evening budget is untouched, so the dusk firing that the old merged rule lost
-        // now happens normally -- and dusk still leaves the wall switch to its own rules.
-        devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        // now happens normally -- and dusk still leaves the wall switch to its own rules. The
+        // clock moves to 19:00, past the rule's `predusk` floor, which 02:00 would never clear.
+        const restoreEvening = stubDate(9 /* October */, 15, 19)
+        try {
+            devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        } finally { restoreEvening() }
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
         for (const id of ALL_IDS.filter((i) => !AMBIENT_ON_IDS.includes(i))) expectPayload(devices, id, null)
     } finally {
@@ -434,6 +504,9 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     let onceStore = new Map()
     cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
     cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
+    // Pinned just past civil dusk: every tick here exercises the dusk rule, which is floored on
+    // `predusk` and would stay inert at an arbitrary wall-clock hour.
+    const restoreClock = stubAtMs(duskInstant())
     try {
         // Natural evening tick #1 -> dispatches and consumes today's EVENING slot.
         let devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
@@ -458,6 +531,7 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
         for (const id of ALL_IDS) expectPayload(devices, id, null)
     } finally {
+        restoreClock()
         cacheProto.get = origGet
         cacheProto.set = origSet
     }
@@ -563,24 +637,23 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
 
 // Post-dusk gate (regression for the 2026-10-10 incident): commit 6bea899 made `afternoon` a
 // bare top-level window in the settled-dusk rule, so a gloomy mid-afternoon below the lux
-// threshold lit the lamps hours before civil dusk. Both shipped configs must keep the two-arm
-// shape: an unguarded evening arm and an afternoon arm gated on `hour: { gte: sunset }`.
+// threshold lit the lamps hours before civil dusk. Both shipped configs must now carry a single
+// sun floor -- `hour: { gte: predusk }`, civil dusk 30 minutes ahead -- covering EVERY window the
+// rule lists, so no window can light the lamps before dusk has settled in any season.
 {
     const DUSK_RULE = 'Settled dusk - turn on ambient lamps'
     for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
         if (!existsSync(file)) continue
         const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
-        const conds = rules.find((r) => r.name === DUSK_RULE)?.conditions ?? {}
-        const arms = Array.isArray(conds.any_of) ? conds.any_of : []
-        assert(arms.length === 2 && JSON.stringify(arms[0]?.time_of_day) === JSON.stringify(['evening']),
-            `${file}: settled dusk keeps an unguarded evening arm`)
-        const afternoonArm = arms[1]?.all_of ?? []
-        assert(afternoonArm.some((g) => JSON.stringify(g.time_of_day) === JSON.stringify(['afternoon']))
-                && afternoonArm.some((g) => g.hour?.gte === 'sunset'),
-            `${file}: settled dusk gates the afternoon arm on civil dusk (hour >= sunset)`)
-        assert(conds.time_of_day === undefined && conds.hour === undefined,
-            `${file}: no flat top-level window/sun gate left behind`)
-        assert(rules.find((r) => r.name === DUSK_RULE)?.reassert_state === true,
+        const rule = rules.find((r) => r.name === DUSK_RULE) ?? {}
+        const conds = rule.conditions ?? {}
+        assert(JSON.stringify(conds.time_of_day) === JSON.stringify(['afternoon', 'evening']),
+            `${file}: settled dusk lists both dusk windows at the top level`)
+        assert(conds.hour?.gte === 'predusk',
+            `${file}: settled dusk floors every window on predusk (civil dusk minus 30 min)`)
+        assert(conds.any_of === undefined,
+            `${file}: no unguarded arm survives -- the sun floor covers every window`)
+        assert(rule.reassert_state === true,
             `${file}: settled dusk re-asserts state so a stale cache cannot desync paired lamps`)
     }
 }

@@ -61,6 +61,11 @@ const SCALAR_CONDITION_KEYS = Object.freeze(new Set([
     'all_of'
 ]))
 
+/** Sun-event tokens usable as an `hour:` bound and as a merged-gate candidate. Offset anchors
+ *  ('predusk') are declared in {@link lib/date SUN_OFFSET_ANCHORS} and hang off the dusk instant.
+ * @type {Readonly<Array<string>>} */
+const SUN_HOUR_TOKENS = Object.freeze(['sunrise', 'sundawn', 'sunset', 'sundusk'])
+
 /** Rule-miss explanations cost a few cache lookups per unmatched rule, so they run only
  * where TRACE logs are actually routed (mirrors the trace-file transport: off in production,
  * off when the stream was suppressed at startup with --no-trace). Evaluated lazily because
@@ -1119,8 +1124,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     #resolveGateInstant(spec, context) {
         if (typeof spec === 'string') {
             const normalized = spec.trim().toLowerCase()
-            if (normalized === 'sundusk' || normalized === 'sunset') return context.sundusk ?? null
-            if (normalized === 'sundawn' || normalized === 'sunrise') return context.sundawn ?? null
+            const sunInstantMs = this.#sunInstantMs(normalized, context)
+            if (sunInstantMs !== null) return sunInstantMs
             const startHour = temporal.getPeriodStartHour(normalized)
             return startHour !== null ? this.#todayAtHour(startHour) : null
         }
@@ -1138,12 +1143,34 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         return null
     }
 
-    /** Whether a value is one of the recognized sun-event shorthands usable as an `hour:` bound.
+    /** Whether a value is a sun-event bound token -- a real civil instant, or one shifted by a
+     *  fixed offset ('predusk' = civil dusk 30 minutes ahead).
      * @private
      * @param {*} value - Candidate bound value from an `hour:` condition object.
-     * @returns {boolean} True when the value is 'sunrise'/'sundawn', 'sunset' or 'sundusk'. */
+     * @returns {boolean} True when the value is 'sunrise'/'sundawn', 'sunset'/'sundusk' or 'predusk'. */
     #isSunShorthand(value) {
-        return typeof value === 'string' && ['sunrise', 'sundawn', 'sunset', 'sundusk'].includes(value.trim().toLowerCase())
+        if (typeof value !== 'string') return false
+        const normalized = value.trim().toLowerCase()
+        return SUN_HOUR_TOKENS.includes(normalized) || temporal.isSunAnchorBound(normalized)
+    }
+
+    /** Resolve a sun-event bound token to today's epoch-ms instant at the configured location.
+     *  'predusk' hangs 30 minutes ahead of civil dusk, so a rule can light lamps while the sky is
+     *  still dimming instead of at the very end of twilight.
+     * @private
+     * @param {string} token - Bound/candidate token as written in the rule.
+     * @param {{sundawn?: number|null, sundusk?: number|null}} context - Evaluation context carrying sun instants (epoch ms, or null).
+     * @returns {number|null} Epoch-ms instant, or null when the token is not a sun token, or when the
+     *          instant it hangs on is unresolvable (no geo configured). */
+    #sunInstantMs(token, context) {
+        if (typeof token !== 'string') return null
+        const normalized = token.trim().toLowerCase()
+        if (normalized === 'sunrise' || normalized === 'sundawn') return context.sundawn ?? null
+        if (normalized === 'sunset' || normalized === 'sundusk') return context.sundusk ?? null
+        const offsetHours = temporal.sunAnchorOffsetHours(normalized)
+        if (offsetHours === null) return null
+        const duskMs = context.sundusk ?? null
+        return (duskMs === null) ? null : duskMs + Math.round(offsetHours * 3_600_000)
     }
 
     /** Resolve a single `hour:` bound to a finite number on the hour axis.
@@ -1154,10 +1181,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @returns {number} Resolved numeric hour, or NaN when the value cannot be resolved. */
     #resolveHourValue(value, context, startOfTodayMs) {
         if (typeof value === 'string') {
-            const normalized = value.trim().toLowerCase()
-            let instantMs = null
-            if (normalized === 'sunrise' || normalized === 'sundawn') instantMs = context.sundawn ?? null
-            else if (normalized === 'sunset' || normalized === 'sundusk') instantMs = context.sundusk ?? null
+            const instantMs = this.#sunInstantMs(value, context)
             if (instantMs !== null) {
                 return Number.isFinite(instantMs) ? (instantMs - startOfTodayMs) / 3_600_000 : NaN
             }

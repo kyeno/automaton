@@ -316,6 +316,25 @@ console.log('')
     assert(evaluateRule({ hour: { gte: 1230 } }, { hour: 12 }) === false, 'evaluateRule: gte 1230 rejects hour 12')
     assert(evaluateRule({ hour: { lte: 1299 } }, { hour: 12 }) === false, 'evaluateRule: malformed NATO bound fails closed')
 
+    // Sun-event anchors ('predusk' = civil dusk minus 30 minutes) are sun-dependent: the static
+    // analyzer has no sun context, so it treats them as satisfied instead of comparing the swept
+    // hour against a raw string (which would fail every cell closed).
+    assert(evaluateRule({ hour: { gte: 'predusk' } }, { hour: 16 }) === true,
+        'evaluateRule: gte predusk treated as satisfied (sun-dependent bound)')
+    assert(evaluateRule({ hour: { gte: 'predusk', lt: 20 } }, { hour: 19 }) === true,
+        'evaluateRule: mixed predusk + numeric bound treated as satisfied statically')
+    // A sun-dependent `hour` condition is skipped WHOLE -- the numeric bounds alongside the sun
+    // token go with it, exactly as with 'sunrise'/'sunset' (see the mixed-bound case in
+    // test-sun-gate-condition.js): the analyzer has no sun context, so it cannot place the rule
+    // on the hour axis at all.
+    assert(evaluateRule({ hour: { gte: 'predusk', lt: 15 } }, { hour: 19 }) === true,
+        'evaluateRule: a sun-dependent hour condition is skipped whole, numeric bounds included')
+
+    // 'hour' stays reserved with a sun anchor in play -- never a sensor dimension.
+    const anchorKeys = collectSensorKeys([{ conditions: { hour: { gte: 'predusk' }, illuminance: { lte: 15 } } }])
+    assert(JSON.stringify(anchorKeys) === JSON.stringify(['illuminance']),
+        "collectSensorKeys excludes 'hour' with a predusk bound")
+
 
     // 'hour' is reserved -- never collected as a sensor dimension for scenario grids.
     const keys = collectSensorKeys([{ conditions: { hour: { gte: 23 }, illuminance: { lte: 15 } } }])

@@ -70,7 +70,7 @@ Running the static sweep (`/automation coverage <name> legacy`) against the ship
 
 **AmbientLightsAutomation** (`etc/automation/ambient-lights.yaml`) — overall cell coverage 49.4%
 
-- *Settled dusk* (`[evening]`, illuminance `< 900`) — reachable from **18:00**, resolving the "move evening to 6pm" TODO item; bright early-evening hours still get no ambient hand-off though, because h=15–17 was `evening` under the old January map and is now `afternoon` (measured gap vs legacy).
+- *Settled dusk* (`[afternoon, evening]`, `hour: { gte: predusk }`, illuminance `< 900`) — the sweep reports it reachable from **13:00**, but that is a static upper bound: a sun-token bound is treated as satisfied by the analyzer, and the real gate is `predusk` (civil dusk minus 30 minutes), so the lamps never light before it. Listing both periods is exactly what the "late-afternoon boundary" shift above demands (h=15–17 was `evening` under the old January map and is now `afternoon`), and the sun floor is what keeps a gloomy mid-afternoon dark.
 - *Bright morning cleanup* (`morning`, illuminance `>= 20`) — covers 05:00–10:59 (one hour wider than before); leftover-light handling between 11:00 and 17:59 depends solely on the bedroom-specific rule, which is the only one that fires there.
 - *Late-night restore* (`forced_only`, `[night]`) — previously reachable during winter afternoons/evenings via delegated runs; now strictly 00:00–04:59.
 

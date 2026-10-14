@@ -203,11 +203,58 @@ console.log('')
 }
 
 console.log('')
+console.log('-- predusk resolves to civil dusk minus 30 minutes --')
+console.log('')
+{
+    const HM = (h, m) => new Date(REF_Y, REF_M, REF_D, h, m, 0, 0).getTime()
+    const duskMs = HM(20, 18)                       // civil dusk 20:18
+    const preduskMs = duskMs - 30 * 60_000          // anchor: 19:48
+
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: duskMs }, HM(19, 47)) === false,
+        'gte predusk: NOT fired one minute before the anchor (19:47 < 19:48)')
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: duskMs }, preduskMs) === true,
+        'gte predusk: fired exactly AT civil dusk minus 30 minutes (>= semantics)')
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: duskMs }, HM(19, 49)) === true,
+        'gte predusk: fired a minute after the anchor')
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: duskMs }, HM(20, 18)) === true,
+        'gte predusk: fired at civil dusk itself (the anchor leads dusk by 30 minutes)')
+    assert(await match({ hour: { lte: 'predusk' } }, { sundusk: duskMs }, HM(19, 47)) === true,
+        'lte predusk: fired before the anchor')
+    assert(await match({ hour: { lte: 'predusk' } }, { sundusk: duskMs }, HM(19, 49)) === false,
+        'lte predusk: NOT fired after the anchor')
+
+    // The anchor hangs on the civil-dusk instant carried in context -- the same instant 'sunset'
+    // resolves to, not a wall clock and not geometric sunset.
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: HM(18, 0) }, HM(17, 29)) === false,
+        'gte predusk follows the dusk instant in context (17:29 < 17:30 for an 18:00 dusk)')
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: HM(18, 0) }, HM(17, 31)) === true,
+        'gte predusk fires past that anchor (17:31 >= 17:30)')
+
+    // No sun instant (no geo configured) -> the anchor is unresolvable and the gate fails closed.
+    assert(await match({ hour: { gte: 'predusk' } }, {}, H(21)) === false,
+        'gte predusk with no dusk instant in context -> fails closed')
+    assert(await match({ hour: { gte: 'predusk' } }, { sundusk: null }, H(21)) === false,
+        'gte predusk with a null dusk instant -> fails closed')
+
+    // Merged gates accept the anchor as a candidate, next to a fixed clock bound.
+    assert(await match({ after_latest_of: ['predusk', { hour: 19 }] }, { sundusk: duskMs }, HM(19, 47)) === false,
+        'after_latest_of predusk + 19h: inert before the later candidate (19:48)')
+    assert(await match({ after_latest_of: ['predusk', { hour: 19 }] }, { sundusk: duskMs }, HM(19, 49)) === true,
+        'after_latest_of predusk + 19h: fires once the dusk-anchored candidate has passed')
+    assert(await match({ after_earliest_of: ['predusk', { hour: 22 }] }, { sundusk: duskMs }, HM(19, 49)) === true,
+        'after_earliest_of predusk + 22h: the earlier (dusk-anchored) candidate opens the gate')
+}
+
+console.log('')
 console.log('-- static analyzer treats sun-shorthand hour bounds as satisfied --')
 console.log('')
 {
     assert(evaluateRule({ hour: { gte: 'sunrise' } }, {}) === true,
         'evaluateRule treats a lone sun-shorthand hour bound as satisfied (static analysis)')
+    assert(evaluateRule({ hour: { gte: 'predusk' } }, {}) === true,
+        'evaluateRule treats a lone predusk hour bound as satisfied (static analysis)')
+    assert(evaluateRule({ hour: { gte: 'predusk' } }, { hour: 16 }) === true,
+        'evaluateRule never compares a predusk bound against the swept hour as a string')
     assert(evaluateRule({ hour: { gte: 'sunset', lt: 20 } }, { hour: 19 }) === true,
         'mixed sun + numeric hour bound treated as satisfied statically')
     assert(evaluateRule({ hour: { gte: 6 } }, { hour: 5 }) === false,
