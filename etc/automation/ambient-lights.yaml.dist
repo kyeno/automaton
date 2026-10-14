@@ -39,6 +39,7 @@ rules:
     targets:
       Kitchen_Outlet: OFF
       Hallway_Outlet: OFF
+      Hallway_Cupboard_Outlet: OFF    # Safety net: the cupboard lamp never survives into daylight
       Living_Room_Switch: OFF
 
   # Dark-window rule: fires once per window when it gets dark enough. Two independent windows,
@@ -63,6 +64,20 @@ rules:
     targets:
       Kitchen_Outlet: ON
       Hallway_Outlet: ON
+      Hallway_Cupboard_Outlet: ON
+
+  # One lamp goes out for the night. Listed AFTER the dusk rule on purpose: when several matching
+  # rules name the same target, every one of them acts and the LAST one in config order wins the
+  # field it names, so this OFF outranks the dusk ON on this socket alone. `once: true` with a
+  # `time_of_day` gate is window-scoped -- it consumes only the `night` slot, never the dusk
+  # rule's `evening`/`afternoon` budgets, and stands down after firing so a human who relights
+  # the lamp after midnight keeps it lit.
+  - name: 'Past midnight - turn off hallway cupboard lamp'
+    once: true
+    conditions:
+      time_of_day: [night]    # 00:00-04:59; the night period already starts at midnight
+    targets:
+      Hallway_Cupboard_Outlet: OFF
 
   # Pre-dawn restore: answers a home-theater player-gone hand-off (a forced poke, which
   # consumes no budget) and nothing else. `forced_only` keeps natural timer/sensor ticks out of

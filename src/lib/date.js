@@ -34,6 +34,12 @@ const SEASONS = {
     winter: [11, 1],   // Dec - Feb (wraps)
 }
 
+//  Named clock anchors accepted as `hour:` bounds. The hour axis runs 00:00 -> 23:59, so
+//  `midnight` is its floor (0) and `noon` is 12:00; they let a rule name the boundary it means
+//  instead of guessing which numeric spelling (0, '00:00', '0000') the author intended.
+/** @type {Record<string, number>} */
+const CLOCK_WORD_HOURS = { midnight: 0, noon: 12 }
+
 //  Day-period partition (fixed round-clock boundaries)
 
 /** Fixed day-period partition of hours 0-23 -- identical every month of the year.
@@ -342,6 +348,12 @@ class STemporal {
      * @returns {number|null} Fractional hour (0 <= h < 24), or null when the token is */
     parseClockHour(value) {
         const text = (typeof value === 'string') ? value.trim() : null
+
+        //  Named anchors ('midnight', 'noon') resolve straight to their position on the axis.
+        if (text !== null && CLOCK_WORD_HOURS[text.toLowerCase()] !== undefined) {
+            return CLOCK_WORD_HOURS[text.toLowerCase()]
+        }
+
         if (text !== null && !/^(\d{1,2}:\d{2}(:\d{2})?|\d+(\.\d+)?)$/.test(text)) return null
 
         const colon = (text !== null) ? text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) : null
@@ -375,6 +387,15 @@ class STemporal {
         const text = (typeof value === 'string') ? value.trim() : null
         if (text !== null) return /^\d{3,}$/.test(text)
         return (typeof value === 'number' && Number.isFinite(value) && Math.trunc(value) >= 100)
+    }
+
+    /** Whether a clock-bound token names a fixed anchor on the hour axis ('midnight', 'noon').
+     *  Such tokens need resolving before any comparison, exactly like a NATO-style bound.
+     * @param {number|string} value - Raw clock-bound token.
+     * @returns {boolean} True when the token is a recognised named clock anchor. */
+    isClockWordBound(value) {
+        const text = (typeof value === 'string') ? value.trim().toLowerCase() : null
+        return (text !== null && CLOCK_WORD_HOURS[text] !== undefined)
     }
 
     /** Render a fractional hour as a zero-padded "HH:MM" clock string.

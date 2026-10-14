@@ -46,8 +46,34 @@ import videoPlayerMonitor from '../src/monitor/videoPlayerMonitor.js'
 import MpcProvider from '../src/monitor/providers/mpc.js'
 import VlcProvider from '../src/monitor/providers/vlc.js'
 import HomeTheaterAutomation from '../etc/automation/homeTheaterBase.js'
+import solar from '../src/lib/sun.js'
+import { parse as yamlParse } from 'yaml'
 
 const ROOT = resolve(import.meta.dirname, '..')
+
+/**
+ * Stub global Date at a fixed month/day/hour, so sun-gated rules resolve deterministically
+ * against that day's real civil dawn/dusk instead of the wall clock of the machine running
+ * the suite.
+ * @param {number} monthIndex - Zero-based month (0=Jan ... 11=Dec)
+ * @param {number} [day=15] - Day of month
+ * @param {number} [hour=12] - Hour of day
+ * @returns {Function} Restore function returning the original Date
+ */
+function stubDate(monthIndex, day = 15, hour = 12) {
+    const RealDate = global.Date
+    class FakeDate extends RealDate {
+        constructor(...args) {
+            if (args.length === 0) super(2026, monthIndex, day, hour, 0, 0)
+            else super(...args)
+        }
+        static now() {
+            return new RealDate(2026, monthIndex, day, hour, 0, 0).getTime()
+        }
+    }
+    global.Date = FakeDate
+    return () => { global.Date = RealDate }
+}
 
 // Record delegated invocations instead of executing the target automations (which are not
 // loaded in this unit test), so we can assert WHICH owner hands control to and with what
@@ -165,6 +191,7 @@ function makeOfficeDevices(dark = false) {
     return new Map([
         ['Living_Room_Plug', makeStubDevice('Living Room Plug', { state: dark ? 'OFF' : 'ON' })],
         ['Kitchen_Plug', makeStubDevice('Kitchen Plug', { state: 'OFF' })],
+        ['Hallway_Cupboard_Outlet', makeStubDevice('Hallway Cupboard Outlet', { state: 'OFF' })],
         ['Salon_Ambient_Dimmer', makeStubDevice('Salon Ambient Dimmer')],
         ['Living_Room_Roller_Left', makeStubDevice('Living Room Roller Left', { position: dark ? 0 : 50 })]
     ])
@@ -191,7 +218,13 @@ const RULES_OFFICE = [
     // comes back at l1 50% / l2 25%). A GONE player instead delegates to the ambient-lights
     // owner via the rule above, so the two never fight over the same lamps.
     { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, 'time_of_day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
-    { name: 'Office: playing - dark mode (lights off)', conditions: { 'video_player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
+    // The hallway cupboard lamp on its own terms: the same player state and illuminance gate as
+    // the restore rule, narrowed to the dark half of the night. Both rules match on one
+    // post-midnight pause and each contributes its own targets -- every matching rule acts, none
+    // is shadowed. `hour: { lt: sunrise }` alone means midnight -> civil dawn; the hour axis
+    // starts at midnight, so a lower bound there would be tautological.
+    { name: 'Office: paused/stopped past midnight - hallway cupboard lamp', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, illuminance: { lt: 900 }, hour: { lt: 'sunrise' } }, targets: { Hallway_Cupboard_Outlet: 'ON' } },
+    { name: 'Office: playing - dark mode (lights off)', conditions: { 'video_player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Hallway_Cupboard_Outlet: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
 ]
 
 const RULES_BUNDLED = [
@@ -228,6 +261,48 @@ function makeInstance(devices, shape) {
     // what a YAML-driven construction yields (the shipped configs set override_human_interaction).
     auto.setOverrideHumanInteraction(Boolean(auto.config.override_human_interaction))
     return auto
+}
+
+/**
+ * Build a home-theater instance with a fabricated sensor context. The module-wide CONTEXT has
+ * no sun instants (sun-gated rules fail closed against it), so scenarios about the midnight ->
+ * civil dawn window inject their own sundawn/illuminance/timeOfDay.
+ * @param {Map<string, Object>} devices - Stub device map
+ * @param {'office'|'bundled'} shape - Deployment shape under test
+ * @param {Object} context - Fabricated sensor context
+ * @returns {TestHomeTheater} Configured automation instance
+ */
+function makeInstanceWithContext(devices, shape, context) {
+    const auto = new TestHomeTheater(devices, context)
+    auto.config = {
+        override_human_interaction: true,
+        trigger_on_change_only: true,
+        targets: Array.from(devices.values(), (d) => d.getName()),
+        triggers_video: shape === 'office' ? ['htpc'] : ['htpc', 'bedroom'],
+        triggers_network: shape === 'office' ? ['htpc'] : ['htpc', 'bedroom'],
+        rules: shape === 'office' ? RULES_OFFICE : RULES_BUNDLED
+    }
+    auto.setOverrideHumanInteraction(true)
+    return auto
+}
+
+/**
+ * Run a sequence of steps against one instance with a fabricated context.
+ * @param {'office'|'bundled'} shape - Deployment shape under test
+ * @param {Map<string, Object>} devices - Device map
+ * @param {{[host: string]: string|null}[]} steps - Statuses before each execute() tick
+ * @param {Object} context - Fabricated sensor context
+ * @returns {Promise<Map<string, Object>>} The device map
+ */
+async function runSequenceWith(shape, devices, steps, context) {
+    const auto = makeInstanceWithContext(devices, shape, context)
+    for (const step of steps) {
+        for (const [host, status] of Object.entries(step)) {
+            await setVideoStatus(host, status)
+        }
+        await auto.execute({ trigger: 'test' })
+    }
+    return devices
 }
 
 /**
@@ -659,6 +734,121 @@ console.log('\n── Home theater (timer gate): idle ticks do not re-fire or re
 
     await DatabaseService.close()
     fs.rmSync(dir, { recursive: true, force: true })
+}
+
+console.log('\n── Home theater (single-room instance): hallway cupboard lamp -- past midnight only ──\n')
+
+{
+    // The dedicated rule owns the cupboard lamp alone: the same player state and illuminance gate
+    // as the restore rule, narrowed to midnight -> civil dawn. `sundawn` is that day's real civil
+    // dawn, so the sun gate is exercised against a real number, any month.
+    const sun = solar.getSunTimes(new Date(2026, 9, 15))
+    const sundawn = sun.sundawn.getTime()
+    const sundusk = sun.sundusk.getTime()
+    const DARK = { timeOfDay: 'night', illuminance: 100, sundawn, sundusk }
+    const BRIGHT = { timeOfDay: 'night', illuminance: 1500, sundawn, sundusk }
+
+    // 02:00, dark: ONE pause fires BOTH rules in ONE run. The restore rule lights its lamps and
+    // the post-midnight rule lights the cupboard -- every matching rule acts, none is shadowed.
+    let restoreClock = stubDate(9 /* October */, 15, 2)
+    try {
+        let devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], DARK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }, { state: 'ON' }],
+            'cupboard lamp: OFF on the playing tick, ON on the post-midnight pause')
+        assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+            'restore rule lights its own lamps on the same tick -- two rules, one run')
+
+        // 02:00, bright: the illuminance gate rejects -- the cupboard lamp stays out.
+        devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], BRIGHT)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
+            'cupboard lamp: dark-mode OFF only -- a bright post-midnight pause does not light it')
+    } finally {
+        restoreClock()
+    }
+
+    // 21:00, dark: BEFORE midnight the sun gate rejects -- the restore rule still lights its
+    // lamps, so the cupboard lamp is the one lamp an evening pause does not light.
+    const restoreClockEve = stubDate(9, 15, 21)
+    try {
+        const devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], { ...DARK, timeOfDay: 'evening' })
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
+            'cupboard lamp: dark-mode OFF only -- a pre-midnight pause leaves it out')
+        assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+            'restore rule still lights its own lamps before midnight (independent gates)')
+    } finally {
+        restoreClockEve()
+    }
+
+    // 04:30, dark: the "dark morning" -- the window runs right up to civil dawn.
+    const restoreClock2 = stubDate(9, 15, 4)
+    try {
+        const devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], DARK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }, { state: 'ON' }],
+            'cupboard lamp: lit on a 04:00 pause too (the window runs to civil dawn)')
+    } finally {
+        restoreClock2()
+    }
+
+    // 07:00, dark: past civil dawn the sun gate closes again -- no dawn lamp lighting.
+    const restoreClock3 = stubDate(9, 15, 7)
+    try {
+        const devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], DARK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
+            'cupboard lamp: not lit past civil dawn -- the rule is gated to midnight -> dawn')
+    } finally {
+        restoreClock3()
+    }
+}
+
+console.log('\n── Home theater (shipped configs): hallway cupboard lamp rule shape ──\n')
+
+{
+    // Both shipped configs must keep the cupboard lamp OUT of the restore rule and in a rule of
+    // its own, gated to midnight -> civil dawn, with dark mode still putting it out on playback.
+    const FILES = [
+        { file: 'etc/automation/home-office-video.yaml', cupboard: 'Przedpokoj_Gniazdo_Szafka', lux: 700 },
+        { file: 'etc/automation/home-office-video.yaml.dist', cupboard: 'Hallway_Cupboard_Outlet', lux: 900 },
+    ]
+    for (const { file, cupboard, lux } of FILES) {
+        const full = join(ROOT, file)
+        if (!fs.existsSync(full)) continue
+        const rules = yamlParse(fs.readFileSync(full, 'utf8')).rules ?? []
+        const find = (re) => rules.find((r) => re.test(r.name))
+        const restore = find(/restore ambient lighting$/)
+        const midnight = find(/past midnight/)
+        const dark = find(/dark mode/)
+        const playerStates = midnight?.conditions?.video_player
+            ? Object.values(midnight.conditions.video_player)[0] : null
+
+        assert(restore && midnight && dark, `${file}: restore, post-midnight and dark-mode rules all exist`)
+        assert(restore?.targets?.[cupboard] === undefined,
+            `${file}: the restore rule no longer targets the cupboard lamp`)
+        assert(JSON.stringify(Object.keys(midnight?.targets ?? {})) === JSON.stringify([cupboard]),
+            `${file}: the post-midnight rule owns the cupboard lamp alone`)
+        assert(midnight?.targets?.[cupboard] === 'ON', `${file}: the post-midnight rule lights it`)
+        assert(midnight?.reassert_state === true, `${file}: it re-asserts past a stale cached state`)
+        assert(midnight?.conditions?.hour?.lt === 'sunrise' && midnight?.conditions?.hour?.gte === undefined,
+            `${file}: its window is \`hour: { lt: sunrise }\` -- midnight is the axis floor, no gte`)
+        assert(midnight?.conditions?.illuminance?.lt === lux, `${file}: it keeps the restore lux gate (${lux})`)
+        assert(JSON.stringify(playerStates) === JSON.stringify(['paused', 'stopped']),
+            `${file}: it keys on the same player states as the restore rule`)
+        assert(dark?.targets?.[cupboard] === 'OFF', `${file}: dark mode still puts it out on playback`)
+    }
 }
 
 console.log('\n── Deployment consistency (shipped etc/automation instances) ──\n')

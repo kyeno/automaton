@@ -48,6 +48,15 @@ The [Home Theater Mode](../automations/home-theater-mode.md) automation demonstr
 
 There is **no snapshot-based filtering** ("only reopen what it closed itself"): which devices come back is decided purely by which restore rules match, so a device that was already off before dark mode gets whatever its restore rule declares -- the same value every time.
 
+## Carve-Outs: When A Restore Rule Must Not Restore Everything
+
+A restore rule's target list **is** its ownership list, and a restore rule restores exactly what it lists -- every time, at the same value. So when two automations own the same device at different hours, that device has to be carved out of one of the lists:
+
+- The **hallway cupboard lamp** (`Hallway Cupboard Outlet`, live `Przedpokoj Gniazdo Szafka`) is lit by [Ambient Lights](../automations/ambient-lights.md) from dusk, switched off by that automation's own past-midnight rule, and cleared by its bright-morning safety net. Home Theater's general `paused`/`stopped` restore therefore does **not** list it. Home Theater still switches it out for dark mode and still relights it -- but only through a dedicated rule of its own, gated by `hour: { lt: sunrise }`, so a movie paused at 21:00 in October does not light a cupboard lamp that the household expects to be out by then.
+- Ambient Lights' **pre-dawn restore** carves the same lamp out in the other direction: it restores the lamps its owner owns, and the cupboard lamp is deliberately not among them, because past midnight the lamp belongs to the "night is over" rule, not to a player hand-off.
+
+The dedicated rule is the pattern to copy: keep the general restore rule's target list to the devices whose ownership you hold across the whole window, and give the carved-out device a rule of its own carrying the narrower gate. Both rules then match in the same tick and the engine merges them -- see [Configuration Guide → Target Keys](../configuration.md#target-keys-targets).
+
 ## Related Documentation
 
 | Document | Relation |

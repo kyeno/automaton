@@ -14,6 +14,9 @@
  *     firing cannot consume the dusk budget; a forced hand-off restores and consumes nothing
  *   - a forced poke (home-theater player-gone hand-off) re-evaluates the dusk rule
  *     without consuming its once budget, while a later natural tick stays blocked
+ *   - the hallway cupboard lamp: lit at dusk with the rest, put out by the post-midnight rule,
+ *     cleared by the bright-morning safety net, and deliberately absent from the pre-dawn restore
+ *     (every matching rule acts on a shared target, so a restore ON there would fight it)
  *   - restore coverage parity: the pre-dawn restore covers every dusk target and stays out of
  *     presence-owned room lights, which come back through their own presence-gated rule on the
  *     same hand-off poke -- at their own levels, and only when someone is home
@@ -126,6 +129,11 @@ const ALL_IDS = [
 const AMBIENT_ON_IDS = [
     'Kitchen_Outlet', 'Hallway_Outlet',
 ]
+// The hallway cupboard lamp: lit at dusk like the others, but owned by the post-midnight rule
+// that puts it out for the night, so it is deliberately NOT in AMBIENT_ON_IDS (the pre-dawn
+// restore set) -- see the restore-coverage invariant below.
+const CUPBOARD_ID = 'Hallway_Cupboard_Outlet'
+const SCENARIO_IDS = [...ALL_IDS, CUPBOARD_ID]
 // The presence-owned room light: it is deliberately NOT in the pre-dawn restore rule, and
 // comes back through its own presence-gated rule on the same hand-off poke.
 const ROOM_LIGHT_ID = 'Living_Room_Switch'
@@ -139,6 +147,7 @@ writeFileSync(TEST_CONFIG_PATH, [
     'targets:',
     "  - 'Kitchen Outlet'",
     "  - 'Hallway Outlet'",
+    "  - 'Hallway Cupboard Outlet'",
     "  - 'Living Room Switch'",
     '',
     'sensors:',
@@ -159,6 +168,7 @@ writeFileSync(TEST_CONFIG_PATH, [
     '    targets:',
     '      Kitchen_Outlet: OFF',
     '      Hallway_Outlet: OFF',
+    '      Hallway_Cupboard_Outlet: OFF',
     '      Living_Room_Switch: OFF',
     '',
     // Settled dusk: two independent windows -- an unguarded evening arm and an afternoon arm
@@ -179,6 +189,19 @@ writeFileSync(TEST_CONFIG_PATH, [
     '    targets:',
     '      Kitchen_Outlet: ON',
     '      Hallway_Outlet: ON',
+    '      Hallway_Cupboard_Outlet: ON',
+    '',
+    // Past midnight: the cupboard lamp goes out for the night. Listed AFTER the dusk rule on
+    // purpose -- when several matching rules name the same target, every one of them acts and the
+    // LAST one in config order wins the field it names, so this OFF outranks the dusk ON on this
+    // socket alone. `once: true` with a `time_of_day` gate is window-scoped: it consumes only the
+    // `night` slot, never the dusk rule's `evening`/`afternoon` budgets.
+    "  - name: 'Past midnight - turn off hallway cupboard lamp'",
+    '    once: true',
+    '    conditions:',
+    '      time_of_day: [night]',
+    '    targets:',
+    '      Hallway_Cupboard_Outlet: OFF',
     '',
     // Pre-dawn restore: invoke-only. It answers a home-theater player-gone hand-off (a forced
     // poke, which bypasses markers entirely) and never fires on a natural tick, so a 00:26
@@ -236,7 +259,7 @@ class TestAmbient extends AmbientLightsAutomation {
  * @param {Object} [triggerData] - Extra fields merged into execute() input (e.g., `{ force: true }` for a delegated run)
  */
 async function runScenario(context, triggerData = {}) {
-    const devices = new Map(ALL_IDS.map(id => [id, makeStubDevice(id)]))
+    const devices = new Map(SCENARIO_IDS.map(id => [id, makeStubDevice(id)]))
     const auto = new TestAmbient(devices, {
         // Sun gates resolve against the stubbed clock's own day, so dawn-gated rules stay
         // satisfied in scenarios that are not specifically about the dawn boundary.
@@ -361,23 +384,30 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
     const restoreClock = stubDate(9 /* October */, 15, 2)   // 02:00 -- inside the night window
     try {
-        // Natural pre-dawn tick -> no rule participates at all (the invoke-only guard).
+        // Natural pre-dawn tick -> the invoke-only restore rule stays out. The only rule that
+        // acts is the post-midnight one, putting the cupboard lamp out for the night.
         let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
         for (const id of ALL_IDS) expectPayload(devices, id, null)
+        expectPayload(devices, CUPBOARD_ID, 'OFF')
 
         // Forced hand-off at the same instant -> the invoke-only restore rule fires, and it
-        // restores the lamps it owns. The presence-owned room light is NOT among them; it is
-        // covered by the presence scenario below.
+        // restores the lamps it owns. The cupboard lamp is NOT among them: the post-midnight
+        // rule owns it and keeps it out. The presence-owned room light is not among them
+        // either; it is covered by the presence scenario below.
         devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
         expectPayload(devices, ROOM_LIGHT_ID, null)
+        expectPayload(devices, CUPBOARD_ID, 'OFF')
 
         // Repeated hand-offs keep working -- forced runs neither check nor write markers.
         devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
         expectPayload(devices, ROOM_LIGHT_ID, null)
+        expectPayload(devices, CUPBOARD_ID, 'OFF')
 
-        assert(onceStore.size === 0,
+        // The hand-offs consumed nothing: the only marker in the store is the natural tick's own
+        // post-midnight slot, earned by the one rule that legitimately acted on that tick.
+        assert([...onceStore.keys()].every((k) => k.includes('past_midnight_')),
             `pre-dawn hand-offs consumed no budget (${JSON.stringify([...onceStore.keys()])})`)
 
         // The evening budget is untouched, so the dusk firing that the old merged rule lost
@@ -556,14 +586,17 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
 }
 
 // Restore-coverage parity (regression): the invoke-only pre-dawn restore answers a home-theater
-// player-gone hand-off. Two invariants keep it honest. (1) It must cover every device the dusk
+// player-gone hand-off. Three invariants keep it honest. (1) It must cover every device the dusk
 // rule lights -- a target the dusk rule lights and the restore rule omits stays dark after a
 // hand-off. (2) It must stay out of every device a PRESENCE-gated rule owns. Those are room
 // lights that should only burn when someone is in the room; the restore rule is presence-blind,
 // and the very same forced poke re-evaluates their own rules too, so an occupant gets each one
 // back at its OWN level while an empty house stays dark. Listing a presence-owned target in the
-// restore rule would light an empty room and win the first-match tie-break against the level its
-// own rule chose.
+// restore rule would light an empty room and override the level its own rule chose. (3) A dusk
+// target may be skipped ONLY when a post-midnight rule owns it -- that is the hallway cupboard
+// lamp carve-out: the restore rule is a FORCED, human-triggered poke, and the rule that puts the
+// cupboard out at midnight has already spent its once-per-night slot by 3am, so re-lighting it
+// there would leave no way to put it back out before sunrise.
 {
     const RESTORE_RULE = 'Pre-dawn restore - turn on ambient lamps'
     const DUSK_RULE = 'Settled dusk - turn on ambient lamps'
@@ -586,8 +619,27 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
         const dusk = Object.keys(byName.get(DUSK_RULE)?.targets ?? {})
         const restore = Object.keys(byName.get(RESTORE_RULE)?.targets ?? {})
 
-        const missing = dusk.filter((t) => !restore.includes(t))
+        // Targets a post-midnight rule owns -- a rule gated to the night window ALONE (the
+        // presence-owned room light lists every window, and the restore rule is the hand-off
+        // responder, so neither of them owns the midnight).
+        const midnightOwned = new Set(rules
+            .filter((r) => r.name !== RESTORE_RULE)
+            .filter((r) => JSON.stringify(r.conditions?.time_of_day) === JSON.stringify(['night']))
+            .flatMap((r) => Object.keys(r.targets ?? {})))
+        const skipped = dusk.filter((t) => !restore.includes(t))
+        const missing = skipped.filter((t) => !midnightOwned.has(t))
         assert(missing.length === 0, `${file}: pre-dawn restore covers every dusk target (${JSON.stringify(missing)})`)
+        assert(JSON.stringify([...skipped].sort()) === JSON.stringify([...midnightOwned].sort()),
+            `${file}: the only dusk targets the pre-dawn restore skips are post-midnight-owned ones `
+            + `(skipped ${JSON.stringify(skipped)}, midnight-owned ${JSON.stringify([...midnightOwned])})`)
+        //  (3) Each carved-out target must be put out by a night rule, so it can never survive the night.
+        const midnightOff = new Set(rules
+            .filter((r) => JSON.stringify(r.conditions?.time_of_day) === JSON.stringify(['night']))
+            .filter((r) => Object.values(r.targets ?? {}).every((v) => String(v).toUpperCase() === 'OFF'))
+            .flatMap((r) => Object.keys(r.targets ?? {})))
+        assert(skipped.every((t) => midnightOff.has(t)),
+            `${file}: every carved-out target is put out by a night rule `
+            + `(${JSON.stringify(skipped.filter((t) => !midnightOff.has(t)))})`)
         assert(byName.get(RESTORE_RULE)?.forced_only === true, `${file}: pre-dawn restore stays invoke-only`)
 
         const presenceOwned = new Set()
@@ -646,6 +698,99 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     }
 }
 
+
+// ── 10. Hallway cupboard lamp: lit at dusk, out after midnight, never survives daylight ──
+// The post-midnight rule owns this socket alone, and it is listed AFTER the dusk rule: when
+// several matching rules name the same target, EVERY one of them acts and the last one in config
+// order wins the field it names, so no rule is shadowed by an earlier one.
+{
+    const cacheProto = Object.getPrototypeOf(CacheService)
+    const origGet = cacheProto.get
+    const origSet = cacheProto.set
+    const onceStore = new Map()
+    cacheProto.get = async (key) => (onceStore.has(key) ? onceStore.get(key) : undefined)
+    cacheProto.set = async (key, item) => { onceStore.set(key, item); return true }
+
+    // 19:00 (evening) -- dusk settles: the cupboard lamp comes on WITH the other lamps.
+    let restoreClock = stubDate(9 /* October */, 15, 19)
+    try {
+        const devices = await runScenario({ illuminance: 50, timeOfDay: 'evening' })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        expectPayload(devices, CUPBOARD_ID, 'ON')
+    } finally { restoreClock() }
+
+    // 01:00 (night) -- midnight has passed: the cupboard lamp goes out and nothing else moves.
+    // The dusk rule is not a participant here (its windows are evening/afternoon), so exactly one
+    // rule acts and its once: marker is scoped to the `night` window only.
+    restoreClock = stubDate(9, 15, 1)
+    try {
+        let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        expectPayload(devices, CUPBOARD_ID, 'OFF')
+        for (const id of ALL_IDS) expectPayload(devices, id, null)
+        assert([...onceStore.keys()]
+            .includes('auto:AmbientLightsAutomation:once:past_midnight_-_turn_off_hallway_cupboard_lamp:night'),
+            'midnight rule consumes only its own :night once-slot')
+
+        // A second post-midnight tick the same night -> the consumed slot stands down, so a human
+        // who relights the cupboard lamp after midnight keeps it lit.
+        devices = await runScenario({ illuminance: 50, timeOfDay: 'night' })
+        for (const id of SCENARIO_IDS) expectPayload(devices, id, null)
+    } finally { restoreClock() }
+
+    // Forced 03:00 hand-off poke: TWO rules match the same run and each contributes its own
+    // target -- the invoke-only pre-dawn restore relights the lamps it owns while the midnight
+    // rule keeps the cupboard lamp out. This is the "every matching rule acts" contract, and the
+    // reason the cupboard lamp is deliberately absent from the restore rule.
+    restoreClock = stubDate(9, 15, 3)
+    try {
+        const devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
+        for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
+        expectPayload(devices, CUPBOARD_ID, 'OFF')
+        expectPayload(devices, ROOM_LIGHT_ID, null)
+    } finally { restoreClock() }
+
+    cacheProto.get = origGet
+    cacheProto.set = origSet
+}
+
+// Morning safety net: the cupboard lamp is in the bright-morning rule as well, so it cannot
+// survive into daylight even on a day that produced no post-midnight trigger at all.
+{
+    const devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
+    for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
+    expectPayload(devices, CUPBOARD_ID, 'OFF')
+}
+
+// Config shape (both shipped configs): lit at dusk, out after midnight, cleared at bright
+// morning, and kept OUT of the invoke-only pre-dawn restore -- that rule is a FORCED,
+// human-triggered poke, and by 3am the midnight rule has spent its once-per-night slot, so
+// re-lighting the cupboard lamp there would leave no way to put it back out before sunrise.
+{
+    const DUSK_RULE = 'Settled dusk - turn on ambient lamps'
+    const MIDNIGHT_RULE = 'Past midnight - turn off hallway cupboard lamp'
+    const RESTORE_RULE = 'Pre-dawn restore - turn on ambient lamps'
+    const MORNING_RULE = 'Bright morning - turn off leftover lights'
+    for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
+        if (!existsSync(file)) continue
+        const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
+        const byName = new Map(rules.map((r) => [r.name, r]))
+        const cupboard = file.endsWith('.dist') ? 'Hallway_Cupboard_Outlet' : 'Przedpokoj_Gniazdo_Szafka'
+        const idx = (name) => rules.findIndex((r) => r.name === name)
+
+        assert(byName.get(DUSK_RULE)?.targets?.[cupboard] === 'ON', `${file}: dusk lights the cupboard lamp`)
+        assert(byName.get(MIDNIGHT_RULE)?.targets?.[cupboard] === 'OFF', `${file}: midnight rule puts it out`)
+        assert(JSON.stringify(byName.get(MIDNIGHT_RULE)?.conditions?.time_of_day) === JSON.stringify(['night']),
+            `${file}: midnight rule is gated to the night window`)
+        assert(byName.get(MIDNIGHT_RULE)?.once === true, `${file}: midnight rule fires once per night`)
+        assert(Object.keys(byName.get(MIDNIGHT_RULE)?.targets ?? {}).length === 1,
+            `${file}: midnight rule owns the cupboard lamp alone`)
+        assert(idx(MIDNIGHT_RULE) > idx(DUSK_RULE),
+            `${file}: midnight rule is listed after the dusk rule (last matching rule wins the field)`)
+        assert(byName.get(MORNING_RULE)?.targets?.[cupboard] === 'OFF', `${file}: morning safety net clears it`)
+        assert(byName.get(RESTORE_RULE)?.targets?.[cupboard] === undefined,
+            `${file}: pre-dawn restore stays out of the cupboard lamp (documented carve-out)`)
+    }
+}
 
 
 console.log(`\n${'═'.repeat(50)}`)

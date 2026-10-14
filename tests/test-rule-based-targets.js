@@ -12,6 +12,10 @@
  *     an empty declaration is valid -- speech-only / invoke_automation-only automations pass
  *     through untouched
  *   - execute(): rules match and invocations fire even when no device targets exist at all
+ *   - simpleResolveCommand(): EVERY matching rule contributes to a target -- disjoint targets
+ *     both act, a shared target is settled by config order (last rule wins the field it names),
+ *     structured payloads merge field-wise with per-channel brightness, and a single
+ *     contribution keeps the exact payload the old first-match-wins rule produced
  * Redis/MQTT are not required -- unavailable services fail open by design.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -318,6 +322,107 @@ console.log('\n── duplicate target keys ──\n')
     let initOk = true
     try { await auto.init() } catch { initOk = false }
     assert(initOk, 'init() passes despite a warned-about key collision')
+}
+
+// ---------------------------------------------------------------------------
+// Multi-rule target merge: every matching rule acts (simpleResolveCommand)
+// ---------------------------------------------------------------------------
+
+console.log('\n── multi-rule target merge ──\n')
+{
+    const cfg = writeConfig('merge.yaml', [
+        'rules:',
+        "  - name: 'Any'",
+        '    targets:',
+        '      A: ON'
+    ])
+    const auto = new TestTargetsAutomation(cfg)
+    const resolve = (rules, key) => auto.simpleResolveCommand(null, key, rules)
+    const json = (r) => JSON.stringify(r?.payload)
+
+    //  Backward compatibility: a single contribution yields exactly the legacy payload.
+    assert(json(resolve([{ targets: { A: 'ON' } }], 'A')) === JSON.stringify({ state: 'ON' }),
+        'single ON rule -> {state:"ON"}, unchanged from first-match-wins')
+    assert(json(resolve([{ targets: { A: 'OFF' } }], 'A')) === JSON.stringify({ state: 'OFF' }),
+        'single OFF rule -> {state:"OFF"}')
+    assert(json(resolve([{ targets: { A: { state: 'ON', brightness: { l1: 50 } } } }], 'A'))
+        === JSON.stringify({ state: 'ON', brightness: { l1: 50 } }),
+        'single structured rule -> payload passed through untouched')
+    assert(resolve([{ targets: { B: 'ON' } }], 'A') === null,
+        'a rule that does not declare this target yields no command')
+    assert(resolve([{ targets: { A: null } }], 'A') === null,
+        'a null target value yields no command')
+
+    //  Disjoint targets: both rules act, each on its own device.
+    const disjoint = [{ targets: { A: 'ON' } }, { targets: { B: 'OFF' } }]
+    assert(json(resolve(disjoint, 'A')) === JSON.stringify({ state: 'ON' })
+            && json(resolve(disjoint, 'B')) === JSON.stringify({ state: 'OFF' }),
+        'disjoint targets from two matching rules both act')
+
+    //  Shared target: the LAST matching rule in config order wins the field it names.
+    assert(json(resolve([{ targets: { A: 'ON' } }, { targets: { A: 'OFF' } }], 'A'))
+        === JSON.stringify({ state: 'OFF' }),
+        'ON then OFF on one target -> last rule wins (OFF)')
+    assert(json(resolve([{ targets: { A: 'OFF' } }, { targets: { A: 'ON' } }], 'A'))
+        === JSON.stringify({ state: 'ON' }),
+        'OFF then ON on one target -> last rule wins (ON)')
+
+    //  Structured contributions merge field-wise; the per-channel brightness map merges
+    //  channel-wise, so a narrow refinement keeps the channels it does not name.
+    assert(json(resolve([
+        { targets: { A: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
+        { targets: { A: { brightness: { l2: 10 } } } }
+    ], 'A')) === JSON.stringify({ state: 'ON', brightness: { l1: 50, l2: 10 } }),
+        'structured rules merge field-wise and brightness merges per channel')
+    assert(json(resolve([
+        { targets: { A: { brightness: { l1: 40 } } } },
+        { targets: { A: 'ON' } }
+    ], 'A')) === JSON.stringify({ brightness: { l1: 40 }, state: 'ON' }),
+        'a later bare ON adds state and keeps the earlier brightness')
+
+    //  A scalar OPEN/CLOSE is terminal; numeric positions fold last-wins.
+    assert(json(resolve([{ targets: { A: { state: 'ON' } } }, { targets: { A: 'OPEN' } }], 'A'))
+        === JSON.stringify('OPEN'),
+        'a scalar OPEN replaces the accumulated payload wholesale')
+    assert(json(resolve([{ targets: { A: 30 } }, { targets: { A: 70 } }], 'A'))
+        === JSON.stringify({ position: 70 }),
+        'numeric positions fold last-wins')
+
+    //  Merging must not mutate the rule objects it reads (the config is shared state).
+    const source = { targets: { A: { state: 'ON', brightness: { l1: 50 } } } }
+    resolve([source, { targets: { A: { brightness: { l2: 10 } } } }], 'A')
+    assert(JSON.stringify(source.targets.A) === JSON.stringify({ state: 'ON', brightness: { l1: 50 } }),
+        'merging does not mutate the rule config')
+}
+
+console.log('\n── multi-rule dispatch (execute) ──\n')
+{
+    // End-to-end: two rules match the same tick. Each contributes its own targets, and the
+    // shared target is settled by config order -- no rule is shadowed by an earlier one.
+    class MergeAutomation extends TestTargetsAutomation {
+        resolveCommand(device, targetKey, matchingRules) {
+            return this.simpleResolveCommand(device, targetKey, matchingRules)
+        }
+    }
+    const alpha = register('Merge Alpha Light', new TestMechanism('Merge Alpha Light'))
+    const beta = register('Merge Beta Light', new TestMechanism('Merge Beta Light'))
+    const cfg = writeConfig('merge-dispatch.yaml', [
+        'rules:',
+        "  - name: 'Broad dusk rule'",
+        '    targets:',
+        '      Merge_Alpha_Light: ON',
+        "  - name: 'Narrow midnight rule'",
+        '    targets:',
+        '      Merge_Beta_Light: ON',
+        '      Merge_Alpha_Light: OFF'
+    ])
+    const auto = new MergeAutomation(cfg)
+    await auto.execute({ trigger: 'test' })
+    const payloads = (dev) => dev.calls.map((c) => JSON.stringify(c.payload))
+    assert(alpha.calls.length === 1 && JSON.stringify(alpha.calls[0].payload) === JSON.stringify({ state: 'OFF' }),
+        `shared target gets exactly one command, from the later rule (got [${payloads(alpha)}])`)
+    assert(beta.calls.length === 1 && JSON.stringify(beta.calls[0].payload) === JSON.stringify({ state: 'ON' }),
+        `the other rule's own target acts in the same run (got [${payloads(beta)}])`)
 }
 
 // ---------------------------------------------------------------------------

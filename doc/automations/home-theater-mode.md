@@ -19,6 +19,7 @@ Key design points:
 
 - **Roller ownership is keyed to reachability, not playback.** A paused movie still means "someone is watching" — blinds stay down until the player disappears (machine off, player closed).
 - **Roller hand-back is always delegated; light restore is split by player state.** When a player goes **gone** (offline) home-theater invokes the room's roller owner ([Home Office Rollers](./home-office-rollers.md) / [Bedroom Rollers](./bedroom-rollers.md)) so that owner decides the post-playback position from its full rule set, AND pokes the ambient-lights owner via the same array-form `invoke_automation` so the lamps are restored by their own rules. When an **online** player merely pauses/stops, the HTPC/Salon instance instead restores its lamp set locally from its own rules -- gated by the night window (`any_of`: `hour gte sunset` OR `hour lt sunrise` -- an explicit OR, because a single `hour` bound cannot wrap midnight, so a bare `gte: sunset` silently drops 00:00 to dawn) and outdoor illuminance (<900), with the salon dimmer returning switched on via a structured `{state: 'ON', brightness: { l1: 50, l2: 25 }}` command (a bare `{brightness: N}` only sets the level and never switches the relay on); the Bedroom instance keeps delegating that decision to [Ambient Lights](./ambient-lights.md).
+- **The cupboard lamp is carved out of the general restore.** `Hallway Cupboard Outlet` is lit by [Ambient Lights](./ambient-lights.md) at dusk and switched off there past midnight, so the general `paused`/`stopped` restore rule does **not** list it — a restore rule restores exactly what it lists, at the same value, every time. Home Theater relights it through a dedicated rule of its own, gated by `hour: { lt: sunrise }` (midnight → civil dawn; midnight is the axis floor, so a `gte` bound there would be tautological), which keeps a 21:00 October pause from lighting a lamp the household expects to be out by then. Dark mode still switches it out on playback. Both rules match in the same tick and the engine merges them — see [Restore & Ownership Semantics → Carve-Outs](../architecture/rule-engine-restore-semantics.md#carve-outs-when-a-restore-rule-must-not-restore-everything).
 - **Delegated runs are forced but budget-neutral.** Each hand-off carries `force: true` so an owner acts even if a once/silent guard would otherwise block it, yet a forced run neither consumes nor refreshes any once-per-day marker; human-interaction cooldowns still apply.
 - **Dark-mode OFF rules keep `presence`; the gone rule does not.** Re-darkening an empty room serves no one, so the dark-mode rule requires the host to be reachable. The gone rule, by contrast, is keyed on the player state alone (`offline`) -- no separate `presence` gate -- so an offline machine still triggers the hand-back and the delegated lamp restore.
 - **The illuminance sensor is a context source, never a trigger.** Each instance evaluates its `<900` restore gate against the sensor's latest reading whenever it runs, but only player-status/presence transitions (and change-gated timer ticks) actually wake it -- a sensor-report subscription would re-run the gone rule on every lux change while a player is off.
@@ -92,6 +93,24 @@ rules:
       Living_Room_Plug: ON
       Kitchen_Outlet: ON
       Salon_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
+      # Deliberately NO Hallway_Cupboard_Outlet here: this rule restores everything the
+      # instance owns across the whole night window. The cupboard lamp is owned by the
+      # ambient-lights owner after dusk and must not come back on an early-evening pause --
+      # it gets its own narrower rule, below.
+
+  # One lamp on its own terms: same player + illuminance gate as the restore rule, narrowed to
+  # the dark half of the night. Both rules match on a post-midnight pause and each contributes
+  # its own targets -- every matching rule acts, none is shadowed. `hour: { lt: sunrise }` alone
+  # means midnight -> civil dawn: the hour axis starts at midnight, so a lower bound is
+  # tautological. A pause at 21:00 in October leaves this lamp out; dark mode still puts it out.
+  - name: 'Room: paused/stopped past midnight - hallway cupboard lamp'
+    reassert_state: true
+    conditions:
+      video_player: { my-pc: [paused, stopped] }
+      illuminance: { lt: 900 }
+      hour: { lt: sunrise }    # midnight -> civil dawn; midnight is the axis floor, no gte needed
+    targets:
+      Hallway_Cupboard_Outlet: ON
 
   - name: 'Room: playing - dark mode'
     conditions:
@@ -99,6 +118,7 @@ rules:
       video_player: { my-pc: [playing] }
     targets:
       Living_Room_Plug: OFF
+      Hallway_Cupboard_Outlet: OFF
       Salon_Dimmer: OFF
 ```
 

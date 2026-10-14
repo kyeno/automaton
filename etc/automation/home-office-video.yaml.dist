@@ -74,6 +74,22 @@ rules:
       Kitchen_Plug: ON
       Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 
+  # One lamp on its own terms: the same player state and illuminance gate as the restore rule,
+  # narrowed to the dark half of the night, so BOTH rules match on a post-midnight pause and each
+  # contributes its own targets (every matching rule acts -- none is shadowed). `hour: { lt:
+  # sunrise }` alone means midnight -> civil dawn: the hour axis starts at midnight, so a lower
+  # bound there would be tautological. This is the one lamp a pause does NOT light before
+  # midnight; dark mode (below) still puts it out on playback, and `reassert_state` makes the
+  # restore survive a stale cached state exactly like the restore rule above.
+  - name: 'Office: paused/stopped past midnight - hallway cupboard lamp'
+    reassert_state: true
+    conditions:
+      video_player: { my-pc: [paused, stopped] }
+      illuminance: { lt: 900 }
+      hour: { lt: sunrise }    # midnight -> civil dawn; midnight is the axis floor, no gte needed
+    targets:
+      Hallway_Cupboard_Outlet: ON
+
   - name: 'Office: playing - dark mode (lights off)'
     conditions:
       presence: { my-pc: true }
@@ -81,4 +97,5 @@ rules:
     targets:
       Living_Room_Plug: OFF
       Kitchen_Plug: OFF
+      Hallway_Cupboard_Outlet: OFF
       Living_Room_Dimmer: OFF

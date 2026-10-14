@@ -364,5 +364,72 @@ console.log('')
 }
 
 console.log('')
+console.log('-- Named clock anchors (midnight / noon) --')
+console.log('')
+
+{
+    //  The hour axis runs 00:00 -> 23:59, so 'midnight' is its floor and 'noon' is 12:00.
+    //  A rule that means "the whole night" must be spelled out -- a bound pair cannot wrap.
+    assert(temporal.parseClockHour('midnight') === 0, "parseClockHour('midnight') == 0")
+    assert(temporal.parseClockHour('Noon') === 12, "parseClockHour('Noon') == 12 (case-insensitive)")
+    assert(temporal.parseClockHour('midnnight') === null, 'parseClockHour: unknown word rejected')
+    assert(temporal.isClockWordBound(' midnight ') === true, 'isClockWordBound: padded word recognised')
+    assert(temporal.isClockWordBound('sunrise') === false, 'isClockWordBound: sun token is not a clock word')
+    assert(temporal.isClockWordBound(0) === false, 'isClockWordBound: numbers are not words')
+
+    const NIGHT_RULES = [
+        {
+            name: 'Midnight to 06h: dark - close all',
+            conditions: { hour: { gte: 'midnight', lt: 6 }, illuminance: { lte: 15 } },
+            targets: { Roller_Left: 'CLOSE' }
+        }
+    ]
+
+    let d = await runAt(2, NIGHT_RULES, 5)
+    assertCalls(d, 'Roller_Left', ['CLOSE'], "gte 'midnight' fires at 02h (midnight is the axis floor)")
+    d = await runAt(0, NIGHT_RULES, 5)
+    assertCalls(d, 'Roller_Left', ['CLOSE'], "gte 'midnight' fires at 00h")
+    d = await runAt(6, NIGHT_RULES, 5)
+    assertCalls(d, 'Roller_Left', [], "lt 6 rejects 06h")
+    d = await runAt(23, NIGHT_RULES, 5)
+    assertCalls(d, 'Roller_Left', [], 'the window does not wrap midnight -- 23h is outside it')
+
+    const NOON_RULES = [
+        {
+            name: 'After noon - close',
+            conditions: { hour: { gte: 'noon' }, illuminance: { lte: 15 } },
+            targets: { Roller_Left: 'CLOSE' }
+        }
+    ]
+    d = await runAt(13, NOON_RULES, 5)
+    assertCalls(d, 'Roller_Left', ['CLOSE'], "gte 'noon' fires at 13h")
+    d = await runAt(11, NOON_RULES, 5)
+    assertCalls(d, 'Roller_Left', [], "gte 'noon' rejects 11h")
+
+    //  Static analyzer mirrors the runtime resolution: an unresolved word would compare as a
+    //  string and report the rule as covering nothing at all.
+    assert(evaluateRule({ hour: { gte: 'midnight', lt: 6 } }, { hour: 2 }) === true, "evaluateRule: 'midnight' bound matches at 2")
+    assert(evaluateRule({ hour: { gte: 'midnight', lt: 6 } }, { hour: 7 }) === false, "evaluateRule: 'midnight' bound rejects 7")
+    assert(evaluateRule({ hour: { gte: 'noon' } }, { hour: 11 }) === false, "evaluateRule: 'noon' bound rejects 11")
+    assert(evaluateRule({ hour: { gte: 'midnigt' } }, { hour: 11 }) === false, 'evaluateRule: malformed word fails closed')
+
+    const ANCHOR_RULES = [
+        {
+            name: 'Night window',
+            conditions: { hour: { gte: 'midnight', lt: 6 } },
+            targets: { Roller_Left: 'CLOSE' }
+        }
+    ]
+    const report = analyzeRules({
+        rules: ANCHOR_RULES,
+        periodMap: temporal.getHourToPeriodMap(),
+        scenarios: [{ label: 'dark', context: { illuminance: 5 }, sensors: { illuminance: 5 } }]
+    })
+    const at = (h) => report.hours.find((x) => x.hour === h)
+    assert(at(0).coveredScenarios === 1 && at(5).coveredScenarios === 1, "sweep: 'midnight' window covers 00h-05h")
+    assert(at(6).coveredScenarios === 0 && at(23).coveredScenarios === 0, "sweep: 'midnight' window covers nothing past 06h")
+}
+
+console.log('')
 console.log(passed + ' passed, ' + failed + ' failed')
 if (failed > 0) process.exit(1)

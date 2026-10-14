@@ -391,6 +391,13 @@ Values in `0..23` stay plain hours, so `hour: { gte: 23 }` keeps its existing me
 
 **Sun tokens are civil twilight.** `sundawn`/`sunrise` and `sundusk`/`sunset` resolve to the *civil* twilight boundaries -- the sun 6° below the horizon, when the sky is effectively day -- not the geometric disc edge. At 52°N that is roughly 33 minutes earlier than sunrise in the morning and 34 minutes later than sunset in the evening, and the gap widens with latitude. This is deliberate: rules gated on "daylight" that read a street illuminance sensor must not fire in pre-dawn darkness, and civil twilight is the boundary that matches what the sensor reports. The geometric instants stay available in the automation context as `sunrise`/`sunset` for rules that genuinely want the disc edge.
 
+**Named clock anchors (`midnight`, `noon`).** A bound may name a fixed point on the axis instead of spelling out a number: `hour: { gte: 'midnight' }` and `hour: { gte: 'noon' }` resolve to `00:00` and `12:00`. They are accepted in any bound slot, case-insensitively and with surrounding whitespace ignored; an unrecognised word fails closed like any malformed bound.
+
+**The hour axis starts at midnight and never wraps.** Bounds compare on one day's axis running `00:00 → 23:59`, so a bound pair cannot cross midnight: `hour: { gte: 22, lt: 6 }` is unsatisfiable and matches nothing, and a rule that means "the whole night" must be written as an explicit OR -- `any_of: [{ hour: { gte: sunset } }, { hour: { lt: sunrise } }]`. Two consequences are worth remembering:
+
+- **A lower bound at midnight is never needed.** `hour: { lt: sunrise }` already means *midnight → civil dawn*, because nothing on the axis lies below `00:00`. Writing `hour: { gte: 'midnight', lt: sunrise }` describes the same window with a bound that can only ever be true -- accepted, harmless, but it hides the intent, so prefer the single bound.
+- **A bare `gte: sunset` is only half a night.** On its own it covers civil dusk → `23:59` and silently drops `00:00` → civil dawn; the morning half has to be added as its own arm.
+
 The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports; a sun-token bound is treated as satisfied there since real dawn/dusk times are not part of the static clock grid.
 
 ### Merged Sun/Clock Gate Conditions (`after_latest_of` / `after_earliest_of`)
@@ -460,6 +467,22 @@ Notes:
 ### Target Keys (`targets:`)
 
 There is no separate declaration section: each rule's `targets:` map addresses devices directly by **target key** — the registered friendly name trimmed, whitespace runs collapsed to single underscores, original casing preserved (`Salon Roleta Okno Lewe` → `Salon_Roleta_Okno_Lewe`). The union of all rule-level keys defines an automation's addressable set; there are no separate aliases to invent or keep in sync.
+
+**Every matching rule acts — commands are merged, not first-won.** One evaluation pass collects *all* rules whose conditions hold and folds their contributions target by target, in config order. A rule targeting devices A and B and a later rule targeting C both dispatch in the same tick; nothing is shadowed by an earlier match:
+
+| Contributions to one target | Result |
+|-----------------------------|--------|
+| Two rules, disjoint targets | Both dispatch in the same pass |
+| Same target named by two rules | **Last rule in config order wins** the field it names |
+| Same target named by one rule only | That rule's command, untouched |
+| Two structured payloads (`{state, brightness}`) | Field-wise merge — later values override, fields the later rule omits keep the earlier value |
+| Two `brightness` maps on a dimmer | Merged per channel — `{l1: 50}` then `{l2: 25}` yields both channels |
+| `OPEN` / `CLOSE` from two rules | Terminal: the later rule's value, nothing is merged |
+| Two position integers (rollers) | Last rule wins |
+
+A rule that wins a target and resolves to nothing (unknown key, a device sitting in human-interaction cooldown) contributes nothing, so an earlier rule's contribution to that target survives. Single-rule behavior is unchanged.
+
+**`priority:` does not participate in device dispatch.** It is honored only by the Weather Man's speech rules (highest wins) and is surfaced as a label by `/automation coverage`. For device automations, the ordering that matters is **the order of rules in the YAML** — move a rule later in the file to let it win a shared target.
 
 Every automation validates this wiring at activation time against the live device container and logs warnings for problems that would otherwise be silently inert: unknown keys (typos or renamed devices), keys resolving to non-actuator device types (sensors, remotes...), and duplicate keys (two friendly names collapsing onto one key, so only one of the devices is addressable). An automation whose declared targets ALL fail validation fails fast -- the container skips registering just that instance instead of running it silently inert. Automations that declare no targets at all (speech-only or pure `invoke_automation` flows) are valid and simply skip device dispatch.
 

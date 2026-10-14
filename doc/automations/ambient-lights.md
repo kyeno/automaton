@@ -8,6 +8,7 @@ The **Ambient lights** automation manages ambient lighting in two behaviors: dur
 2. Rules are evaluated against that context:
    - *Bright morning* fires in the `morning` period when illuminance ≥ 20 lx and commands **OFF** for every listed target — including wall switches driving main room lights, so nothing stays lit once daylight arrives.
    - *Settled dusk* fires when illuminance drops below the dusk threshold -- in the `evening`, or in the `afternoon` once civil dusk has passed (`hour: { gte: sunset }`) -- and commands **ON** only for the socket-powered lamps. Its two-window `any_of` declares one `time_of_day` gate per arm, and the `once:` budget splitter reads gates at any depth, so every window keeps its own daily slot; the sun gate on the afternoon arm is what keeps a gloomy mid-afternoon from lighting the lamps hours before dusk (the periods are fixed clock bands with no sun awareness).
+   - *Past midnight* fires in the `night` period — which begins at **midnight**, not at dusk — and commands **OFF** for the hallway cupboard lamp alone. It is an ordinary `once: true` rule, not a scheduled timer: the automation evaluates every 30 seconds and the rule acts on the first tick that lands inside `night`. Its window list is `[night]` on purpose; adding `evening` would let an 18:33 dusk firing eat the daily slot this rule needs after midnight.
    - *Pre-dawn restore* covers `night` plus the dark morning up to civil dawn (`hour: { lt: sunrise }`), and is `forced_only`: natural timer/sensor ticks skip it entirely, so a 00:26 presence blip in the middle of a session cannot blast the lamps. It fires only on a home-theater player-gone hand-off, which pokes this automation with `force: true`; forced runs neither check nor write markers, so repeated hand-offs keep working and consume nothing. It restores the socket lamps it owns and **nothing presence-owned**: a room light gated on presence (the salon ambient) is deliberately left out, because the same forced poke re-evaluates *that* rule too — so an occupant gets the room light back through its own rule at its own level, and an empty house at 03:00 stays dark. Listing a presence-owned target here would light a room nobody is in, and would win the first-match tie-break against the level its own rule chose.
 3. Once commands are dispatched — or every targeted device was deferred due to recent human interaction — the rule consumes that window's slot by writing a marker to Redis (key `auto:<automation>:once:<rule-slug>` -- suffixed with the active period as `<...>:<period>`, because these rules declare a `time_of_day` condition, giving every window its own daily budget), storing the local calendar day, and stays quiet for the rest of that window. If nothing happened at all, later ticks keep retrying until conditions hold.
 
@@ -19,9 +20,25 @@ Each rule carries its own per-target command map, so the ON and OFF sets can dif
 |------|------------|-------------------|
 | Bright morning → `OFF` | `time_of_day: [morning]`, `illuminance: { gte: 20 }` | Every target in that rule (sockets and wall switches) |
 | Settled dusk → `ON` | `illuminance: { lt: <threshold> }` + `any_of`: unguarded `[evening]` / `[afternoon]` + `hour: { gte: sunset }` | Only the socket-powered lamps -- fires autonomously once per window; the afternoon and evening slots are independent, and the afternoon arm waits for civil dusk |
+| Past midnight → `OFF` | `time_of_day: [night]` | Only the hallway cupboard lamp -- `once: true` scoped to the `night` window; the first tick inside `night` acts, and a human who relights the lamp after midnight keeps it lit |
 | Pre-dawn restore → `ON` | `time_of_day: [night, morning]`, `hour: { lt: sunrise }`, `illuminance: { lt: <threshold> }`, `forced_only: true` | Only the socket-powered lamps -- invoke-only: answers a home-theater player-gone hand-off (forced poke, consumes no budget) and never fires on a natural tick. Presence-owned room lights are excluded on purpose; they come back via their own rule on the same poke |
 
 There is no top-level declaration section: each rule's `targets:` map addresses devices directly by their derived **target key** -- the registered friendly name trimmed with whitespace collapsed to underscores, casing preserved (`Kitchen Outlet` -> `Kitchen_Outlet`). Keys are validated against the live device container at startup: unknown keys or non-actuator resolutions warn and stay inert; an automation whose declared targets all fail validation fails fast instead of running silently inert. Simple automations may instead use a single flat `action:` field applied uniformly to every resolved device.
+
+## The Cupboard Lamp: A Three-Rule Day
+
+The hallway cupboard lamp (`Hallway Cupboard Outlet`, live `Przedpokoj Gniazdo Szafka`) is the one ambient lamp with a bedtime, and it shows the per-window `once:` budget doing its job:
+
+| When | Rule | Action |
+|------|------|--------|
+| Dusk | *Settled dusk* | `ON` — consumes the `evening` slot (the `afternoon` slot when winter dusk lands there) |
+| First tick past midnight | *Past midnight* | `OFF` — `time_of_day: [night]`, `once: true`, scoped to the `night` window |
+| Bright morning | *Bright morning* | `OFF` — safety net, in case the midnight rule's slot was spent earlier in the window |
+| Pre-dawn hand-off | *Pre-dawn restore* | **not listed** — past midnight the lamp belongs to the night rule, not to a player hand-off |
+
+Because the `night` slot is separate from the `evening` slot, a midnight firing at 00:31 consumes the `night` marker and leaves the next dusk's `evening` slot untouched — the lamp is lit again at dusk the very next day. The rule is a plain condition rule, so a human who relights the lamp after midnight keeps it lit: the rule has already spent its slot for that window and stands down, leaving control with the household.
+
+Home Theater Mode also drives this lamp: dark mode switches it out on playback, and a dedicated `paused`/`stopped` rule relights it **only past midnight** (`hour: { lt: sunrise }`) — see [Restore & Ownership Semantics → Carve-Outs](../architecture/rule-engine-restore-semantics.md#carve-outs-when-a-restore-rule-must-not-restore-everything).
 
 ## Configuration File
 
@@ -57,6 +74,12 @@ rules:
     targets:
       Kitchen_Outlet: ON
       ...
+  - name: 'Past midnight - turn off hallway cupboard lamp'
+    once: true                  # One firing per `night` window per calendar day
+    conditions:
+      time_of_day: [night]      # 00:00-04:59 -- the night period already starts at midnight
+    targets:
+      Hallway_Cupboard_Outlet: OFF
   - name: 'Pre-dawn restore - turn on ambient lamps'
     forced_only: true           # Invoke-only: answers a forced hand-off, never a natural tick
     conditions:

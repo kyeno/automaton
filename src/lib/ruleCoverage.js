@@ -207,7 +207,7 @@ export function evaluateRule(conditions, ctx, sensorValues = {}) {
                 for (const op of ops) {
                     const bound = constraint[op]
                     if (bound === undefined) continue
-                    if (temporal.isNatoClockBound(bound)) {
+                    if (temporal.isNatoClockBound(bound) || temporal.isClockWordBound(bound)) {
                         const clockHour = temporal.parseClockHour(bound)
                         if (clockHour === null) return false // malformed clock time -> fail closed
                         resolved[op] = clockHour

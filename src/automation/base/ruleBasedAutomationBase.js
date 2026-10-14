@@ -962,36 +962,65 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         throw new NotImplementedError('resolveCommand() must be implemented by subclass')
     }
 
-    /** Switches-style resolveCommand implementation: the first matching rule.
+    /** Switches-style resolveCommand implementation: EVERY matching rule acts.
+     *
+     * Every matching rule that declares this target contributes to one command, folded in
+     * config order so a later, more specific rule refines the earlier one instead of being
+     * shadowed by it -- structured payloads merge field-wise (their `brightness` maps merge
+     * per channel), a plain ON/OFF contributes only its `state`, and a scalar OPEN/CLOSE is
+     * terminal. Rules owning disjoint targets are unaffected: each device still gets exactly
+     * one command per run. A single contribution yields exactly the payload the old
+     * first-match-wins rule produced, so existing configs keep their behavior.
      * @param {DeviceBase} device - Target device (unused; present for
      * @param {string} targetId - Rule-target key for the device -- its friendly name trimmed, whitespace collapsed to underscores (see toTargetKey in lib/string.js)
      * @param {{}[]} matchingRules - Rules whose conditions matched
      * @returns {{payload: object|string}|null} Object with payload, or null */
     simpleResolveCommand(device, targetId, matchingRules) {
-        let command = null
+        let merged = null
         for (const rule of matchingRules) {
             const cmd = rule.targets?.[targetId]
-            if (cmd !== undefined) {
-                command = cmd
-                break
-            }
+            if (cmd === undefined) continue
+            merged = this.#mergeSimpleCommand(merged, cmd)
         }
 
-        if (command === null || command === undefined) return null
+        if (merged === null) return null
+        return { payload: merged }
+    }
 
-        //  Structured commands are already device-native payloads ({brightness}, {state}, ...)
+    /** Fold one matching rule's command for a target into the accumulated payload.
+     * @private
+     * @param {object|string|null} accumulated - Payload built from the rules seen so far
+     * @param {*} command - This rule's raw target value: ON/OFF, OPEN/CLOSE, a position, or a structured map
+     * @returns {object|string|null} Accumulated payload after applying this command */
+    #mergeSimpleCommand(accumulated, command) {
+        if (command === null || command === undefined) return accumulated
+
+        //  Structured commands are already device-native payloads ({brightness}, {state}, ...).
+        //  The per-channel brightness map merges channel-wise; every other field wins whole.
         if (typeof command === 'object') {
-            return { payload: command }
+            if (accumulated === null || typeof accumulated === 'string') return { ...command }
+            const out = { ...accumulated }
+            for (const [key, value] of Object.entries(command)) {
+                const isBrightness = key === 'brightness'
+                    && value && typeof value === 'object' && !Array.isArray(value)
+                if (isBrightness && out.brightness && typeof out.brightness === 'object') {
+                    out.brightness = { ...out.brightness, ...value }
+                } else {
+                    out[key] = value
+                }
+            }
+            return out
         }
 
         const upper = String(command).toUpperCase()
-        if (upper === 'ON' || upper === 'OFF') {
-            return { payload: { state: upper } }
-        }
-        if (upper === 'OPEN' || upper === 'CLOSE') {
-            return { payload: upper }
-        }
-        return { payload: { position: Number(command) } }
+        if (upper === 'OPEN' || upper === 'CLOSE') return upper
+
+        const piece = (upper === 'ON' || upper === 'OFF')
+            ? { state: upper }
+            : { position: Number(command) }
+
+        if (accumulated === null || typeof accumulated === 'string') return piece
+        return { ...accumulated, ...piece }
     }
 
     //  Private helpers.
@@ -1148,7 +1177,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         const precise = ops.some((op) => {
             const bound = constraints[op]
             if (bound === undefined) return false
-            return this.#isSunShorthand(bound) || temporal.isNatoClockBound(bound)
+            //  Sun tokens and named anchors ('midnight'/'noon') arrive as strings and must be
+            //  resolved to fractional hours; comparing them raw would fail closed on a string.
+            return this.#isSunShorthand(bound) || temporal.isNatoClockBound(bound) || temporal.isClockWordBound(bound)
         })
         if (!precise) return this.#matchesNumericRange(nowHour, constraints)
 
