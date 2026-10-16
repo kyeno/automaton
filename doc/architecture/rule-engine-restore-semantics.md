@@ -52,10 +52,49 @@ There is **no snapshot-based filtering** ("only reopen what it closed itself"): 
 
 A restore rule's target list **is** its ownership list, and a restore rule restores exactly what it lists -- every time, at the same value. So when two automations own the same device at different hours, that device has to be carved out of one of the lists:
 
-- The **hallway cupboard lamp** (`Hallway Cupboard Outlet`, live `Przedpokoj Gniazdo Szafka`) is lit by [Ambient Lights](../automations/ambient-lights.md) from dusk, switched off by that automation's own past-midnight rule, and cleared by its bright-morning safety net. Home Theater's general `paused`/`stopped` restore therefore does **not** list it. Home Theater still switches it out for dark mode and still relights it -- but only through a dedicated rule of its own, gated by `hour: { lt: sunrise }`, so a movie paused at 21:00 in October does not light a cupboard lamp that the household expects to be out by then.
+- The **hallway cupboard lamp** (`Hallway Cupboard Outlet`, live `Przedpokoj Gniazdo Szafka`) is lit by [Ambient Lights](../automations/ambient-lights.md) from dusk, switched off by that automation's own past-midnight rule, and cleared by its bright-morning safety net. Home Theater's general `paused`/`stopped` restore therefore does **not** list it. Home Theater still switches it out for dark mode and still relights it -- but only through a dedicated rule of its own, gated by `hour: { gte: sunset }`, i.e. civil dusk to **midnight** and out for the rest of the night. A movie paused at 21:00 in October lights the cupboard; one paused at 02:00 does not, because after midnight the lamp belongs to the "night is over" side of the household, not to a player hand-off.
 - Ambient Lights' **pre-dawn restore** carves the same lamp out in the other direction: it restores the lamps its owner owns, and the cupboard lamp is deliberately not among them, because past midnight the lamp belongs to the "night is over" rule, not to a player hand-off.
 
 The dedicated rule is the pattern to copy: keep the general restore rule's target list to the devices whose ownership you hold across the whole window, and give the carved-out device a rule of its own carrying the narrower gate. Both rules then match in the same tick and the engine merges them -- see [Configuration Guide → Target Keys](../configuration.md#target-keys-targets).
+
+## Transition Gating: Which Change Is a Hand-Off
+
+A restore rule keyed on a player *status* answers "is it not playing?" -- and that is not the
+question it means to ask. The [playback-settle](../monitors/video-player.md#playback-settle) window
+publishes an about-to-play player as `stopped` for the length of its dwell, so the transition
+`offline → stopped` (a player that started answering HTTP again, heading to play) satisfies
+`[paused, stopped]` exactly as `playing → stopped` does. A status-only restore rule therefore
+restores the room **on the way into a movie**, and dark mode puts it out again a minute later: a
+visible flash, repeated on every settle window.
+
+The fix is to name the transition's **origin** instead of adding a timer:
+
+```yaml
+      state_transition: { 'videoPlayer:my-pc': { from: playing } }
+```
+
+| Transition | Satisfies `from: playing`? | Restore fires? |
+|------------|---------------------------|----------------|
+| `playing → paused` — a real pause | ✅ | ✅ |
+| `playing → stopped` — film ended | ✅ | ✅ |
+| `playing → offline` — player closed mid-film | ✅ | ✅ (hand-off) |
+| `offline → stopped` — player appeared, heading to play | ❌ | suppressed |
+| `stopped → paused` — scrubbing / browsing | ❌ | suppressed |
+| first row ever (`from_state` is null) | ❌ | suppressed |
+
+Three properties make this the right shape for a restore rule:
+
+- **No timing assumption.** It reads the durable `state_events` history the engine already writes,
+  so it does not care how long the settle window is, how fast the provider polls, or how the host
+  behaves. Nothing to tune, and nothing that drifts.
+- **It is inert, not fatal, when history is missing** — a store that is down, a host the monitor
+  never swept, a fresh install. Like `state_changed_ago_minutes`, a rule that depends on history
+  never goes silently dark because the history is absent.
+- **It gates the hand-off, not the hand-back.** The `offline` rule that force-fires the room's
+  owners stays ungated: an appearing player must still be able to hand the room back. Only the
+  rules that *undo dark mode* are pinned to a departure from playback.
+
+See [Configuration Guide → Transition Origin Gate](../configuration.md#transition-origin-gate-state_transition).
 
 ## Related Documentation
 

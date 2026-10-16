@@ -27,6 +27,16 @@ A raw `playing` report from a player can mean either "a movie is genuinely playi
 
 Because both rule-engine consumers already read `getStatus(host)`, this behavior is global to every video-player-driven automation (per-rule `video_player` conditions *and* the suppression guard) without any YAML change.
 
+**The settle window has a mirror effect on the restore side.** While a player is unsettled it reads
+as `stopped`, so a player that merely became reachable again — `offline → stopped`, on its way to
+playing — satisfies a `[paused, stopped]` condition exactly like a real pause. A light-restore rule
+keyed on status alone therefore restores the room *on the way into a movie*, and dark mode puts it
+out again once playback settles: a visible flash, repeating on every settle window. The cure is the
+[`state_transition`](../configuration.md#transition-origin-gate-state_transition) condition, which
+names the origin of the player's last recorded transition (`{ from: playing }`) so only a genuine
+departure from playback restores light. Home Theater's restore and delegate rules use it; the
+`offline` hand-off rule deliberately does not.
+
 Reset semantics:
 
 | Event | Effect on the dwell clock / session |

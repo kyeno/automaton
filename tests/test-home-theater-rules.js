@@ -217,13 +217,16 @@ const RULES_OFFICE = [
     // Online player that has paused/stopped: restore the lamp set locally (the salon dimmer
     // comes back at l1 50% / l2 25%). A GONE player instead delegates to the ambient-lights
     // owner via the rule above, so the two never fight over the same lamps.
-    { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, 'time_of_day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
+    { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, 'state_transition': { 'videoPlayer:htpc': { from: 'playing' } }, 'time_of_day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
     // The hallway cupboard lamp on its own terms: the same player state and illuminance gate as
-    // the restore rule, narrowed to the dark half of the night. Both rules match on one
-    // post-midnight pause and each contributes its own targets -- every matching rule acts, none
-    // is shadowed. `hour: { lt: sunrise }` alone means midnight -> civil dawn; the hour axis
-    // starts at midnight, so a lower bound there would be tautological.
-    { name: 'Office: paused/stopped past midnight - hallway cupboard lamp', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, illuminance: { lt: 900 }, hour: { lt: 'sunrise' } }, targets: { Hallway_Cupboard_Outlet: 'ON' } },
+    // the restore rule, narrowed to the EVENING half of the night -- civil dusk to midnight, and
+    // out for the rest of the night. Both rules match on a pre-midnight pause and each
+    // contributes its own targets; every matching rule acts, none is shadowed. `hour: { gte:
+    // sunset }` stops at midnight on its own: the hour axis ends at 24:00, so no upper bound is
+    // needed. `state_transition` pins the origin of the player's last transition -- a real pause
+    // is `playing -> paused` -- so a player that merely came back (`offline -> stopped`, published
+    // as `stopped` for the length of its playback-settle dwell) does not read as a pause.
+    { name: 'Office: paused/stopped before midnight - hallway cupboard lamp', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, 'state_transition': { 'videoPlayer:htpc': { from: 'playing' } }, illuminance: { lt: 900 }, hour: { gte: 'sunset' } }, targets: { Hallway_Cupboard_Outlet: 'ON' } },
     { name: 'Office: playing - dark mode (lights off)', conditions: { 'video_player': { htpc: ['playing'] } }, targets: { Living_Room_Plug: 'OFF', Kitchen_Plug: 'OFF', Hallway_Cupboard_Outlet: 'OFF', Salon_Ambient_Dimmer: 'OFF' } }
 ]
 
@@ -235,7 +238,7 @@ const RULES_BUNDLED = [
     // for every non-playing state. This exercises the base class's flexibility to mix a
     // local-restore room (office) with a fully-delegating room (bedroom) in one instance.
     { name: 'Bedroom: player gone - hand back to the room owners', conditions: { 'video_player': { bedroom: ['offline'] } }, invoke_automation: [{ name: 'BedroomRollersAutomation', force: true }, { name: 'AmbientLightsAutomation', force: true }] },
-    { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video_player': { bedroom: ['paused', 'stopped', 'offline'] } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
+    { name: 'Bedroom: not playing - delegate light restore to ambient lights', conditions: { 'video_player': { bedroom: ['paused', 'stopped', 'offline'] }, 'state_transition': { 'videoPlayer:bedroom': { from: 'playing' } } }, invoke_automation: { name: 'AmbientLightsAutomation', force: true } },
     { name: 'Bedroom: playing - dark mode (lights off)', conditions: { 'video_player': { bedroom: ['playing'] } }, targets: { Bedroom_Plug: 'OFF' } }
 ]
 
@@ -736,72 +739,74 @@ console.log('\n── Home theater (timer gate): idle ticks do not re-fire or re
     fs.rmSync(dir, { recursive: true, force: true })
 }
 
-console.log('\n── Home theater (single-room instance): hallway cupboard lamp -- past midnight only ──\n')
+console.log('\n── Home theater (single-room instance): hallway cupboard lamp -- before midnight only ──\n')
 
 {
     // The dedicated rule owns the cupboard lamp alone: the same player state and illuminance gate
-    // as the restore rule, narrowed to midnight -> civil dawn. `sundawn` is that day's real civil
-    // dawn, so the sun gate is exercised against a real number, any month.
+    // as the restore rule, narrowed to civil dusk -> midnight. `sundusk` is that day's real civil
+    // dusk, so the sun gate is exercised against a real number, any month.
     const sun = solar.getSunTimes(new Date(2026, 9, 15))
     const sundawn = sun.sundawn.getTime()
     const sundusk = sun.sundusk.getTime()
     const DARK = { timeOfDay: 'night', illuminance: 100, sundawn, sundusk }
     const BRIGHT = { timeOfDay: 'night', illuminance: 1500, sundawn, sundusk }
 
-    // 02:00, dark: ONE pause fires BOTH rules in ONE run. The restore rule lights its lamps and
-    // the post-midnight rule lights the cupboard -- every matching rule acts, none is shadowed.
-    let restoreClock = stubDate(9 /* October */, 15, 2)
+    // 21:00, dark: ONE pause before midnight fires BOTH rules in ONE run. The restore rule lights
+    // its lamps and the cupboard rule lights the cupboard -- every matching rule acts, none is
+    // shadowed.
+    const restoreClockEve = stubDate(9 /* October */, 15, 21)
     try {
         let devices = await runSequenceWith('office', makeOfficeDevices(), [
             { htpc: 'playing' },
             { htpc: 'paused' }
-        ], DARK)
+        ], { ...DARK, timeOfDay: 'evening' })
         assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }, { state: 'ON' }],
-            'cupboard lamp: OFF on the playing tick, ON on the post-midnight pause')
+            'cupboard lamp: OFF on the playing tick, ON on the pre-midnight pause')
         assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
             'restore rule lights its own lamps on the same tick -- two rules, one run')
 
-        // 02:00, bright: the illuminance gate rejects -- the cupboard lamp stays out.
+        // 21:00, bright: the illuminance gate rejects -- the cupboard lamp stays out.
         devices = await runSequenceWith('office', makeOfficeDevices(), [
             { htpc: 'playing' },
             { htpc: 'paused' }
-        ], BRIGHT)
+        ], { ...BRIGHT, timeOfDay: 'evening' })
         assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
-            'cupboard lamp: dark-mode OFF only -- a bright post-midnight pause does not light it')
-    } finally {
-        restoreClock()
-    }
-
-    // 21:00, dark: BEFORE midnight the sun gate rejects -- the restore rule still lights its
-    // lamps, so the cupboard lamp is the one lamp an evening pause does not light.
-    const restoreClockEve = stubDate(9, 15, 21)
-    try {
-        const devices = await runSequenceWith('office', makeOfficeDevices(), [
-            { htpc: 'playing' },
-            { htpc: 'paused' }
-        ], { ...DARK, timeOfDay: 'evening' })
-        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
-            'cupboard lamp: dark-mode OFF only -- a pre-midnight pause leaves it out')
-        assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
-            'restore rule still lights its own lamps before midnight (independent gates)')
+            'cupboard lamp: dark-mode OFF only -- a bright pre-midnight pause does not light it')
     } finally {
         restoreClockEve()
     }
 
-    // 04:30, dark: the "dark morning" -- the window runs right up to civil dawn.
+    // 02:00, dark: AFTER midnight the sun gate is closed -- the restore rule still lights its
+    // lamps, so the cupboard lamp is the one lamp a night pause does not light. Watching into the
+    // small hours restores the room's main lamps only.
+    const restoreClock = stubDate(9, 15, 2)
+    try {
+        const devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], DARK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
+            'cupboard lamp: dark-mode OFF only -- a post-midnight pause leaves it out')
+        assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+            'restore rule still lights its own lamps after midnight (independent gates)')
+    } finally {
+        restoreClock()
+    }
+
+    // 04:30, dark: the "dark morning" -- the cupboard lamp stays out right through to dawn.
     const restoreClock2 = stubDate(9, 15, 4)
     try {
         const devices = await runSequenceWith('office', makeOfficeDevices(), [
             { htpc: 'playing' },
             { htpc: 'paused' }
         ], DARK)
-        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }, { state: 'ON' }],
-            'cupboard lamp: lit on a 04:00 pause too (the window runs to civil dawn)')
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
+            'cupboard lamp: not lit on a 04:00 pause either -- its window ends at midnight')
     } finally {
         restoreClock2()
     }
 
-    // 07:00, dark: past civil dawn the sun gate closes again -- no dawn lamp lighting.
+    // 07:00, dark: past civil dawn the sun gate is closed on both ends -- no lamp lighting.
     const restoreClock3 = stubDate(9, 15, 7)
     try {
         const devices = await runSequenceWith('office', makeOfficeDevices(), [
@@ -809,9 +814,98 @@ console.log('\n── Home theater (single-room instance): hallway cupboard lamp
             { htpc: 'paused' }
         ], DARK)
         assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }],
-            'cupboard lamp: not lit past civil dawn -- the rule is gated to midnight -> dawn')
+            'cupboard lamp: not lit past civil dawn -- the rule is gated to dusk -> midnight')
     } finally {
         restoreClock3()
+    }
+}
+
+console.log('\n── Home theater (transition gate): a player that APPEARED is not a pause ──\n')
+
+{
+    // The playback-settle window publishes an about-to-play player as `stopped` for the length of
+    // its dwell, so `offline -> stopped` -- the player answering HTTP again, heading to play --
+    // reads exactly like a pause to a status-only condition, and the lamps flash on its way to
+    // playing. `state_transition` pins the ORIGIN of the subject's last recorded transition, so
+    // only a departure from playback (`playing -> paused/stopped`) restores light. No timing
+    // assumption, no delay: the history already distinguishes the two.
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'automaton-htpc-transition-'))
+    const dbFile = join(dir, 'state.db')
+    assert(await DatabaseService.init(dbFile), 'database available for the transition-gate scenarios')
+
+    const sun = solar.getSunTimes(new Date(2026, 9, 15))
+    const DUSK = {
+        timeOfDay: 'evening',
+        illuminance: 100,
+        sundawn: sun.sundawn.getTime(),
+        sundusk: sun.sundusk.getTime()
+    }
+
+    // 21:00 -- inside the cupboard lamp's window, so the sun gate is not what is being tested.
+    const restoreClock = stubDate(9 /* October */, 15, 21)
+    try {
+        // A player that merely came back: `offline -> stopped`. Every status gate says "stopped",
+        // which the restore rules key on -- only the origin gate keeps the lamps from flashing.
+        let devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: null },
+            { htpc: 'stopped' }
+        ], DUSK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [],
+            'offline -> stopped: the cupboard lamp stays out -- an appearing player is not a pause')
+        assertCalls(devices, 'Living_Room_Plug', [],
+            'offline -> stopped: the restore rule does not light its lamps on an appearing player')
+
+        // The same player plays, then pauses for real: `playing -> paused`.
+        devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], DUSK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }, { state: 'ON' }],
+            'playing -> paused: the cupboard lamp lights -- a real pause restores it')
+        assertCalls(devices, 'Living_Room_Plug', [{ state: 'OFF' }, { state: 'ON' }],
+            'playing -> paused: the restore rule lights its lamps on the same tick')
+
+        // Scrubbing and browsing inside a player that is not playing: `stopped -> paused`. The
+        // status lands on `paused`, which the rules key on, but nothing left playback.
+        devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'stopped' },
+            { htpc: 'paused' }
+        ], DUSK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [],
+            'stopped -> paused: nothing lights -- scrubbing is not a departure from playback')
+        assertCalls(devices, 'Living_Room_Plug', [],
+            'stopped -> paused: the restore rule stays quiet too')
+    } finally {
+        restoreClock()
+        await DatabaseService.close()
+        fs.rmSync(dir, { recursive: true, force: true })
+    }
+}
+
+console.log('\n── Home theater (transition gate): no history leaves the gate inert ──\n')
+
+{
+    // Availability follows `state_changed_ago_minutes`: with no recorded history the gate is inert
+    // rather than fatal, so a store that is down (or a host never swept) never silences a rule.
+    // The scenarios above run with the store closed, and the cupboard lamp lights there.
+    const sun = solar.getSunTimes(new Date(2026, 9, 15))
+    const DUSK = {
+        timeOfDay: 'evening',
+        illuminance: 100,
+        sundawn: sun.sundawn.getTime(),
+        sundusk: sun.sundusk.getTime()
+    }
+    const restoreClock = stubDate(9 /* October */, 15, 21)
+    try {
+        assert(!DatabaseService.isAvailable(), 'no transition history available for this scenario')
+        const devices = await runSequenceWith('office', makeOfficeDevices(), [
+            { htpc: 'playing' },
+            { htpc: 'paused' }
+        ], DUSK)
+        assertCalls(devices, 'Hallway_Cupboard_Outlet', [{ state: 'OFF' }, { state: 'ON' }],
+            'with no history the gate is inert -- the pause still restores the cupboard lamp')
+    } finally {
+        restoreClock()
     }
 }
 
@@ -819,34 +913,43 @@ console.log('\n── Home theater (shipped configs): hallway cupboard lamp rule
 
 {
     // Both shipped configs must keep the cupboard lamp OUT of the restore rule and in a rule of
-    // its own, gated to midnight -> civil dawn, with dark mode still putting it out on playback.
+    // its own, gated to civil dusk -> midnight, with dark mode still putting it out on playback
+    // and both restore paths pinned to a transition that came FROM playing.
     const FILES = [
-        { file: 'etc/automation/home-office-video.yaml', cupboard: 'Przedpokoj_Gniazdo_Szafka', lux: 700 },
-        { file: 'etc/automation/home-office-video.yaml.dist', cupboard: 'Hallway_Cupboard_Outlet', lux: 900 },
+        { file: 'etc/automation/home-office-video.yaml', host: 'htpc', cupboard: 'Przedpokoj_Gniazdo_Szafka', lux: 700 },
+        { file: 'etc/automation/home-office-video.yaml.dist', host: 'my-pc', cupboard: 'Hallway_Cupboard_Outlet', lux: 900 },
     ]
-    for (const { file, cupboard, lux } of FILES) {
+    for (const { file, host, cupboard, lux } of FILES) {
         const full = join(ROOT, file)
         if (!fs.existsSync(full)) continue
         const rules = yamlParse(fs.readFileSync(full, 'utf8')).rules ?? []
         const find = (re) => rules.find((r) => re.test(r.name))
         const restore = find(/restore ambient lighting$/)
-        const midnight = find(/past midnight/)
+        const evening = find(/before midnight/)
         const dark = find(/dark mode/)
-        const playerStates = midnight?.conditions?.video_player
-            ? Object.values(midnight.conditions.video_player)[0] : null
+        const playerStates = evening?.conditions?.video_player
+            ? Object.values(evening.conditions.video_player)[0] : null
+        const originGate = (rule) => {
+            const from = rule?.conditions?.state_transition?.[`videoPlayer:${host}`]?.from
+            return from === undefined ? undefined : (Array.isArray(from) ? from : [from])
+        }
 
-        assert(restore && midnight && dark, `${file}: restore, post-midnight and dark-mode rules all exist`)
+        assert(restore && evening && dark, `${file}: restore, before-midnight and dark-mode rules all exist`)
         assert(restore?.targets?.[cupboard] === undefined,
             `${file}: the restore rule no longer targets the cupboard lamp`)
-        assert(JSON.stringify(Object.keys(midnight?.targets ?? {})) === JSON.stringify([cupboard]),
-            `${file}: the post-midnight rule owns the cupboard lamp alone`)
-        assert(midnight?.targets?.[cupboard] === 'ON', `${file}: the post-midnight rule lights it`)
-        assert(midnight?.reassert_state === true, `${file}: it re-asserts past a stale cached state`)
-        assert(midnight?.conditions?.hour?.lt === 'sunrise' && midnight?.conditions?.hour?.gte === undefined,
-            `${file}: its window is \`hour: { lt: sunrise }\` -- midnight is the axis floor, no gte`)
-        assert(midnight?.conditions?.illuminance?.lt === lux, `${file}: it keeps the restore lux gate (${lux})`)
+        assert(JSON.stringify(Object.keys(evening?.targets ?? {})) === JSON.stringify([cupboard]),
+            `${file}: the before-midnight rule owns the cupboard lamp alone`)
+        assert(evening?.targets?.[cupboard] === 'ON', `${file}: the before-midnight rule lights it`)
+        assert(evening?.reassert_state === true, `${file}: it re-asserts past a stale cached state`)
+        assert(evening?.conditions?.hour?.gte === 'sunset' && evening?.conditions?.hour?.lt === undefined,
+            `${file}: its window is \`hour: { gte: sunset }\` -- dusk to midnight, the axis ceiling needs no bound`)
+        assert(evening?.conditions?.illuminance?.lt === lux, `${file}: it keeps the restore lux gate (${lux})`)
         assert(JSON.stringify(playerStates) === JSON.stringify(['paused', 'stopped']),
             `${file}: it keys on the same player states as the restore rule`)
+        assert(JSON.stringify(originGate(restore)) === JSON.stringify(['playing']),
+            `${file}: the restore rule restores only a transition that came from playing`)
+        assert(JSON.stringify(originGate(evening)) === JSON.stringify(['playing']),
+            `${file}: the cupboard lamp lights only on a transition that came from playing`)
         assert(dark?.targets?.[cupboard] === 'OFF', `${file}: dark mode still puts it out on playback`)
     }
 }
@@ -892,6 +995,19 @@ console.log('\n── Deployment consistency (shipped etc/automation instances) 
                         assert(declared.has(host),
                             `${fileName}: rule "${rule.name}" watches host "${host}", which is not in its triggers`)
                     }
+                }
+                // `state_transition` refs are '<domain>:<subject>'; a video-player origin gate on a
+                // host this instance is never woken by would read history it cannot act on.
+                const transitions = (conditions['state_transition'] && typeof conditions['state_transition'] === 'object')
+                    ? conditions['state_transition'] : {}
+                for (const ref of Object.keys(transitions)) {
+                    const sep = String(ref).indexOf(':')
+                    const domain = sep > 0 ? ref.slice(0, sep) : ''
+                    const subject = sep > 0 ? ref.slice(sep + 1) : ref
+                    assert(domain === 'videoPlayer',
+                        `${fileName}: rule "${rule.name}" gates state_transition on domain "${domain || '(none)'}", expected 'videoPlayer'`)
+                    assert(declared.has(subject),
+                        `${fileName}: rule "${rule.name}" gates state_transition on host "${subject}", which is not in its triggers`)
                 }
             }
             // Trigger topics stay scoped to the declared hosts and sensors only.

@@ -42,6 +42,30 @@ const ONCE_MARKER_TTL_SECONDS = 172_800
  * @type {number} */
 const RULE_MATCH_HISTORY_SIZE = 25
 
+/** How many recent automation calls (runs) one automation keeps for the UI rules window.
+ * @type {number} */
+const RULE_RUN_HISTORY_SIZE = 10
+
+/** Run outcome vocabulary recorded per automation call, so the rules window can show what
+ * a call did -- including the calls that deliberately did nothing.
+ * @type {Readonly<{ACTED: string, NOOP: string, NO_MATCH: string, SUPPRESSED: string, SKIPPED: string, BLOCKED: string, RUNNING: string}>} */
+const RUN_OUTCOMES = Object.freeze({
+    /** Rules matched and something was dispatched, deferred to a human, or delegated. */
+    ACTED: 'acted',
+    /** Rules matched, nothing was dispatched. */
+    NOOP: 'noop',
+    /** Conditions were evaluated and no rule matched. */
+    NO_MATCH: 'no-match',
+    /** The run was silenced before any work: silent period or video-player stand-down. */
+    SUPPRESSED: 'suppressed',
+    /** React-on-change gating found no monitored change, so the tick was dropped. */
+    SKIPPED: 'skipped',
+    /** The run could not be evaluated at all (context build failed). */
+    BLOCKED: 'blocked',
+    /** The run is still in flight; only visible while execute() has not returned. */
+    RUNNING: 'running'
+})
+
 /** Enumerated status meaning "no usable player signal" */
 const VIDEO_PLAYER_OFFLINE = 'offline'
 
@@ -55,6 +79,7 @@ const SCALAR_CONDITION_KEYS = Object.freeze(new Set([
     'presence',
     'video_player',
     'state_changed_ago_minutes',
+    'state_transition',
     'after_latest_of',
     'after_earliest_of',
     'any_of',
@@ -80,7 +105,8 @@ function ruleMissExplanationEnabled() {
 const LEGACY_CONDITION_KEY_RENAMES = Object.freeze({
     'time-of-day': 'time_of_day',
     'video-player': 'video_player',
-    'state-changed-ago-minutes': 'state_changed_ago_minutes'
+    'state-changed-ago-minutes': 'state_changed_ago_minutes',
+    'state-transition': 'state_transition'
 })
 
 /** Recursively scan a rule's conditions tree for legacy kebab-case condition keys.
@@ -130,6 +156,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     /** Most recent rule matches performed by this automation, newest first, capped at
      * @type {Array<{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean}>} */
     #recentRuleMatches = []
+
+    /** Most recent automation calls (runs) this automation performed, newest first,
+     * @type {Array<{automation: string, run: number, at: number, trigger: string, forced: boolean, outcome: string, reason: string, rules: Array<string>}>} */
+    #recentRuns = []
+
+    /** Counter feeding the per-automation run ids handed out by #beginRun().
+     * @type {number} */
+    #runSeq = 0
 
     /** Construct a rule-based automation.
      * @param {object} options - Constructor options
@@ -344,6 +378,16 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
+        //  Transition-origin gate -- require the subject's most recent transition to have come
+        //  FROM (and optionally TO) specific states. A status-only condition cannot tell a player
+        //  that PAUSED from one that merely APPEARED: the playback-settle window publishes an
+        //  about-to-play player as `stopped` for the length of its dwell, so `offline -> stopped`
+        //  (player answering again, heading to play) reads exactly like a pause. Naming the origin
+        //  state separates the two with no timing assumption: a real pause is `playing -> paused`.
+        if (conditions['state_transition'] !== undefined) {
+            if (!await this.#checkStateTransition(conditions['state_transition'])) return false
+        }
+
         //  Sun/clock merged gates -- fire once now has passed the LATEST (after_latest_of) or EARLIEST.
         for (const [gateKey, candidates] of Object.entries(conditions)) {
             if (gateKey !== 'after_latest_of' && gateKey !== 'after_earliest_of') continue
@@ -465,6 +509,25 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 }
             }
 
+            //  Transition-origin gate.
+            if (conditions['state_transition'] !== undefined) {
+                for (const [ref, expectation] of Object.entries(conditions['state_transition'] ?? {})) {
+                    const { domain, subject } = this.#parseSubjectRef(ref)
+                    const transition = await DatabaseService.lastTransition(domain, subject)
+                    if (transition == null) continue
+                    if (!this.#transitionSideMatches(expectation, transition.fromState)) {
+                        const wanted = (expectation && typeof expectation === 'object' && !Array.isArray(expectation))
+                            ? expectation.from : expectation
+                        const list = (wanted === undefined || wanted === null) ? [] : (Array.isArray(wanted) ? wanted : [wanted])
+                        return `state_transition '${ref}' came from '${transition.fromState ?? 'nothing'}', required [${list.join(', ')}]`
+                    }
+                    if (!this.#transitionSideMatches(expectation?.to, transition.toState)) {
+                        const list = Array.isArray(expectation?.to) ? expectation.to : [expectation?.to]
+                        return `state_transition '${ref}' went to '${transition.toState}', required [${list.join(', ')}]`
+                    }
+                }
+            }
+
             //  Sun/clock merged gates.
             for (const [gateKey, candidates] of Object.entries(conditions)) {
                 if (gateKey !== 'after_latest_of' && gateKey !== 'after_earliest_of') continue
@@ -514,12 +577,14 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     async execute(triggerData = null) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         const forced = triggerData?.force === true
+        const run = this.#beginRun(triggerSource, forced)
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
         // Opt-in react-on-change gating (config.trigger_on_change_only)
         if (this.config.trigger_on_change_only === true && !forced && triggerSource === 'timer') {
             if (!await this.#changedSinceLastEvaluation()) {
                 this.log('No monitored state change since last run -- skipping scheduled tick', 'debug')
+                this.#finishRun(run, RUN_OUTCOMES.SKIPPED, 'no monitored state change')
                 return
             }
         }
@@ -536,6 +601,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                     `Suppressed during silent period (${triggerSource})`,
                     'debug'
                 )
+                this.#finishRun(run, RUN_OUTCOMES.SUPPRESSED, 'silent period')
                 return
             }
         }
@@ -549,6 +615,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 )
                 if (!hasExemptRule) {
                     this.log(`Suppressed by video_player_suppression (${triggerSource})`, 'debug')
+                    this.#finishRun(run, RUN_OUTCOMES.SUPPRESSED, 'video_player_suppression')
                     return
                 }
                 suppressionActive = true
@@ -573,6 +640,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 `Context build failed (${this.#contextFailCount}/${CONTEXT_FAILURE_ESCALATION_THRESHOLD}): ${error.message}`,
                 level
             )
+            this.#finishRun(run, RUN_OUTCOMES.BLOCKED, `context build failed: ${error.message}`)
             return
         }
 
@@ -614,7 +682,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 }
 
                 matchingRules.push(rule)
-                runRecords.push(this.#recordRuleMatch(rule, triggerSource, forced))
+                runRecords.push(this.#recordRuleMatch(rule, triggerSource, forced, run))
                 this.log(`Rule matched: "${rule.name}"`, 'debug')
             } catch (error) {
                 this.log(`Error evaluating rule "${rule.name}": ${error.message}`, 'error')
@@ -623,6 +691,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
 
         if (matchingRules.length === 0) {
             this.log('No rules matched, no action', 'debug')
+            this.#finishRun(run, RUN_OUTCOMES.NO_MATCH, '')
             return
         }
 
@@ -668,7 +737,13 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             }
         }
 
-        this.#publishRuleMatchOutcome(runRecords, dispatchedCount > 0 || humanSkippedCount > 0 || invokedCount > 0)
+        const acted = dispatchedCount > 0 || humanSkippedCount > 0 || invokedCount > 0
+        this.#publishRuleMatchOutcome(runRecords, acted)
+        this.#finishRun(
+            run,
+            acted ? RUN_OUTCOMES.ACTED : RUN_OUTCOMES.NOOP,
+            acted ? '' : 'rules matched, nothing dispatched'
+        )
     }
 
     /** Record one rule match in this automation's recent-match history and publish it.
@@ -676,8 +751,9 @@ export default class RuleBasedAutomationBase extends AutomationBase {
      * @param {{name?: string}} rule - The rule whose conditions matched
      * @param {string} triggerSource - What started the run ('timer', an EventBus topic, ...)
      * @param {boolean} forced - True for forced/delegated runs (`/automation force` and friends)
-     * @returns {{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean}} The live record */
-    #recordRuleMatch(rule, triggerSource, forced) {
+     * @param {{run?: number, rules?: Array<string>}|null} [run] - Call record this match belongs to
+     * @returns {{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean, run: number|null}} The live record */
+    #recordRuleMatch(rule, triggerSource, forced, run = null) {
         const record = {
             automation: this.name,
             rule: (rule && typeof rule.name === 'string' && rule.name) ? rule.name : '(unnamed)',
@@ -685,6 +761,13 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             trigger: triggerSource,
             forced: forced === true,
             acted: false,
+            run: (run && typeof run.run === 'number') ? run.run : null,
+        }
+
+        //  Group the match under its call so the rules window can list the rules one
+        //  automation call fired, not one row per rule.
+        if (run && Array.isArray(run.rules) && !run.rules.includes(record.rule)) {
+            run.rules.push(record.rule)
         }
 
         this.#recentRuleMatches.unshift(record)
@@ -709,9 +792,54 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /** This automation's most recent rule matches, newest first.
-     * @returns {Array<{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean}>} Recent matches (empty when none yet) */
+     * @returns {Array<{automation: string, rule: string, at: number, trigger: string, forced: boolean, acted: boolean, run: number|null}>} Recent matches (empty when none yet) */
     getRecentRuleMatches() {
         return this.#recentRuleMatches.map((record) => ({ ...record }))
+    }
+
+    /** Open one automation call: create its run record, push it into the call history and
+     * @param {string} triggerSource - What started the call ('timer', an EventBus topic, ...)
+     * @param {boolean} forced - True for forced/delegated calls
+     * @returns {{automation: string, run: number, at: number, trigger: string, forced: boolean, outcome: string, reason: string, rules: Array<string>}} The live run record
+     * @private */
+    #beginRun(triggerSource, forced) {
+        const run = {
+            automation: this.name,
+            run: ++this.#runSeq,
+            at: Date.now(),
+            trigger: String(triggerSource ?? 'unknown') || 'unknown',
+            forced: forced === true,
+            outcome: RUN_OUTCOMES.RUNNING,
+            reason: '',
+            rules: [],
+        }
+
+        this.#recentRuns.unshift(run)
+        if (this.#recentRuns.length > RULE_RUN_HISTORY_SIZE) {
+            this.#recentRuns.length = RULE_RUN_HISTORY_SIZE
+        }
+
+        return run
+    }
+
+    /** Close one automation call with its outcome and publish it on `automation:runCompleted`.
+     * @param {{run: number, rules: Array<string>}|null} run - Record from #beginRun (null ignored)
+     * @param {string} outcome - One of the RUN_OUTCOMES values
+     * @param {string} [reason] - Human-readable cause shown next to suppressed/blocked calls
+     * @private */
+    #finishRun(run, outcome, reason = '') {
+        if (!run) return
+
+        run.outcome = outcome
+        run.reason = String(reason ?? '')
+
+        EventBus.emit('automation:runCompleted', { ...run, rules: [...run.rules] })
+    }
+
+    /** This automation's most recent calls, newest first -- every run, matched or not.
+     * @returns {Array<{automation: string, run: number, at: number, trigger: string, forced: boolean, outcome: string, reason: string, rules: Array<string>}>} Recent calls (empty when none yet) */
+    getRecentAutomationCalls() {
+        return this.#recentRuns.map((run) => ({ ...run, rules: [...run.rules] }))
     }
 
     /** Normalize an `invoke_automation` spec into a list of {name, force} entries.
@@ -1278,6 +1406,45 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         const idx = str.indexOf(':')
         if (idx <= 0) return { domain: '', subject: str }
         return { domain: str.slice(0, idx), subject: str.slice(idx + 1) }
+    }
+
+    /** Evaluate a `state_transition:` condition map.
+     *  Each entry is a `'<domain>:<subject>'` reference mapped to the transition it must have come
+     *  from: a bare status (or list) is shorthand for the origin, and `{ from, to }` pins both
+     *  sides. A side that is absent, null or an empty list matches anything.
+     *  Availability follows `state_changed_ago_minutes`: with no recorded history for the subject
+     *  the gate is inert rather than fatal, so a store that is down never silences a rule.
+     * @private
+     * @param {Record<string, string|string[]|{from?: string|string[], to?: string|string[]}>} spec
+     *   Condition value from YAML.
+     * @returns {Promise<boolean>} True when every referenced subject's last transition satisfies it. */
+    async #checkStateTransition(spec) {
+        for (const [ref, expectation] of Object.entries(spec ?? {})) {
+            const { domain, subject } = this.#parseSubjectRef(ref)
+            const transition = await DatabaseService.lastTransition(domain, subject)
+            if (transition == null) continue   // no history to judge -> gate inert
+            if (!this.#transitionSideMatches(expectation, transition.fromState)) return false
+            if (!this.#transitionSideMatches(expectation?.to, transition.toState)) return false
+        }
+        return true
+    }
+
+    /** Match one expectation against a single side of a recorded transition.
+     * @private
+     * @param {string|string[]|{from?: string|string[], to?: string|string[]}|undefined} expectation
+     *   The whole spec object (origin side reads its `from`, falling back to the bare value) or a
+     *   standalone status/list.
+     * @param {string|null} actual - The recorded state on that side; null when nothing preceded it.
+     * @returns {boolean} True when the side satisfies the expectation. */
+    #transitionSideMatches(expectation, actual) {
+        let wanted = expectation
+        if (expectation && typeof expectation === 'object' && !Array.isArray(expectation)) {
+            wanted = expectation.from        // origin side: read `from`; absent -> matches anything
+        }
+        if (wanted === undefined || wanted === null) return true
+        const list = Array.isArray(wanted) ? wanted : [wanted]
+        if (list.length === 0) return true
+        return list.includes(actual)
     }
 
     /** Whether any subject this automation monitors recorded a state transition after our last.

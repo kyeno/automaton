@@ -153,6 +153,18 @@ class SDatabaseService {
         }
     }
 
+    /** The subject's most recent recorded transition, origin state included.
+     *  `fromState` is null for the very first row ever written for that subject -- the subject
+     *  appeared, it did not transition from anything.
+     * @param {string} domain - Domain identifier.
+     * @param {string} subject - Subject identifier.
+     * @returns {Promise<{ts: number, fromState: string|null, toState: string, source: string}|null>}
+     *          Newest transition, or null when the store is unavailable or holds none. */
+    async lastTransition(domain, subject) {
+        const rows = await this.getTransitions({ domain, subject, limit: 1 })
+        return rows.length > 0 ? rows[0] : null
+    }
+
     /** How long (ms) the subject sat in its state immediately preceding the current one --
      * @param {string} domain - Domain identifier.
      * @param {string} subject - Subject identifier.

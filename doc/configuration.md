@@ -176,10 +176,10 @@ ui:
       channel: "!rules"
       title: "Rules"
       shortcut: 5
-      readonly: true         # Read-only: the rule-match table is written by the automations
+      readonly: true         # Read-only: the automation call boxes are written by the automations
 ```
 
-Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows exist only when their backing services are configured. The `rules` window lists recent automation rule matches (see [UI Windows](ui/index.md)).
+Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows exist only when their backing services are configured. The `rules` window shows every rule-based automation as a box holding its last calls, one tab per automation (see [UI Windows](ui/index.md)).
 
 ```yaml
 ui:
@@ -349,7 +349,7 @@ rules:
       Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
 ```
 
-**Condition key naming.** All rule condition keys use snake_case (`time_of_day`, `video_player`, `state_changed_ago_minutes`, `after_latest_of`, `any_of`, ...). The legacy kebab-case spellings (`time-of-day`, `video-player`, `state-changed-ago-minutes`) no longer evaluate -- a stale key simply never matches -- and there is no silent alias period. At activation, every rule still carrying one logs a loud warning pinning down the exact location in its conditions tree (including nested `any_of`/`all_of` groups) together with the replacement name; rename them when you see it.
+**Condition key naming.** All rule condition keys use snake_case (`time_of_day`, `video_player`, `state_changed_ago_minutes`, `state_transition`, `after_latest_of`, `any_of`, ...). The legacy kebab-case spellings (`time-of-day`, `video-player`, `state-changed-ago-minutes`, `state-transition`) no longer evaluate -- a stale key simply never matches -- and there is no silent alias period. At activation, every rule still carrying one logs a loud warning pinning down the exact location in its conditions tree (including nested `any_of`/`all_of` groups) together with the replacement name; rename them when you see it.
 
 ### Day Periods (`time_of_day`)
 
@@ -436,6 +436,50 @@ conditions:
 ```
 
 They compose with every other condition as usual (all must hold), so a rule can pair them with strict gates -- e.g. `season: spring` + `illuminance: { lte: 15 }` + `after_latest_of: [sundusk, { hour: 19 }]`. Unresolvable candidates are dropped; if **none** resolve (no geo configured, unknown shorthand, empty list) the gate fails closed and the rule never fires. The static coverage analyzer treats both keys as reserved/satisfied (like `state_changed_ago_minutes`) since they depend on real sun times rather than the clock-hour grid.
+
+### Transition Origin Gate (`state_transition`)
+
+A status condition answers *"what is it now?"* — never *"how did it get there?"*. That gap is
+load-bearing for video players: the playback-settle window publishes an about-to-play player as
+`stopped` for the length of its dwell, so a player that merely started answering HTTP again
+(`offline → stopped`, heading to play) is indistinguishable from one that paused a film
+(`playing → stopped`). A rule keyed on `[paused, stopped]` fires on both, and a light-restore rule
+flashes the room on its way to a movie.
+
+`state_transition:` closes the gap by naming the **origin** of the subject's most recent recorded
+transition. It reads the durable `state_events` history the engine already writes — no timers, no
+delay, no timing assumption:
+
+```yaml
+    conditions:
+      video_player: { my-pc: [paused, stopped] }
+      state_transition: { 'videoPlayer:my-pc': { from: playing } }
+```
+
+| Form | Meaning |
+|------|---------|
+| `'domain:subject': playing` | Last transition came **from** `playing` (bare value is shorthand for `from`) |
+| `'domain:subject': [playing, paused]` | Came from any listed state |
+| `'domain:subject': { from: playing, to: stopped }` | Pins **both** sides of the transition |
+| `'domain:subject': { to: offline }` | Origin unconstrained; the destination pinned (`from` absent matches anything) |
+
+Multiple subjects are ANDed, like every other condition. The reference is the same
+`<domain>:<subject>` form `state_changed_ago_minutes` uses — for video players the domain is
+`videoPlayer` and the subject is the host name declared in `triggers_video`/`triggers_network`.
+
+**Availability.** With no recorded transition for the subject — a store that is down, a host the
+monitor never swept, a fresh install — the gate is **inert**, not fatal, matching
+`state_changed_ago_minutes`: a rule that depends on history never goes silently dark because the
+history is missing. A subject whose first recorded row has no origin (`from_state` is null — it
+appeared, it did not transition) does **not** satisfy a `from:` list.
+
+**Where it belongs.** Restore and hand-off rules, exactly: they exist to undo dark mode, so they
+should fire when playback *left*, not when a player *appeared*. Leave the `offline` hand-off rule
+ungated — an appearing player must still be able to hand the room back.
+
+The static coverage analyzer treats `state_transition` as reserved/satisfied (like
+`state_changed_ago_minutes` and the merged sun gates), since it reads durable history rather than
+the scenario grid.
 
 ### Composite Condition Groups (`any_of` / `all_of`)
 
@@ -626,7 +670,22 @@ Scope and safety:
 
 ### Rule Match History
 
-Every rule that matches is recorded by the automation that evaluated it: the last 25 matches per automation, newest first, each carrying the automation name, rule name, timestamp, what triggered the run (`timer`, a device topic, `manual`), the forced flag and whether the match led to an action. Matches are published live on the EventBus (`automation:ruleMatched`, then `automation:ruleActed` when the run dispatches a command, defers a device to recent human interaction, or delegates), which is what feeds the [UI rules window](ui/index.md). `/automation debug <name>` prints the same history for one automation. Recording is in-memory only -- a restart starts from an empty history, and a match is recorded even when it produced nothing, which is exactly the case the rules window shows as `matched` rather than `acted`.
+Every rule that matches is recorded by the automation that evaluated it: the last 25 matches per automation, newest first, each carrying the automation name, rule name, timestamp, what triggered the run (`timer`, a device topic, `manual`), the forced flag, whether the match led to an action, and the id of the automation call that fired it. Matches are published live on the EventBus (`automation:ruleMatched`, then `automation:ruleActed` when the run dispatches a command, defers a device to recent human interaction, or delegates). Recording is in-memory only -- a restart starts from an empty history, and a match is recorded even when it produced nothing. `/automation debug <name>` prints the same history for one automation.
+
+### Automation Call History
+
+A match history alone cannot answer "what did this automation do when it ran last?", because most runs deliberately do nothing. So every call is recorded too, at the level of the whole `execute()`: the last 10 calls per automation, newest first, each carrying a per-automation run id, timestamp, trigger, forced flag, the rules the call fired, an optional reason, and the call outcome:
+
+| Outcome | Meaning |
+|---------|---------|
+| `acted` | Dispatched a command, deferred a device to recent human interaction, or delegated an automation |
+| `noop` | Rules matched, nothing was dispatched |
+| `no-match` | Conditions were evaluated and no rule matched |
+| `suppressed` | Silent period, or the `video_player_suppression` stand-down, silenced the call before any work |
+| `skipped` | `trigger_on_change_only` gating found no monitored state change, so the scheduled tick was dropped |
+| `blocked` | The context build failed, so no rule could be evaluated |
+
+Finished calls are published on the EventBus (`automation:runCompleted`), which is what feeds the [UI rules window](ui/index.md); the per-rule `automation:ruleMatched` / `automation:ruleActed` events stay published and now carry the same `run` id, so a match folds into the call that fired it instead of standing alone. Forced calls are recorded like any other, with `forced` set, so a `/automation force` poke is visible in the same log.
 
 ### Season Conditions
 

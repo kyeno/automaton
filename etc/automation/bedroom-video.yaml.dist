@@ -39,9 +39,15 @@ rules:
   # Light restore is fully delegated via `invoke_automation` to the ambient-lights
   # automation, which owns all ambient lamp devices and re-evaluates its own
   # conditions. No `presence` gate here so an offline machine also hands light control back.
+  # `state_transition: { from: playing }` keeps this a HAND-OFF and nothing else: it fires when
+  # playback leaves playing. Without it the rule pokes the whole ambient rule set on every
+  # not-playing transition, including a player that merely came back (`offline -> stopped`) --
+  # the settle window publishes that about-to-play player as `stopped`, so the poke re-runs the
+  # ambient owners mid-movie and re-lights lamps the room already settled.
   - name: 'Bedroom: not playing - delegate light restore to ambient lights'
     conditions:
       video_player: { laptop: [paused, stopped, offline] }
+      state_transition: { 'videoPlayer:laptop': { from: playing } }
     invoke_automation: { name: AmbientLightsAutomation, force: true }
 
   - name: 'Bedroom: playing - dark mode (lights off)'

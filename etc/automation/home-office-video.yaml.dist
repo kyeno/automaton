@@ -61,10 +61,16 @@ rules:
   # `reassert_state`: this rule exists to UNDO dark mode, so it must reach the device even
   # when its cached state already matches -- that cache can be a stale pre-command snapshot
   # when an earlier dark-mode OFF was never confirmed by the device (see doc/ht-lights-bug.md).
+  # `state_transition` pins the ORIGIN of the player's last transition: a real pause is
+  # `playing -> paused`. The playback-settle window publishes an about-to-play player as
+  # `stopped` for the length of its dwell, so a player that merely came back (`offline ->
+  # stopped`) looks exactly like a pause to a status-only condition -- the lamps flash on its
+  # way to playing. Naming the origin state filters that out with no timing assumption.
   - name: 'Office: paused/stopped - restore ambient lighting'
     reassert_state: true
     conditions:
       video_player: { my-pc: [paused, stopped] }
+      state_transition: { 'videoPlayer:my-pc': { from: playing } }
       illuminance: { lt: 900 }
       any_of:
         - hour: { gte: sunset }    # civil dusk -> midnight
@@ -75,18 +81,20 @@ rules:
       Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 
   # One lamp on its own terms: the same player state and illuminance gate as the restore rule,
-  # narrowed to the dark half of the night, so BOTH rules match on a post-midnight pause and each
-  # contributes its own targets (every matching rule acts -- none is shadowed). `hour: { lt:
-  # sunrise }` alone means midnight -> civil dawn: the hour axis starts at midnight, so a lower
-  # bound there would be tautological. This is the one lamp a pause does NOT light before
-  # midnight; dark mode (below) still puts it out on playback, and `reassert_state` makes the
-  # restore survive a stale cached state exactly like the restore rule above.
-  - name: 'Office: paused/stopped past midnight - hallway cupboard lamp'
+  # narrowed to the EVENING half of the night. `hour: { gte: sunset }` runs civil dusk ->
+  # midnight and stops there -- the hour axis ends at 24:00, so no upper bound is needed. After
+  # midnight this lamp stays out for the whole night: a pause while watching into the small hours
+  # restores the lamps above, not this one. Both rules match on a pre-midnight pause and each
+  # contributes its own targets (every matching rule acts -- none is shadowed). Dark mode (below)
+  # still puts it out on playback, and `reassert_state` makes the restore survive a stale cached
+  # state exactly like the restore rule above.
+  - name: 'Office: paused/stopped before midnight - hallway cupboard lamp'
     reassert_state: true
     conditions:
       video_player: { my-pc: [paused, stopped] }
+      state_transition: { 'videoPlayer:my-pc': { from: playing } }
       illuminance: { lt: 900 }
-      hour: { lt: sunrise }    # midnight -> civil dawn; midnight is the axis floor, no gte needed
+      hour: { gte: sunset }    # civil dusk -> midnight; the axis ceiling is midnight
     targets:
       Hallway_Cupboard_Outlet: ON
 

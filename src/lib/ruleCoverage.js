@@ -20,6 +20,8 @@ const RESERVED_CONDITION_KEYS = new Set([
     'presence',
     'video_player',
     'state_changed_ago_minutes',
+    //  Transition-origin gate reads durable transition history, not the scenario grid.
+    'state_transition',
     //  Sun/clock merged gates resolve against real dawn/dusk instants + geo.
     'after_latest_of',
     'after_earliest_of',
@@ -519,7 +521,7 @@ export function analyzeRules(options) {
             ruleCount: rules.length,
             scenarioCount: scenarios.length,
             season: options.season ?? null,
-            note: 'state_changed_ago_minutes and after_latest_of/after_earliest_of conditions are treated as satisfied in static analysis',
+            note: 'state_changed_ago_minutes, state_transition and after_latest_of/after_earliest_of conditions are treated as satisfied in static analysis',
         },
         hours,
         gaps,
