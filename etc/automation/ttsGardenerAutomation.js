@@ -4,7 +4,9 @@
  * status by voice, with sentences chosen from moisture thresholds tuned in YAML.
  * Event-driven reports speak only on a worsening that reached a "reactive" band and are
  * throttled by a garden-wide cooldown; scheduled announce_times reports consume a shared
- * once-per-day marker so each slot speaks once a day across restarts.
+ * once-per-day marker so each slot speaks once a day across restarts. Reports are voiced
+ * through the shared announcement pipeline, so the chat window, the speaker, the MQTT AI
+ * bridge and (for the stuck-probe warning) the owners' inbox all carry the same text.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  * @author Ratan M. Kyeno
@@ -19,10 +21,9 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 
 import RuleBasedAutomationBase from '../../src/automation/base/ruleBasedAutomationBase.js'
 import DeviceContainer from '../../src/device/container/deviceContainer.js'
+import AnnouncementPipeline from '../../src/lib/announcementPipeline.js'
 import AiAssistant from '../../src/ai/aiAssistant.js'
-import ChatMessageOrigin from '../../src/enum/aiChatMessageOrigin.js'
 import CacheService from '../../src/service/cacheService.js'
-import EventBus from '../../src/service/eventBus.js'
 import I18nLoader from '../../src/service/i18nLoader.js'
 import TtsService from '../../src/service/ttsService.js'
 import temporal from '../../src/lib/date.js'
@@ -52,6 +53,10 @@ const DEFAULT_STUCK_WARN_COOLDOWN_MS = 12 * 3_600_000
  *  cycle never loses the baseline it has to compare against. */
 const STUCK_SNAPSHOT_TTL_FACTOR = 2
 
+/** Notification kind the stuck-probe warning mails out as; matched against email.notify
+ *  and against the 'gardener_stuck' section of the locale's email bundle. */
+const STUCK_EMAIL_KIND = 'gardener_stuck'
+
 export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
 
     /** @type {Record<string, unknown>|null} Cached gardener i18n bundle; reloaded on every run. */
@@ -75,6 +80,13 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      *  is the authoritative copy across restarts.
      * @type {number|null} */
     #lastStuckWarnAt = null
+
+    /** Announce slots whose report is currently in flight (AI/TTS call running). In-memory
+     *  only: a restart clears it, and the Redis once-marker (set on success) is the
+     *  authoritative cross-restart copy. Prevents a slow call from letting the next tick
+     *  re-fire the same slot inside its grace window.
+     * @type {Set<string>} */
+    #inFlightSlots = new Set()
 
     //  -- Construction & lifecycle ------------------------------------------
 
@@ -133,9 +145,35 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
                 this.log('Timer tick with no announce slot due -- staying quiet', 'debug')
                 return
             }
+            //  In-flight guard: a slot's report can take longer than the tick interval (a slow
+            //  AI call), so the next tick inside the grace window would otherwise see the
+            //  once-marker still unset and launch a duplicate. Mark the slot in flight now and
+            //  release it in the finally below; the Redis once-marker (set on success) remains
+            //  the authoritative cross-restart copy.
+            if (this.#inFlightSlots.has(dueSlot)) {
+                this.log(`Slot ${dueSlot} report already in flight -- staying quiet`, 'debug')
+                return
+            }
+            this.#inFlightSlots.add(dueSlot)
             this.log(`Scheduled status report for slot ${dueSlot}`, 'info')
         }
 
+        try {
+            await this.#runReport(kind, dueSlot)
+        } finally {
+            if (dueSlot != null) this.#inFlightSlots.delete(dueSlot)
+        }
+    }
+
+    /** Evaluate the garden and voice the report for this run. Holds everything after the
+     *  slot's in-flight guard is taken: the event cooldown, the readings, the per-flower
+     *  banding, the event worsening gate, the speech, and the slot's once-marker. Runs for
+     *  all three trigger kinds; `dueSlot` is non-null only for slot runs.
+     * @private
+     * @param {'event'|'slot'|'immediate'} kind - Execution kind from #runKind
+     * @param {string|null} dueSlot - Due announce slot key for slot runs, else null
+     * @returns {Promise<void>} */
+    async #runReport(kind, dueSlot) {
         //  Event runs are throttled by the re-announcement cooldown: soil probes report in
         //  bursts and creep across a band boundary, so one utterance per window is what keeps
         //  the TTS server from voicing a report on top of the one before it. Severities are
@@ -217,8 +255,9 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      *  the same reading as the snapshot of the previous cycle gets a warning naming it: the
      *  sensor likely needs a poke. The snapshot is data recording, not speech -- it is taken
      *  whenever the interval elapsed, including during the silent period and when no output
-     *  channel is up; only the warning is gated (off-guard, silent period, stuck_warn_cooldown,
-     *  stuck_speak).
+     *  channel is up; only the spoken warning is gated (off-guard, silent period,
+     *  stuck_warn_cooldown, stuck_speak). The mail copy of the same text is not gated: it goes
+     *  to the house owners on its own per-kind cooldown (email.kind 'gardener_stuck').
      * @returns {Promise<void>} */
     async runStuckWatchdog() {
         if (!this.stuckWatchEnabled()) return
@@ -261,23 +300,38 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         const named = stuck.map((s) => `${s.name} (${this.#formatPercent(s.moisture)})`).join(', ')
         this.log(`Stuck probe suspected: ${named} -- reading unchanged for ${temporal.millisecondsToHumanReadable(intervalMs)}, the sensor may need poking`, 'warn')
 
-        if (this.config?.stuck_speak === false) {
-            this.log('stuck_speak disabled -- the warning stays in the logs', 'debug')
-            return
-        }
-        if (!this.#outputChannelUp()) {
-            this.log('Stuck warning suppressed -- no output channel is up', 'debug')
-            return
-        }
-        if (this.isInSilentPeriod()) {
-            this.log('Stuck warning suppressed by the silent period', 'debug')
-            return
-        }
-        if (await this.#stuckWarnCooldownActive()) return
+        //  Speech is gated: off-guard, silent period, stuck_speak and the warn cooldown all keep
+        //  the speaker quiet. The mail leg is not: an owner asleep with the speaker muted at 3am
+        //  still finds the warning in the inbox. Its own per-kind cooldown lives in EmailService.
+        const speechGate = this.#stuckSpeechGate()
+        const cooled = speechGate === null && await this.#stuckWarnCooldownActive()
 
-        if (await this.speakBucket('gardener.stuck', this.#stuckTokens(stuck, intervalMs))) {
-            await this.#markStuckWarned()
+        const spoken = await this.speakBucket('gardener.stuck', this.#stuckTokens(stuck, intervalMs), {
+            speak: speechGate === null && !cooled,
+            email: {
+                kind: STUCK_EMAIL_KIND,
+                tokens: { stuck_count: String(stuck.length) },
+                meta: { automation: this.name, stuck_count: stuck.length, stuck_window_ms: intervalMs },
+            },
+        })
+
+        if (spoken) await this.#markStuckWarned()
+        if (speechGate !== null) {
+            this.log(`Stuck warning kept unspoken -- ${speechGate} (the mail leg is not gated)`, 'debug')
+        } else if (cooled) {
+            this.log('Stuck warning not repeated by voice -- the mail leg runs on its own cooldown', 'debug')
         }
+    }
+
+    /** Why the stuck warning must stay unspoken right now, if it must. Speech gates only: the
+     *  mail copy is deliberately exempt, so a silent period never swallows the notification.
+     * @private
+     * @returns {string|null} Gate name, or null when speech is allowed */
+    #stuckSpeechGate() {
+        if (this.config?.stuck_speak === false) return 'stuck_speak is disabled'
+        if (!this.#outputChannelUp()) return 'no output channel is up'
+        if (this.isInSilentPeriod()) return 'the silent period is on'
+        return null
     }
 
     /** Whether the stuck-probe watchdog is active (a positive stuck_check_interval).
@@ -573,72 +627,34 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         return { name: `announce slot ${slotKey}`, conditions: {}, once: true }
     }
 
-    /** Resolve one configured bucket section, fill its runtime placeholders.
+    /** Voice one garden report through the shared announcement pipeline.
+     *
+     * The pipeline owns the rules once: the bucket's plain sentence is filled a single time,
+     * the model rewrites it when use_ai is on, and that same text is handed to the chat
+     * window, the speaker, the MQTT AI bridge and -- for the notification buckets -- the
+     * owners' inbox. `speak: false` builds the text without voicing it, which is what the
+     * gated stuck warning uses so its mail copy still goes out while the speaker sleeps.
      * @param {string} sectionKey - Dotted i18n key from a rule's "sentence" (e.g., 'gardener.dry')
      * @param {Record<string, string>} tokens - Placeholder values ({% affected_flowers %}, ...)
+     * @param {Object} [options] - Fan-out shaping
+     * @param {boolean} [options.speak=true] - false builds the text without voicing it
+     * @param {{kind: string, tokens?: Record<string, string>, meta?: Object}|null} [options.email=null] - Mail leg request
      * @returns {Promise<boolean>} Whether speech went out */
-    async speakBucket(sectionKey, tokens) {
-        const section = this.#resolveSection(sectionKey)
-        if (!section || typeof section !== 'object' || Array.isArray(section)) {
-            this.log(`Gardener bucket "${sectionKey}" not found in active bundle -- check rules[].sentence`, 'warn')
-            return false
-        }
-
-        const plainText = this.#fillTemplate(section.tts, tokens, `${sectionKey}.tts`)
-        if (!plainText) {
-            this.log(`No TTS sentence for "${sectionKey}.tts" in active bundle -- skipping`, 'warn')
-            return false
-        }
-
-        //  Framing (intro/outro/spacing) resolved once per report from this automation's.
-        const ttsOptions = TtsProfiles.resolve(this.config, (message) => this.log(message, 'warn'))
-
-        if (this.config.use_ai === true && AiAssistant.isAvailable()) {
-            const instruction = this.#fillTemplate(section.ai, tokens, `${sectionKey}.ai`)
-            if (!instruction) {
-                this.log(`No AI instruction for "${sectionKey}.ai" -- speaking the plain TTS sentence instead`, 'warn')
-            } else {
-                //  Emit system input to UI with exactly what goes to the model.
-                if (EventBus.hasSubscribers('ai:systemMessage')) {
-                    EventBus.emit('ai:systemMessage', { text: instruction })
-                }
-                if (await this.routeThroughAi(instruction, ttsOptions)) return true
-                //  routeThroughAi already logged why.
-            }
-        } else if (this.config.use_ai === true) {
-            this.log('use_ai enabled but AI unavailable -- speaking the plain TTS sentence instead', 'warn')
-        }
-
-        TtsProfiles.speak(plainText, ttsOptions)
-        this.log(`Gardener report (${sectionKey}) sent via direct TTS`, 'debug')
-        return true
-    }
-
-    /** Send one built garden report through the AI -> TTS pipeline with graceful degradation.
-     * @param {string} aiInstruction - Full instruction sent to the model
-     * @param {{intro?: string, outro?: string, intro_spacing?: number}} [ttsOptions={}] - Framing forwarded to the model's own speech
-     * @returns {Promise<boolean>} true when the AI voiced the report, false on fallback */
-    async routeThroughAi(aiInstruction, ttsOptions = {}) {
-        let spoken = ''
-        try {
-            const response = await AiAssistant.processMessage(aiInstruction, { origin: ChatMessageOrigin.SYSTEM, tts: ttsOptions })
-            spoken = typeof response === 'string' ? response.trim() : ''
-        } catch (error) {
-            this.log(`AI processing failed: ${error.message}`, 'warn')
-            return false
-        }
-
-        if (!spoken) {
-            this.log('AI reply was empty -- falling back to direct TTS', 'warn')
-            return false
-        }
-
-        //  Emit the AI's response back to UI for rendering with <AI> prefix.
-        if (EventBus.hasSubscribers('ai:periodicResponse')) {
-            EventBus.emit('ai:periodicResponse', { text: spoken })
-        }
-        this.log(`Gardener report sent via AI -> TTS pipeline (${spoken.length} chars)`, 'debug')
-        return true
+    async speakBucket(sectionKey, tokens, options = {}) {
+        const outcome = await AnnouncementPipeline.announce({
+            bundle: this.#bundle,
+            section: sectionKey,
+            tokens,
+            label: this.name,
+            useAi: this.config.use_ai === true,
+            speak: options.speak !== false,
+            email: options.email ?? null,
+            //  Framing (intro/outro/spacing) resolved once per report from this automation's config.
+            ttsOptions: TtsProfiles.resolve(this.config, (message) => this.log(message, 'warn')),
+            onWarn: (message) => this.log(message, 'warn'),
+            log: (message, level) => this.log(message, level),
+        })
+        return outcome.spoken
     }
 
     /** Clear in-memory announcement state (per-flower severities, the event cooldown and the
@@ -651,6 +667,7 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         this.#lastSpokenAt = null
         this.#stuckSnapshot = null
         this.#lastStuckWarnAt = null
+        this.#inFlightSlots.clear()
     }
 
     //  -- Config & bundle helpers ---------------------------------------------
@@ -788,43 +805,5 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
             this.log(`Failed to load gardener bundle: ${error.message}`, 'warn')
             return null
         }
-    }
-
-    /** Resolve a dotted i18n key against the loaded bundle. The first segment is treated.
-     * @private
-     * @param {string} key - Dot-separated key from a rule's "sentence"
-     * @returns {*} Resolved value or undefined when not found */
-    #resolveSection(key) {
-        if (!this.#bundle || !key) return undefined
-        const parts = String(key).split('.')
-        if (parts.length < 2) return this.#bundle[key]
-        let current = this.#bundle
-        for (let i = 1; i < parts.length; i++) {
-            if (current == null || typeof current !== 'object') return undefined
-            current = current[parts[i]]
-        }
-        return current
-    }
-
-    /** Fill {% token %} placeholders in a raw template from a flat token map.
-     * @private
-     * @param {*} template - Raw YAML template line (must be a string to succeed)
-     * @param {Record<string, unknown>} tokens - Token name to replacement string
-     * @param {string} label - Bundle path used in warning messages
-     * @returns {string} Interpolated text, or '' when unresolvable */
-    #fillTemplate(template, tokens, label) {
-        if (typeof template !== 'string' || !template.trim()) return ''
-        let unresolved = false
-        const text = String(template).replace(/\{%\s*([a-z_]+)\s*%}/g, (_match, key) => {
-            const value = tokens?.[key]
-            if (typeof value === 'string' && value.trim() !== '') return value
-            unresolved = true
-            return _match
-        })
-        if (unresolved) {
-            this.log(`Sentence "${label}" has an unresolvable placeholder -- check the active i18n bundle`, 'warn')
-            return ''
-        }
-        return text
     }
 }

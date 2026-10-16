@@ -10,7 +10,7 @@ The readings come from the device state property zigbee2mqtt exposes on capaciti
 2. **Banding.** `rules:` are evaluated top-down per plant and the **first matching band wins**, so list them most-severe-first. Each plant gets a severity from its own band; the announcement uses the band of the worst plant, and the affected list names every plant below the healthy band, driest first.
 3. **Reactive gate.** A device event triggers an evaluation, but speech fires only when some plant has **worsened past the band it was last announced in** *and* the worst plant has reached a band marked `reactive: true`. Periodic battery blips at the same moisture level never re-announce, and a slow drift into a band marked `reactive: false` (`Getting dry` and `Healthy` in the shipped config) is left to the scheduled report — the baseline moves, the voice does not, so the next drop into an urgent band is still heard. Recovery is observed and lowers the baseline silently, so the next drop below a band speaks again. Baselines are recorded *after* a successful utterance, so a failed speech never consumes the right to announce.
 4. **Event cooldown.** Two event reports never come closer than `event_cooldown:` (default `5m`). The window is garden-wide rather than per-plant, because a burst of six probes crossing a threshold together would otherwise stack six utterances on the TTS queue. A worsening suppressed by the cooldown does not move the baseline, so a drop from `Needs watering` into `Critical drought` inside the window is still announced as an escalation once the window expires. Scheduled reports and manual runs are never cooled.
-5. **Scheduled reports.** Each `announce_times:` slot fires once per day, driven by the minute-granularity `timer_interval:` tick — a full status report even when everything is fine. A tick with no slot due does nothing. Each slot consumes the rule engine's shared once-per-day marker (`auto:TtsGardenerAutomation:once:announce_slot_HHmm` in Redis), so a restart inside the grace window cannot re-fire a slot that already spoke, and a forced run never eats a slot's daily budget.
+5. **Scheduled reports.** Each `announce_times:` slot fires once per day, driven by the minute-granularity `timer_interval:` tick — a full status report even when everything is fine. A tick with no slot due does nothing. Each slot consumes the rule engine's shared once-per-day marker (`auto:TtsGardenerAutomation:once:announce_slot_HHmm` in Redis), so a restart inside the grace window cannot re-fire a slot that already spoke, and a forced run never eats a slot's daily budget. The once-marker is set only *after* the report has actually spoken, so a slot whose AI call is still running is not yet marked; to keep the next tick inside the grace window from launching a duplicate, the slot is held in an in-memory in-flight set for the duration of the report (released in a `finally`), and a tick that finds the slot already in flight stays quiet. The set is process-local — a restart clears it — but that is safe because the Redis once-marker is the authoritative copy across restarts. The reporting model is one report per slot, even when the garden is healthy; the only speech that may fall outside a slot is a worsening that reaches a reactive band (item 3) and the stuck-probe warning (item 10).
 6. **Manual runs** (`automaton automation run TtsGardenerAutomation`) always speak immediately, bypassing the worsening gate, the reactive band gate and the cooldown.
 7. **Output routing** is the same explicit boolean switch the greeter and twilight use:
    - `use_ai: false` → speak the bucket's `tts` line directly through TTS;
@@ -96,6 +96,17 @@ The `tts` line is spoken verbatim on the plain-TTS path (and as the fallback whe
 
 A missing section warns and skips the report; a placeholder the automation does not fill warns and skips that sentence, so a typo in a template stays visible in the logs instead of being spoken.
 
+## Email Notification (Stuck Probes)
+
+The stuck-probe warning has a mail leg that is **independent of speech**. When the watchdog flags a frozen probe it builds the warning text once (the same string the speaker would use) and hands it to the [email channel](../services/email.md) as kind `gardener_stuck`:
+
+- The **subject** comes from the `gardener_stuck:` section of the locale `email.yaml` bundle, filled with `{% stuck_flowers %}` (the frozen probes as `Name (NN%)`).
+- The **body** is the warning text verbatim, wrapped in the bundle's greeting and signature.
+- The mail is **not** gated by the off-guard, `silence_between:`, `stuck_speak:` or the spoken `stuck_warn_cooldown:` — an owner asleep with the speaker muted at 3am still finds the warning in the inbox. It runs on the email channel's **own** per-kind cooldown (`email.cooldown_ms`, default `60m`), so one stuck probe produces one round of mail, not one per detection.
+- Delivery is asynchronous: the watchdog queues the mail and moves on; a slow or dead relay never blocks the snapshot cycle.
+
+To mute the mail leg without touching speech, set `email.notify.gardener_stuck: false` in `etc/automaton.yaml`; to disable the whole channel, unset `SMTP_HOST` or set `email.enabled: false`. The recipients are the `house_owners:` list.
+
 ## TTS Profiles
 
 Reports are framed by the shared [TTS framing profiles](../installation/tts-integration.md) owner (`src/lib/ttsProfiles.js`) against the active locale's `tts.yaml` `profiles:` registry. `tts_profile:` names an entry; an explicit `tts_options:` block overrides it field by field. An unknown profile name warns once and contributes nothing — the report is spoken plain.
@@ -137,6 +148,7 @@ In the device window, a probe's reading appears in the **Humid** column: the col
 | MQTT semantic dedupe | `src/service/mqttService.js` (`soil_moisture` is a semantic key) |
 | TTS framing profiles | `src/lib/ttsProfiles.js` |
 | Stuck-probe snapshot store | `src/service/cacheService.js` (Redis `auto:TtsGardenerAutomation:stuck:*`) |
+| Email leg (stuck warning) | `src/service/emailService.js` via `src/lib/announcementPipeline.js` |
 | Tests | `tests/test-tts-gardener.js`, `tests/test-mqtt-soil-moisture-dedupe.js`, `tests/test-device-classification.js`, `tests/test-device-window-sensor-columns.js` |
 
 ---

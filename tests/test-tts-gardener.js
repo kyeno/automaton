@@ -14,8 +14,10 @@
  * / empty-reply fallbacks to plain TTS with no spoken notice, missing-bucket degradation not
  * consuming announcement state, announce_times once-per-day markers consumed in Redis with a
  * grace window and surviving a restart, silence_between suppression with force bypass, the
- * both-channels-off guard, and the moisture_property contract (template parity, soil_moisture
- * default, custom key honored).
+ * both-channels-off guard, the moisture_property contract (template parity, soil_moisture
+ * default, custom key honored), and the mail leg of the stuck-probe warning -- owners receive
+ * the very sentence the speaker said, even when speech is gated by stuck_speak, the silent
+ * period or a down output channel.
  *
  * Expected speech is derived from the ACTIVE locale's gardener bundle at runtime, so the same
  * assertions hold under pl_PL or en_US. Devices are stubbed on DeviceContainer's prototype;
@@ -37,6 +39,7 @@ import EventBus from '../src/service/eventBus.js'
 import CacheService from '../src/service/cacheService.js'
 import I18nLoader from '../src/service/i18nLoader.js'
 import TtsService from '../src/service/ttsService.js'
+import EmailService from '../src/service/emailService.js'
 import AiAssistant from '../src/ai/aiAssistant.js'
 import DeviceContainer from '../src/device/container/deviceContainer.js'
 import TtsGardenerAutomation from '../etc/automation/ttsGardenerAutomation.js'
@@ -131,6 +134,14 @@ const markerStore = new Map()
 cacheProto.get = async (key) => (markerStore.has(key) ? markerStore.get(key) : undefined)
 cacheProto.set = async (key, item) => { markerStore.set(key, item); return true }
 function clearMarkers() { markerStore.clear() }
+
+// Mail leg: EmailService is a frozen singleton too, so its prototype is patched the same way.
+// notify() is recorded instead of queued -- no SMTP relay is contacted by these tests.
+const mailProto = Object.getPrototypeOf(EmailService)
+const origNotify = mailProto.notify
+const seenMail = []
+mailProto.notify = async (request) => { seenMail.push(request); return true }
+function resetSeenMail() { seenMail.length = 0 }
 
 /** Stub Date to an arbitrary local time without waiting for the real clock (test-silence-between pattern). */
 function stubDate(hour, minute) {
@@ -350,7 +361,9 @@ try {
     resetSeen()
     await gardener.execute({ trigger: 'manual' })   // immediate kind always speaks
     assert(seen.tts.length === 1 && seen.tts[0].text === expectedText('critical', 'tts', critTokens), 'AI unavailable -> plain TTS sentence spoken once')
-    assert(seen.system.length === 0 && seen.periodic.length === 0, 'AI-down fallback posts no UI notice (warn log only)')
+    assert(seen.system.length === 1 && seen.system[0].text === seen.tts[0].text,
+        'AI-down fallback echoes the sentence it spoke into the UI (warn log only, no model notice)')
+    assert(seen.periodic.length === 0, 'AI-down fallback posts no periodic response')
 
     setAi({ available: true, failWith: 'provider exploded' })   // provider throws mid-flight
     resetSeen()
@@ -728,8 +741,126 @@ try {
     assert(String(bundle.stuck?.ai).includes(noToolsClause), 'stuck.ai tells the model to use no tools (live bundle)')
     assert(String(stuckDist.stuck.ai).includes(noToolsClause), 'stuck.ai tells the model to use no tools (template)')
 
+    // -----------------------------------------------------------------------
+    console.log('\n-- stuck warning mails the owners, speech gated or not --')
+    gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, stuck_speak: false })
+    clearMarkers()
+    gardener.resetState()
+    restoreStuckDate = stubDateTime(15, 10, 0)
+    flowerStates.set('Flower Test A', 40)
+    flowerStates.set('Flower Test B', 33)
+    try {
+        await gardener.runStuckWatchdog()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        flowerStates.set('Flower Test B', 34)   // B moved; only A is frozen
+        resetSeen()
+        resetSeenMail()
+        await gardener.runStuckWatchdog()
+        const mailTokens = stuckTokensFor(6 * 3_600_000)
+        assert(seen.tts.length === 0, 'stuck_speak:false keeps the speaker quiet')
+        assert(seenMail.length === 1, 'the gated warning still mails the owners once')
+        assert(seenMail[0]?.kind === 'gardener_stuck', 'the mail leg names the gardener_stuck kind')
+        assert(seenMail[0]?.tokens?.stuck_flowers === mailTokens.stuck_flowers
+            && seenMail[0]?.tokens?.stuck_window === mailTokens.stuck_window,
+            'the mail carries the stuck tokens of the probes that did not move')
+        assert(seenMail[0]?.message === expectedText('stuck', 'tts', mailTokens),
+            'the mail body is the very sentence the speaker would have said')
+        assert(!markerStore.has(warnKey), 'a mail-only warning marks no speech cooldown')
+
+        //  Spoken run: voice and mail carry the identical text.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, stuck_speak: true })
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 10, 0)
+        flowerStates.set('Flower Test B', 33)
+        await gardener.runStuckWatchdog()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 16, 0)
+        flowerStates.set('Flower Test B', 34)
+        resetSeen()
+        resetSeenMail()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 1 && seenMail.length === 1 && seenMail[0].message === seen.tts[0].text,
+            'a spoken warning mails exactly the text the speaker said')
+        assert(markerStore.has(warnKey), 'the spoken warning still stores its own speech cooldown marker')
+
+        //  Silent period: the owner asleep gets the mail, the speaker stays quiet.
+        gardener.config = stuckCfg({ stuck_check_interval: '6h', stuck_warn_cooldown: 0, silence_between: '2200-0800' })
+        clearMarkers()
+        gardener.resetState()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(15, 23, 0)
+        flowerStates.set('Flower Test B', 33)
+        await gardener.runStuckWatchdog()
+        restoreStuckDate()
+        restoreStuckDate = stubDateTime(16, 5, 0)
+        flowerStates.set('Flower Test B', 34)
+        resetSeen()
+        resetSeenMail()
+        await gardener.runStuckWatchdog()
+        assert(seen.tts.length === 0 && seenMail.length === 1,
+            'the silent period gates the speaker only -- the mail goes out')
+    } finally {
+        restoreStuckDate()
+    }
+
+    // -----------------------------------------------------------------------
+    console.log('\n-- in-flight slot guard: a slow report cannot be double-fired by the next tick --')
+    flowerStates.set('Flower Test A', 30)   // dry band
+    gardener.config = cfg({ use_ai: true, announce_times: ['1230'] })
+    gardener.resetState()
+    clearMarkers()
+    let releaseAi = null
+    const inFlightRestore = stubDate(12, 30)
+    try {
+        //  A controllable AI reply: the first tick's report hangs on it until we release it, so the
+        //  second tick lands inside the grace window before the once-marker is set.
+        let aiCalls = 0
+        const aiGate = new Promise(resolve => { releaseAi = resolve })
+        aiProto.isAvailable = () => true
+        aiProto.processMessage = async (text) => {
+            lastPrompt = text
+            aiCalls++
+            await aiGate
+            return 'slow reply'
+        }
+
+        resetSeen()
+        const first = gardener.execute({ trigger: 'timer' })   // takes the slot's in-flight guard, hangs on the AI
+
+        //  Yield until the first run has reached the model -- the guard is taken before that point.
+        for (let i = 0; i < 500 && lastPrompt == null; i++) {
+            await new Promise(resolve => setImmediate(resolve))
+        }
+        assert(lastPrompt != null, 'the first tick reached the model and is holding the slot in flight')
+
+        //  Second tick inside the grace window: the once-marker is not set yet, but the slot is in flight.
+        const second = gardener.execute({ trigger: 'timer' })
+        for (let i = 0; i < 50; i++) {
+            await new Promise(resolve => setImmediate(resolve))
+        }
+
+        assert(aiCalls === 1, 'the second tick did not reach the model -- the slot is in flight')
+        assert(seen.tts.length === 0, 'nothing spoken yet -- the first is still inside the AI call')
+
+        //  Release the AI: the first run finishes, speaks, and sets the once-marker.
+        releaseAi()
+        await first
+        await second
+
+        assert(aiCalls === 1, 'exactly one report reached the model despite two ticks in the same slot')
+        assert(markerStore.has(gardener.slotMarkerKey('1230')), 'the once-marker is set once, after the successful speech')
+    } finally {
+        inFlightRestore()
+        resetAi()
+        if (releaseAi) releaseAi()   // unblock any in-flight AI call
+    }
+
 } finally {
     unsubs.forEach(unsub => unsub())
+    mailProto.notify = origNotify
     dcProto.findByName = origFindByName
     ttsProto.isEnabled = origTtsEnabled
     cacheProto.get = origCacheGet
