@@ -1,9 +1,18 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- UI: Both design and functionality of 5th window is a total misunderstanding.
-  Instead of log-alike window, it should permanently list the rule-based
-  automations and just re-draw whatever acted last under each one of them.
+- Add email system with simple SMTP configuration in .env + option for TTS
+  Gardener to send notification emails if sensors are stuck. Add house owners
+  array to automaton.yaml (array of emails that should be notified in such
+  cases). Create i18n-aware email templates where such notification would only
+  take over the subject and AI response's (or TTS, if AI is disabled) part of
+  the body. The template will carry some sort of "Hello, {% owner_name %},\n\n{%
+  AI response %}\n\n-- \n{% AI bot name %}, automaton house automation" or so.
+- Weatherman: Use hourly storage of temp/pressure/humidity values in each cycle,
+  then when those values are available, modify the sentence to say not the
+  temperature "is X", but "has risen to X", "has fallen to X" or "remains stable at
+  X". More can be added like "temperature is X and have fallen X degrees within
+  the last hour", etc.
 - BUG: /config reload is so inherently broken it's probably beyond repair.
   Consider a fixing attempt and if it fails, remove the functionality altogether.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet
@@ -64,6 +73,34 @@
 - CONSIDER: Add quotes database?
 - MAYBELATER: Support `{"name": "get_device_list", "parameters": {}}` even if that tool is never exposed -- model still tries to access it with higher temp
   Maybe build-in a small MCP server?
+- AI processing gate: expose the serialized pipeline and stop callers blocking on it.
+  `AiAssistant` already serializes requests on a FIFO promise chain (`#queue = Promise.resolve()`,
+  busy counter `#busyCount` / `#busySince` mirrored to state key `ai.busy` by `#setAiBusy()`), but
+  exposes only `isAvailable()` -- which answers "provider configured", not "pipeline busy" -- and
+  every caller blocks on the resolved reply (`src/ui/windows/aiWindow.js`,
+  `src/monitor/aiBridgeMonitor.js`, and the twilight/greeter/gardener/weatherman automations), so
+  one slow model call holds every producer's run open for the whole queue depth.
+  - Add `isProcessing()` and `queueDepth()`; `#queue` is a promise, not a list, so the gate needs
+    an explicit `#pending` list drained one item at a time.
+  - Add `enqueueMessage(text, options)` returning `{queued, position}` in the same tick -- fire and
+    forget, never awaiting the model.
+  - Replies must then leave the promise: publish an EventBus transcript topic (`ai:reply` carrying
+    `{source, replyTopic, text, timestamp}`) that aiWindow renders, aiBridgeMonitor republishes to
+    the originating MQTT topic, and automations route to TTS. Keep `processMessage()` resolving as
+    it does today so synchronous callers are unaffected.
+  - Bound the queue (`ai.max_queue` in etc/automaton.yaml + .dist -- tests/test-dist-sync.js), drop
+    the oldest on overflow with a warning, drop replies whose origin is gone, keep the
+    provider-error empty-string contract so speech fallbacks stay intact.
+  - Accept: UI and bridge turns answered FIFO without blocking each other; enqueue returns
+    immediately; exactly one request in flight; an automation never blocks its own execute() and
+    never speaks twice; tests in tests/test-ai-assistant.js; npm test + npm run lint:check green.
+  - Open: a late reply spoken after its moment passed (speech automations must re-check their
+    freshness gates -- twilight's `announce_grace` already bounds this); restart mid-queue (persist
+    in Redis next to the conversation cache, or discard); no per-request model timeout exists, so a
+    hung provider stalls the queue indefinitely -- worth adding with the gate.
+  - Context: the two symptoms that surfaced this (duplicate civil-dusk announcement, dusk ambient
+    deferred by the human cooldown) are handled by the twilight slot claim and the per-rule
+    `bypass_human_cooldown` flag; this item hardens the shared pipeline itself.
 
 ### TTS Greeter "Goodbye" enhance ideas
 - Greet only when someone comes back -- extend the greeter to also say goodbye when their computer goes OFFLINE after being up for a while (measure online duration via priorStateDurationMs() on the offline event, symmetric to today's windows).

@@ -10,7 +10,10 @@
  *   - getRecentRuleMatches() returns the newest match first and is capped,
  *   - the EventBus record and the stored history share one identity triple
  *     (automation, rule, timestamp) the rules window matches on,
- *   - plain AutomationBase instances expose an empty history so the window can seed
+ *   - every automation call -- matched or not -- is recorded as a run and published on
+ *     automation:runCompleted with its outcome (acted, noop, no-match, suppressed,
+ *     skipped, blocked), the rules it fired, and the run id the match records carry,
+ *   - plain AutomationBase instances expose empty histories so the window can seed
  *     from any automation.
  * No MQTT broker or live Redis required; CacheService is stubbed like
  * test-invoke-automation.js.
@@ -31,6 +34,7 @@ import path from 'node:path'
 import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
 import CacheService from '../src/service/cacheService.js'
+import DatabaseService from '../src/service/databaseService.js'
 import EventBus from '../src/service/eventBus.js'
 import RuleBasedAutomationBase from '../src/automation/base/ruleBasedAutomationBase.js'
 import AutomationBase from '../src/automation/base/automationBase.js'
@@ -92,16 +96,43 @@ class EmptyProbe extends RuleBasedAutomationBase {
     }
 }
 
+/** Rule-based automation that always reports itself inside its silent period. */
+class SilentProbe extends RuleBasedAutomationBase {
+    constructor(name, cfgPath) {
+        super({ name, configPath: cfgPath })
+    }
+
+    isInSilentPeriod() { return true }
+}
+
+/** Rule-based automation whose context build always fails. */
+class ThrowingProbe extends RuleBasedAutomationBase {
+    constructor(name, cfgPath) {
+        super({ name, configPath: cfgPath })
+    }
+
+    async buildContext() {
+        throw new Error('probe context build failure')
+    }
+}
+
 // -- Stubbed Redis layer -------------------------------------------------------------
 const cacheProto = Object.getPrototypeOf(CacheService)
 cacheProto.get = async () => undefined
 cacheProto.set = async () => true
 cacheProto.getHumanCooldownRemaining = async () => null
 
+//  React-on-change gating reads transition timestamps out of the database; a database
+//  that answers "no transitions" is what makes a scheduled tick skip.
+const dbProto = Object.getPrototypeOf(DatabaseService)
+dbProto.isAvailable = () => true
+dbProto.lastTransitionTs = async () => null
+
 // -- EventBus capture ----------------------------------------------------------------
-const published = { matched: [], acted: [] }
+const published = { matched: [], acted: [], runs: [] }
 EventBus.subscribe('automation:ruleMatched', (record) => published.matched.push(record))
 EventBus.subscribe('automation:ruleActed', (record) => published.acted.push(record))
+EventBus.subscribe('automation:runCompleted', (record) => published.runs.push(record))
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'automaton-rules-test-'))
 let caseSeq = 0
@@ -156,6 +187,15 @@ console.log('\n\u2500\u2500 Match with action \u2500\u2500\n')
         'stored history agrees with the published record')
     assert(history[0].at === record.at, 'identity timestamp shared by event and history')
 
+    const run = published.runs[0]
+    assert(published.runs.length === 1, 'one automation call published')
+    assert(run?.automation === auto.name && run?.trigger === 'timer', 'call record names the call')
+    assert(run?.outcome === 'acted', 'call outcome recorded as acted')
+    assert(run?.forced === false, 'unforced call recorded as unforced')
+    assert(JSON.stringify(run?.rules) === '["always-on"]', 'call lists the rules it fired')
+    assert(Number.isInteger(run?.run), 'call carries a numeric run id')
+    assert(record?.run === run?.run, 'match record carries its call id')
+
     auto.cleanup()
 }
 
@@ -209,6 +249,148 @@ console.log('\n\u2500\u2500 Forced runs \u2500\u2500\n')
     auto.cleanup()
 }
 
+// -- Calls that do not act are recorded with their outcome ---------------------------
+
+console.log('\n\u2500\u2500 Run outcomes without action \u2500\u2500\n')
+
+{
+    published.matched.length = 0
+    published.runs.length = 0
+
+    const noop = makeProbe([
+        'rules:',
+        '  - name: "no-devices-here"',
+        '    devices:',
+        '      - target'
+    ].join('\n'), EmptyProbe)
+    await noop.execute({ trigger: 'sensor' })
+
+    assert(published.runs.length === 1, 'a matched-but-idle call is published')
+    assert(published.runs[0]?.outcome === 'noop', 'idle call recorded as noop')
+    assert(JSON.stringify(published.runs[0]?.rules) === '["no-devices-here"]',
+        'noop call still lists the rules it matched')
+    noop.cleanup()
+
+    published.matched.length = 0
+    published.runs.length = 0
+
+    const miss = makeProbe([
+        'rules:',
+        '  - name: "never-tonight"',
+        '    conditions:',
+        '      illuminance: { gte: 100000 }',
+        '    devices:',
+        '      - target',
+        '    action: "on"'
+    ].join('\n'))
+    await miss.execute({ trigger: 'timer' })
+
+    assert(published.runs.length === 1, 'an unmatched call is published too')
+    assert(published.runs[0]?.outcome === 'no-match', 'unmatched call recorded as no-match')
+    assert(published.runs[0]?.rules.length === 0, 'no-match call lists no rules')
+    assert(published.matched.length === 0, 'no rule match published')
+    assert(published.runs[0]?.run === 1, 'run ids start at 1 per automation')
+    miss.cleanup()
+}
+
+// -- Gated calls: skipped, suppressed, blocked ---------------------------------------
+
+console.log('\n\u2500\u2500 Gated calls \u2500\u2500\n')
+
+{
+    published.matched.length = 0
+    published.runs.length = 0
+
+    const gated = makeProbe([
+        'trigger_on_change_only: true',
+        'rules:',
+        '  - name: "on-presence"',
+        '    conditions:',
+        '      presence:',
+        '        "Living Room": true',
+        '    devices:',
+        '      - target',
+        '    action: "on"'
+    ].join('\n'))
+    await gated.execute({ trigger: 'timer' })
+
+    assert(published.runs[0]?.outcome === 'skipped', 'react-on-change tick recorded as skipped')
+    assert(published.runs[0]?.reason === 'no monitored state change', 'skip reason recorded')
+    assert(published.matched.length === 0, 'skipped call evaluates no rules')
+    gated.cleanup()
+
+    published.matched.length = 0
+    published.runs.length = 0
+
+    class SilentMatchProbe extends MatchProbe {
+        isInSilentPeriod() { return true }
+    }
+
+    const silent = makeProbe([
+        'rules:',
+        '  - name: "always-on"',
+        '    devices:',
+        '      - target',
+        '    action: "on"'
+    ].join('\n'), SilentMatchProbe)
+
+    await silent.execute({ trigger: 'timer' })
+    assert(published.runs[0]?.outcome === 'suppressed', 'silent-period call recorded as suppressed')
+    assert(published.runs[0]?.reason === 'silent period', 'suppression reason recorded')
+
+    await silent.execute({ trigger: 'manual', force: true })
+    assert(published.runs[1]?.outcome === 'acted', 'forced call bypasses the silent period and acts')
+    assert(published.runs[1]?.forced === true, 'forced call recorded as forced')
+    silent.cleanup()
+
+    published.matched.length = 0
+    published.runs.length = 0
+
+    const broken = makeProbe([
+        'rules:',
+        '  - name: "always-on"',
+        '    devices:',
+        '      - target',
+        '    action: "on"'
+    ].join('\n'), ThrowingProbe)
+    await broken.execute({ trigger: 'sensor' })
+
+    assert(published.runs[0]?.outcome === 'blocked', 'failed context build recorded as blocked')
+    assert(String(published.runs[0]?.reason).startsWith('context build failed'), 'blocked reason recorded')
+    assert(published.matched.length === 0, 'blocked call evaluates no rules')
+    broken.cleanup()
+}
+
+// -- Call history ordering and cap ---------------------------------------------------
+
+console.log('\n\u2500\u2500 Call history ordering and cap \u2500\u2500\n')
+
+{
+    published.runs.length = 0
+
+    const auto = makeProbe([
+        'rules:',
+        '  - name: "always-on"',
+        '    devices:',
+        '      - target',
+        '    action: "on"'
+    ].join('\n'))
+
+    for (let i = 0; i < 12; i++) await auto.execute({ trigger: 'timer' })
+
+    const calls = auto.getRecentAutomationCalls()
+    assert(calls.length === 10, 'call history capped at 10 calls')
+    assert(calls[0]?.run === 12 && calls[1]?.run === 11, 'newest call first')
+    assert(!calls.some((call) => call.run === 1), 'oldest call dropped')
+    assert(published.runs.length === 12, 'every call published, cap applies to history only')
+
+    const copy = auto.getRecentAutomationCalls()
+    copy[0].rules.push('mutated')
+    assert(auto.getRecentAutomationCalls()[0].rules.length === 1, 'call history copies are detached')
+
+    auto.cleanup()
+}
+
 // -- History ordering and cap --------------------------------------------------------
 
 console.log('\n\u2500\u2500 History ordering and cap \u2500\u2500\n')
@@ -247,6 +429,8 @@ console.log('\n\u2500\u2500 Base automation history \u2500\u2500\n')
     const plain = new PlainAuto({ name: 'Plain' })
     assert(Array.isArray(plain.getRecentRuleMatches()) && plain.getRecentRuleMatches().length === 0,
         'AutomationBase reports an empty rule history')
+    assert(Array.isArray(plain.getRecentAutomationCalls()) && plain.getRecentAutomationCalls().length === 0,
+        'AutomationBase reports an empty call history')
 }
 
 // -- Summary -------------------------------------------------------------------------

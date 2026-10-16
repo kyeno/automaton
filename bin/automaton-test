@@ -169,6 +169,7 @@ const testScripts = [
   'test-log-window-buffer.js',
   'test-window-preformatted.js',
   'test-rules-window.js',
+  'test-rules-cmd.js',
   'test-rule-match-history.js',
   'test-device-window-header.js',
   'test-device-window-sensor-columns.js',

@@ -20,6 +20,7 @@ The Automaton terminal UI supports slash commands typed into the input bar at th
 | `/sequence [arg]` | Run device sequences & control their loops: bare list with live status, `run <name> [ON\|OFF]`, `loop start <name>`, `loop stop <name>` (names may be slugs or friendly names) |
 | `/quit` (`/exit`, `/q`) | Exit Automaton |
 | `/win [arg]` | Switch window by shortcut number or id |
+| `/rules [arg]` | Drive the rules window tabs: bare lists the automations, `<name>` focuses one automation's box, `all` shows every box again |
 
 > **Note:** `/automation run <name>` calls that automation's `execute()` immediately with trigger reason `manual` (visible as "Triggered by: manual" under its `Auto:<name>` log context). Normal guards still apply -- silent periods, per-rule daily `once:` markers, and human-interaction cooldowns are respected exactly as for timer or event triggers. `/automation force <name>` dispatches the same way but carries `force: true`: the silent period and any already-consumed per-rule `once:` marker no longer block execution -- and it neither consumes nor refreshes that day's marker, so repeated forced or delegated pokes stay safe -- while human-interaction cooldowns are intentionally kept so a manual poke never fights a device someone just touched. Appending `first` (`/automation force <name> first`) additionally carries `forceFirst: true`, which forces the first-of-day day-position so the dated opening time line renders -- a debug poke for the date-fused clock sentence.
 
@@ -50,6 +51,7 @@ src/ui/commands/
 ├── pgdnCmd.js                    # /pgdn command
 ├── pgupCmd.js                    # /pgup command
 ├── quitCmd.js                    # /quit, /exit, /q
+├── rulesCmd.js                   # /rules <name> | all (rules window tabs)
 ├── statusCmd.js                  # /status command
 └── winCmd.js                     # /win <shortcut_or_id>
 ```
@@ -219,6 +221,18 @@ Switches to a window by numeric shortcut or internal id:
 | `/win 1` | Switch to window with shortcut `1` (typically logs) |
 | `/win 3` | Switch to window with shortcut `3` (typically AI) |
 | `/win ai` | Switch to window with id `'ai'` |
+
+### `/rules [name | all]`
+
+Drives the tab focus of the [rules window](../index.md), switching to that window first when the command was typed elsewhere:
+
+| Example | Result |
+|---------|--------|
+| `/rules` | Lists the automations the window knows and which tab is focused |
+| `/rules Rollers` | Focuses that automation: only its box is rendered, its tab label starred. Name resolution is case-insensitive; an unknown name is refused and the known names are listed |
+| `/rules all` | Clears the focus, so every automation box is rendered again |
+
+Tab completion offers `all` plus every automation the window has seen.
 
 ---
 

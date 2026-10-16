@@ -173,6 +173,12 @@ export default class AutomationBase {
         return []
     }
 
+    /** This automation's most recent calls, newest first -- every run, matched or not.
+     * @returns {Array<Object>} Recent calls (always empty for non-rule automations) */
+    getRecentAutomationCalls() {
+        return []
+    }
+
     //  -- Abstract method ----------------------------------------------------
 
     /** Main execution logic -- pure virtual; must be overridden by subclasses.
