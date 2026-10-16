@@ -11,9 +11,8 @@
 #   {% stuck_flowers %}    -- every probe that did not move since the previous snapshot, "Name (NN%)"
 #   {% stuck_window %}     -- the comparison window spoken in this locale ("24 hours")
 # Keep numeric values out of the template words where possible so Piper TTS and small
-# models read digits naturally in any locale; unit words stay in the sentences themselves.
-# Every ai line tells the model to work from the data given alone: the automation has
-# already read the probes, and a model that goes hunting for tools wastes the report.
+# models read digits naturally in any locale. Every ai line tells the model to work from
+# the data given alone -- the automation has already read the probes.
 #
 # Template copy ships as gardener.yaml.dist.
 

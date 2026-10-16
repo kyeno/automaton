@@ -1,19 +1,15 @@
 # Home Theater Automation -- one-room instance
-# Presence-gated video-player dark mode for a SINGLE room: while the player answers
-# HTTP (any state) the room's rollers are closed and handed back to the room's roller
-# owner when it goes offline; while a video plays, interfering lights go off; on
-# pause/stop/gone, light restore is delegated to the ambient-lights automation via
-# invoke_automation.
-# Requires video players defined under `videoPlayers` in etc/device/network.yaml.
+# Player reachable: rollers closed. Playing: interfering lights off.
+# Pause/stop/gone: lights restored, room handed back to its owners.
+# Requires video players under `videoPlayers` in etc/device/network.yaml.
 # Reference: doc/automations/home-theater-mode.md
 #
 # Template -- copy to bedroom-video.yaml (one instance per room) and customize.
-# "Sticky" while active: manual changes to target devices are re-corrected on the
-# next tick instead of being deferred to the human-interaction cooldown.
+
+# Sticky: manual changes are re-corrected on the next tick
 override_human_interaction: true
 
-# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
-# underscores (casing kept) -- they must exist in your setup; no separate list needed.
+# Rule "targets:" keys are zigbee2mqtt friendly names, spaces replaced by underscores.
 
 triggers_video:
   - laptop
@@ -36,14 +32,11 @@ rules:
       video_player: { laptop: [offline] }
     invoke_automation: { name: BedroomRollersAutomation, force: true }
 
-  # Light restore is fully delegated via `invoke_automation` to the ambient-lights
-  # automation, which owns all ambient lamp devices and re-evaluates its own
-  # conditions. No `presence` gate here so an offline machine also hands light control back.
-  # `state_transition: { from: playing }` keeps this a HAND-OFF and nothing else: it fires when
-  # playback leaves playing. Without it the rule pokes the whole ambient rule set on every
-  # not-playing transition, including a player that merely came back (`offline -> stopped`) --
-  # the settle window publishes that about-to-play player as `stopped`, so the poke re-runs the
-  # ambient owners mid-movie and re-lights lamps the room already settled.
+  # Light restore is delegated via `invoke_automation` to the ambient-lights automation,
+  # which owns the ambient lamp devices and re-evaluates its own conditions. No `presence`
+  # gate, so an offline machine also hands light control back.
+  # `state_transition: { from: playing }` restricts this to real hand-offs -- playback
+  # leaving playing -- and skips a player that merely came back (`offline -> stopped`).
   - name: 'Bedroom: not playing - delegate light restore to ambient lights'
     conditions:
       video_player: { laptop: [paused, stopped, offline] }

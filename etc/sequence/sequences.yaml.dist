@@ -1,27 +1,18 @@
 # AUTOMATON -- Sequences Configuration
-# Ordered device choreography with optional loops. Each entry under `sequences:`
-# is one sequence instance (a first-class being alongside devices & automations).
-# Copy this file to sequences.yaml (gitignored) and customize for your home.
-# Full reference: doc/configuration.md ("Sequences" section).
+# Ordered device choreography with optional loops. Full reference: doc/configuration.md.
+# Template -- copy to sequences.yaml and customize for your home.
 #
 # Entry fields:
-#   name       required friendly name; internally slugified (spaces -> underscores),
-#              e.g. 'Salon Hazard Light' -> salon_hazard_light
-#   delay_ms   OPTIONAL inter-step pause ("500ms", "2s", ... or plain ms). When absent
-#              the sequence acts as a multi-device endpoint -- every step fires back-to-back.
-#   devices    simple form: ordered names (or {device, command, delay_ms} objects);
-#              ON sends each device 'ON', OFF sends each device 'OFF'.
-#   on/off     rich form: explicit step lists. A step is {device, payload?, delay_ms?};
-#              payload passes through DeviceBase.receiveCommand() verbatim (any shape it
-#              accepts: strings, {state}, {position:N}, {state,brightness:{l1,l2}}, ...).
-#              'off' defaults to plain OFF over the same ordered devices from 'on'.
-#   loop       OPTIONAL block making this a looping sequence:
-#                enabled: true
-#                cycle: once | continuous      # once = single ON->OFF pass; continuous = repeat until stopped
-#                off_delay_ms: auto | duration # gap between end of ON run and start of OFF run;
-#                                              # auto = phase starts right when the previous one finishes
-#                on_delay_ms: auto | duration  # gap between end of OFF run and next ON run (continuous only);
-#                                              # auto = no wait, same as above
+#   name      friendly name; slugified internally ('Salon Hazard Light' -> salon_hazard_light)
+#   delay_ms  optional inter-step pause ("500ms", "2s", ms); absent = steps fire back-to-back
+#   devices   simple form: ordered names (or {device, command, delay_ms}); ON/OFF drives each device
+#   on/off    rich form: explicit step lists of {device, payload?, delay_ms?}; payload goes to
+#             DeviceBase.receiveCommand() verbatim; 'off' defaults to OFF over the 'on' devices
+#   loop      optional looping block:
+#             enabled: true
+#             cycle: once | continuous        # once = single ON->OFF pass; continuous = repeat
+#             off_delay_ms: auto | duration   # gap between the ON run and the OFF run
+#             on_delay_ms: auto | duration    # gap between the OFF run and the next ON run
 sequences:
   # Simple form + pacing: ambient lights come up one after another.
   - name: 'Ambient Lights'
@@ -33,8 +24,8 @@ sequences:
         command: 'ON'
         delay_ms: '800ms'
 
-  # Rich form: Salon dual-dimmer hazard light oscillation. Setting brightness values
-  # automatically creates the transition on the wire -- no extra "transition" field needed.
+  # Rich form: Salon dual-dimmer hazard light oscillation. Brightness values create the
+  # transition on the wire -- no extra "transition" field needed.
   - name: 'Salon Hazard Light'
     loop:
       enabled: true

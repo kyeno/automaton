@@ -1,30 +1,24 @@
 # Home Theater Automation -- one-room instance
-# Presence-gated video-player dark mode for a SINGLE room: while the player answers
-# HTTP (any state) the room's rollers are closed and handed back to the room's roller
-# owner when it goes offline; while a video plays, interfering lights go off; on
-# pause/stop/gone, light restore is delegated to the ambient-lights automation via
-# invoke_automation.
-# Requires video players defined under `videoPlayers` in etc/device/network.yaml.
+# Player reachable: rollers closed. Playing: interfering lights off.
+# Pause/stop/gone: lights restored, room handed back to its owners.
+# Requires video players under `videoPlayers` in etc/device/network.yaml.
 # Reference: doc/automations/home-theater-mode.md
 #
 # Template -- copy to home-office-video.yaml (one instance per room) and customize.
 
-# "Sticky" while active: manual changes to target devices are re-corrected on the
-# next tick instead of being deferred to the human-interaction cooldown.
+# Sticky: manual changes are re-corrected on the next tick
 override_human_interaction: true
 
-# Timer is a safety net only: ticks are skipped unless a monitored state
-# (video-player status, network presence) transitioned since the last evaluation.
+# Ticks only on monitored state transitions
 trigger_on_change_only: true
 
-# Context source of truth for the restore rule's illuminance gate -- NOT a trigger.
+# Context for the restore rule's illuminance gate -- NOT a trigger
 sensors:
   illuminance: 'Outdoor Luminance'
 
 timer_interval: "15m"
 
-# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
-# underscores (casing kept) -- they must exist in your setup; no separate list needed.
+# Rule "targets:" keys are zigbee2mqtt friendly names, spaces replaced by underscores.
 
 triggers_video:
   - my-pc
@@ -41,9 +35,7 @@ rules:
     targets:
       Living_Room_Roller_Left: CLOSE
 
-  # Player gone: hand the room back to its owners. The array form of
-  # `invoke_automation` force-fires both the roller owner and the ambient-lights
-  # owner; `offline` covers an unresponsive player and a powered-down host.
+  # Player gone: force-fire the roller owner and the ambient-lights owner
   - name: 'Office: player gone - hand back to the room owners'
     conditions:
       video_player: { my-pc: [offline] }
@@ -51,23 +43,12 @@ rules:
       - { name: HomeOfficeRollersAutomation, force: true }
       - { name: AmbientLightsAutomation, force: true }
 
-  # Light restore for an ONLINE player that has paused or stopped, gated by DARKNESS:
-  # the night window is an explicit OR because a single `hour:` bound cannot wrap midnight
-  # -- "after civil dusk" OR "before civil dawn" is the whole night, including the dark
-  # morning a night owl watches into (a day-period list drops it too: `night` ends at 04:59).
-  # Illuminance stays the authority on how dark it really is. Dimmers take
-  # `{state: 'ON', brightness: { l1: 50, l2: 25 }}`:
-  # a bare `{brightness: N}` sets the level without switching the relay on.
-  # `reassert_state`: this rule exists to UNDO dark mode, so it must reach the device even
-  # when its cached state already matches -- that cache can be a stale pre-command snapshot
-  # when an earlier dark-mode OFF was never confirmed by the device (see doc/ht-lights-bug.md).
-  # `state_transition` pins the ORIGIN of the player's last transition: a real pause is
-  # `playing -> paused`. The playback-settle window publishes an about-to-play player as
-  # `stopped` for the length of its dwell, so a player that merely came back (`offline ->
-  # stopped`) looks exactly like a pause to a status-only condition -- the lamps flash on its
-  # way to playing. Naming the origin state filters that out with no timing assumption.
+  # Restore ambient lighting on a paused/stopped player, while dark. The night window is an
+  # explicit OR -- a single `hour:` bound cannot wrap midnight.
+  # `state_transition: { from: playing }` pins the origin of the transition, so a player
+  # that merely came back (`offline -> stopped`) is not read as a pause.
   - name: 'Office: paused/stopped - restore ambient lighting'
-    reassert_state: true
+    reassert_state: true    # re-send even when cached state matches
     conditions:
       video_player: { my-pc: [paused, stopped] }
       state_transition: { 'videoPlayer:my-pc': { from: playing } }
@@ -80,14 +61,8 @@ rules:
       Kitchen_Plug: ON
       Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 
-  # One lamp on its own terms: the same player state and illuminance gate as the restore rule,
-  # narrowed to the EVENING half of the night. `hour: { gte: sunset }` runs civil dusk ->
-  # midnight and stops there -- the hour axis ends at 24:00, so no upper bound is needed. After
-  # midnight this lamp stays out for the whole night: a pause while watching into the small hours
-  # restores the lamps above, not this one. Both rules match on a pre-midnight pause and each
-  # contributes its own targets (every matching rule acts -- none is shadowed). Dark mode (below)
-  # still puts it out on playback, and `reassert_state` makes the restore survive a stale cached
-  # state exactly like the restore rule above.
+  # One lamp on its own terms: same gates as the restore rule, narrowed to the evening
+  # half of the night -- `hour: { gte: sunset }` ends at midnight, so no upper bound needed.
   - name: 'Office: paused/stopped before midnight - hallway cupboard lamp'
     reassert_state: true
     conditions:

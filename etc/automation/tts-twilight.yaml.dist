@@ -1,46 +1,31 @@
 # TTS TWILIGHT -- Configuration
-# Announces civil dawn and civil dusk by voice: one announcement per event, per day, fired at
+# Announces civil dawn and civil dusk by voice: one announcement per event per day, fired at
 # the exact local minute the event happens.
+#   * the minute-granularity tick is anchored to wall-clock minutes, so a tick lands in the
+#     minute the event falls in;
+#   * an event is announced only while fresh -- its instant within announce_grace of now --
+#     so a machine asleep over dawn announces it late, never yesterday's dawn;
+#   * `once: true` uses the rule engine's daily Redis marker, surviving restarts.
+# Manual runs ("/automation run|force TtsTwilightAutomation") preview the next event and do
+# not consume its daily slot.
 #
-# How it fires:
-#   * the minute-granularity tick below is anchored to wall-clock minute boundaries, so a tick
-#     lands in the same minute the event instant falls in;
-#   * an event is announced only while it is fresh -- its instant lies within announce_grace of
-#     now -- so a machine that was asleep over dawn announces it late (inside the window) and
-#     never announces yesterday's dawn;
-#   * every rule carries `once: true`, reusing the rule engine's daily marker in Redis: one
-#     announcement per event per day, surviving restarts. A Redis outage fails open, and the
-#     grace window is what bounds the repeats.
-# Manual runs ("/automation run|force TtsTwilightAutomation") preview the next upcoming event
-# immediately and never consume that event's daily slot.
-#
-# Each rule speaks its own section of the twilight i18n bundle
-# (etc/i18n/<locale>/twilight.yaml) and carries its OWN framing keys, so dawn and dusk get
-# different jingles:
-#   tts_profile:  name of a profiles: entry of the active locale's tts.yaml
+# Each rule speaks its own section of etc/i18n/<locale>/twilight.yaml and carries its own
+# framing keys, so dawn and dusk get different jingles:
+#   tts_profile:  a `profiles:` entry of the active locale's tts.yaml
 #   tts_options:  explicit framing; wins over the profile field by field
-# Runtime placeholders, all taken from the EVENT instant: {% time %} -- the event's local clock
-# time, "HH:MM"; {% time_of_day %} -- the localized day-period word from date.yaml ("rano",
-# "wieczorem"); {% hours %} and {% minutes %} -- the same moment in the locale's clock parts
-# (12-hour when locale.time_format is "12h"), which is what the ai lines use to make the model
-# voice the hour in words ("szósta osiemnaście rano") instead of reading digits.
-# The bundles speak plain household wording: no "civil dawn"/"civil dusk" in the sentences, and
-# each ai line carries the event facts (the calendar sundawn/sundusk of the day plus the hour)
-# to the model, so an AI-composed announcement says the same thing in its own words.
+# Placeholders, all from the EVENT instant: {% time %} -- local "HH:MM";
+# {% time_of_day %} -- day-period word from date.yaml; {% hours %} / {% minutes %} -- the
+# same moment in the locale's clock parts, used by the ai lines to voice the hour in words.
 #
-# Output routing is the same boolean switch as ttsGreeter / ttsGardener:
-#   use_ai false -> speak the section's tts line directly (default);
-#   use_ai true  + AI available -> send the section's ai instruction to the model, which speaks
-#                   its own announcement; empty reply / error / AI down -> warn log + plain TTS.
+# Output routing: use_ai false -> speak the section's tts line directly; use_ai true -> send
+# the section's ai instruction to the model (empty reply / error / AI down -> warn log + tts).
 # Reference: doc/automations/twilight.md
 #
 # Template -- copy to tts-twilight.yaml and customize for your home.
 # Civil dawn/dusk come from locale.geo_latitude / locale.geo_longitude in etc/automaton.yaml;
 # with no usable coordinates the automation stays quiet and warns once a day.
 
-use_ai: false                      # true  -> route each announcement through AI -> TTS when available
-                                   #         (warn log + plain TTS sentence if the AI is down);
-                                   # false -> direct TTS only, never touches the AI pipeline
+use_ai: false                      # true -> route announcements through AI -> TTS; false -> direct TTS
 
 timer_interval: "1m"               # tick driving the announcements -- keep at minute granularity
 announce_grace: "5m"               # announce an event this long after its instant (catch-up window)

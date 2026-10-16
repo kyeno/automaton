@@ -5,24 +5,21 @@
 #
 # Template -- copy to weatherman.yaml and customize sentences for your home.
 
-# Opening time-of-day line -- rendered BEFORE the base sentence by buildTimeSentence()
-# on both output paths (AI rewrite and direct TTS). Clock parts are pre-rendered as
-# plain digits so even tiny models never convert a clock string into words.
+# Opening time-of-day line -- rendered before the base sentence by buildTimeSentence()
+# on both output paths. Clock parts are pre-rendered as plain digits.
 time_sentence:
-  # Generic frame ("It is 32 minutes past 9 in the morning"); the small model only
-  # inflects forms into natural speech during its rewrite.
+  # Generic frame ("It is 32 minutes past 9 in the morning").
   default: 'It is {% minutes %} minutes past {% hours %} {% time_of_day %}.'
   # Exact hour (:00) -- no minutes at all.
   exact_hour: "It is exactly {% hours %} o'clock {% time_of_day %}."
-  # Dated frame -- first run of the day / first run of the session. The calendar date
-  # (from date.yaml) is fused into the clock sentence via {% date %} so the date and the
-  # time read as one grammatical line rather than two separate sentences.
+  # Dated frame -- first run of the day/session; the calendar date is fused into the
+  # clock sentence via {% date %}.
   dated: 'It is {% date %}, {% minutes %} minutes past {% hours %} {% time_of_day %}.'
   dated_exact_hour: "It is {% date %}, exactly {% hours %} o'clock {% time_of_day %}."
   # Reserved future fractions, auto-selected when defined here: half_past :30, quarter_to :45, quarter_past :15.
 
-# NOTE: day-period words ({% time_of_day %}) and duration units ({% next_interval %}) now
-# live in the per-locale date.yaml bundle (owned by the date helper), not here.
+# Day-period words ({% time_of_day %}) and duration units ({% next_interval %}) live in
+# the per-locale date.yaml bundle.
 
 base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
 ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Finally - before announcing when the next update comes - toss in a short anecdote about what you once pulled off in such weather while completely drunk. Here is the information: '
@@ -39,11 +36,7 @@ ai_message_next: 'Next update in {% next_interval %}.'
 # {% proverb %} is filled with a random line from etc/i18n/<locale>/proverbs.txt.
 # Placement: after the report body, BEFORE the next-update closer, so the next-update
 # time stays last. See Weatherman Speech Rendering -> Segment Order.
-#
-# ai_proverb deliberately makes NO positional claim ("remind your listeners..."), because
-# the prompt's own line order already places the proverb. Do NOT change it to a
-# "close with this" / "Finally" phrasing: ai_prefix already anchors its anecdote to
-# "Finally" (before the next-update line), so a second end-anchor would compete with it.
+# ai_proverb makes no positional claim -- the prompt's line order already places it;
 # tts_proverb is the spoken wording for the direct-TTS path.
 ai_proverb: 'Remind your listeners of this proverb: {% proverb %}'
 tts_proverb: 'And remember: {% proverb %}'

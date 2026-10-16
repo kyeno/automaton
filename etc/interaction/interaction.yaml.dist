@@ -1,15 +1,10 @@
 # Interactions Configuration
-# Defines interactions that can be triggered by Zigbee devices.
-#
-# Each interaction has:
-#   - name: Unique identifier (snake_case). This is also the EventBus topic
-#     the interaction subscribes to via "zigbee:{name}".
-#   - actions: Array of action definitions with type and either targets or calls
-#
+# Interactions triggered by Zigbee devices.
+#   name   -- unique id (snake_case); also the EventBus topic "zigbee:{name}"
+#   actions -- action definitions, each with a type plus targets or calls
 # Action types:
-#   - targets: Direct device commands -- array of {device, command} objects.
-#     The interaction finds each device via DeviceContainer and calls receiveCommand(command).
-#   - calls: Delegate to another named interaction's execute() method.
+#   targets -- direct device commands: array of {device, command}
+#   calls   -- delegate to another named interaction's execute()
 #
 # Template -- copy to interaction.yaml and customize for your setup.
 
@@ -45,12 +40,8 @@ interactions:
             command: 'TOGGLE'
 
   # Example: Pilot remote controlling bedroom roller shutters while delegating
-  # travel to a custom JS interaction (see bedroomRollersInteraction.js.dist).
-  # That interaction moves the shutters itself so it can read their cached
-  # positions first: a single press runs them fully open/closed, a double press
-  # steps each one 20%, and a press against an end stop the group already sits
-  # at is answered with a beep instead of a command. Only STOP, which needs no
-  # position logic, stays declarative here.
+  # travel to a custom JS interaction (see bedroomRollersInteraction.js.dist) --
+  # single press full travel, double press 20% step, end-stop beep. STOP stays declarative.
   - name: 'bedroom_pilot_remote'
     actions:
       - type: '1_single'

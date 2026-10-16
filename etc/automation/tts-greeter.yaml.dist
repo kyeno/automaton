@@ -1,32 +1,25 @@
 # TTS GREETER -- Configuration
-# Greets people when their computers come back online, based on how long they were
-# absent. The absence duration comes from the transition history
-# (DatabaseService.priorStateDurationMs): how long the host sat OFFLINE before this
-# return event -- so a quick reboot never triggers a full welcome.
+# Greets people when their computers come back online, by how long they were absent. The
+# duration comes from the transition history (DatabaseService.priorStateDurationMs), so a
+# quick reboot never triggers a full welcome.
 # Reference: doc/automations/greeter.md
 #
 # Template -- copy to tts-greeter.yaml and customize for your home.
 
-# greeting_windows are evaluated top-down; the FIRST window whose bounds match the
-# absence wins; no match = silence. Bounds accept human-readable durations ("5s",
-# "90s", "7m", "4h") or plain milliseconds; either bound may be omitted for an
-# open-ended side:
+# greeting_windows are evaluated top-down; the first matching window wins, no match = silence.
+# Bounds accept durations ("5s", "7m", "4h") or plain milliseconds; either bound may be omitted:
 #   { gte: "4h" }             -> 4 hours or longer
 #   { lte: "2m" }             -> up to 2 minutes
 #   { gte: "7m", lte: "30m" } -> between 7 and 30 minutes
-# Each window's "sentence" names a section of the greeter i18n bundle
-# (etc/i18n/<locale>/greeter.yaml), which holds per-host tts/ai templates.
+# Each window's "sentence" names a section of etc/i18n/<locale>/greeter.yaml.
 
 triggers_network: [hostname1, hostname2]   # hosts to greet on return (must exist in etc/device/network.yaml)
 
-use_ai: false                        # true  -> route each greeting through AI -> TTS when available
-                                     #         (warn log + plain TTS sentence if the AI is down);
-                                     # false -> direct TTS only, never touches the AI pipeline
+use_ai: false                        # true -> route greetings through AI -> TTS; false -> direct TTS
 
 # OPTIONAL -- spoken framing for every greeting, on both output paths. Name a profile from the
-# active locale's tts.yaml profiles: registry, and override single fields with tts_options
-# (explicit fields win over the profile). Remove both to keep plain speech.
-tts_profile: ''                  # empty = plain speech; name a profiles: entry to add jingles
+# active locale's tts.yaml `profiles:`; explicit tts_options fields win over the profile.
+tts_profile: ''                  # empty = plain speech
 #tts_options:
 #  intro: 'intro-chime.wav'          # Wave filename played before the greeting
 #  outro: null                       # Wave filename played after the greeting

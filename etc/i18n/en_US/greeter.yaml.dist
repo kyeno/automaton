@@ -7,7 +7,6 @@
 # Placeholders: {% name_vocative %} and {% name_genitive %} are filled from names.<host>.
 # English has no grammatical cases, so both slots carry the same plain name here --
 # keep both keys anyway so bundles stay structurally identical across locales.
-# Add more buckets freely and reference them from greeting_windows in tts-greeter.yaml.
 #
 # Template -- copy to greeter.yaml and customize sentences + host names for your home.
 
@@ -39,16 +38,12 @@ reboot:
     hostname1: "Announce briefly and with humor that {% name_genitive %}'s computer just rebooted."
     hostname2: "Announce briefly and with humor that {% name_genitive %}'s computer just rebooted."
 
-# Absence note -- appended AFTER the bucket greeting (space-separated) whenever the
-# transition history provides an absence duration. Two tiers by length:
-#   recent -- below 24h: how long ago it was last seen online ("...8 hours ago")
-#   long   -- from 24h up: full calendar date + clock time of the moment it went offline
-# TTS variants come in _named / _anonymous pairs: the possessive form is spoken only when
-# this host's welcome.tts line addresses them by name ({% name_vocative %}/{% name_genitive %});
-# machines without a personal greeting get the neutral "The computer ..." form instead.
-# Placeholders: {% time_phrase %} -> localized duration incl. unit word ("58 minutes");
-#               {% last_online_date %} -> localized calendar date from the date bundle;
-#               {% last_online_time %} -> zero-padded 24-hour clock time ("07:35").
+# Absence note -- appended after the bucket greeting when the transition history provides
+# an absence duration. Two tiers: recent (below 24h) and long (24h up: calendar date + time).
+# tts variants come in _named / _anonymous pairs: named when the host's welcome.tts line
+# addresses them by name, neutral otherwise.
+# Placeholders: {% time_phrase %} -- localized duration; {% last_online_date %} -- localized
+# calendar date; {% last_online_time %} -- zero-padded 24-hour clock time.
 absence_note:
   tts:
     recent_named:     'Your computer was last online {% time_phrase %} ago.'

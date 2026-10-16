@@ -5,8 +5,7 @@
 # Reference: doc/automations/ambient-lights.md
 # Template -- copy to ambient-lights.yaml and customize device names/thresholds.
 
-# Rule "targets:" keys are zigbee2mqtt friendly names with spaces replaced by
-# underscores (casing kept) -- they must exist in your setup; no separate list needed.
+# Rule "targets:" keys are zigbee2mqtt friendly names, spaces replaced by underscores.
 
 sensors:
   illuminance: 'Outdoor Luminance'
@@ -14,22 +13,21 @@ sensors:
 triggers_zigbee:
   - 'Outdoor Luminance'
 
-# Presence transitions of these hosts wake this automation under trigger_on_change_only.
+# Hosts whose presence transitions wake this automation
 triggers_network: [my-pc, laptop]
 
 timer_interval: "30s"
 
-# Re-evaluate only on real sensor/player/presence transitions, not on every interval tick.
+# React to transitions only, not to every tick
 trigger_on_change_only: true
 
-# Stand-down guard: while a listed player is in a listed status, Home Theater Mode owns
-# the lights. Hosts combine with OR; statuses: playing, paused, stopped, offline.
+# Stand-down guard: these players own the lights while in these statuses
 video_player_suppression:
   my-pc: [playing]
   laptop: [playing]
 
 rules:
-  # Morning lights-off, gated on civil dawn ("sunrise" resolves to civil twilight).
+  # Morning lights-off, after civil dawn
   - name: 'Bright morning - turn off leftover lights'
     once: true
     conditions:
@@ -39,60 +37,36 @@ rules:
     targets:
       Kitchen_Outlet: OFF
       Hallway_Outlet: OFF
-      Hallway_Cupboard_Outlet: OFF    # Safety net: the cupboard lamp never survives into daylight
+      Hallway_Cupboard_Outlet: OFF    # safety net: cupboard lamp never survives into daylight
       Living_Room_Switch: OFF
 
-  # Dark-window rule: fires once per window when it gets dark enough, and never earlier than
-  # `predusk` -- civil dusk 30 minutes ahead (`sunset` resolves to civil dusk in Automaton).
-  # Both windows are top-level, so each gets its own `once:` slot (the budget splitter reads
-  # `time_of_day` gates at any depth) and the sun floor covers BOTH: `afternoon` because winter
-  # dusk lands inside it, `evening` because the fixed clock band starts at 18:00 while June dusk
-  # is 21:00. The floor is what keeps a gloomy mid-afternoon from lighting the lamps hours before
-  # dusk -- the periods are fixed clock bands with no sun awareness of their own.
+  # Dusk lamps-on: once per window when dark, never before `predusk`
   - name: 'Settled dusk - turn on ambient lamps'
     once: true
-    # Re-assert at this one daily transition: paired lamps must flip together even when a cached
-    # state is stale -- an earlier unconfirmed command can leave it describing the pre-command
-    # world, and no-op suppression would then desync the pair (doc/BUGS.md issue 3).
-    reassert_state: true
+    reassert_state: true    # re-send even when cached state matches
     conditions:
       time_of_day: [afternoon, evening]
-      hour: { gte: predusk }   # civil dusk minus 30 min; the floor for every window
+      hour: { gte: predusk }   # civil dusk minus 30 min
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON
       Hallway_Outlet: ON
       Hallway_Cupboard_Outlet: ON
 
-  # One lamp goes out for the night. Listed AFTER the dusk rule on purpose: when several matching
-  # rules name the same target, every one of them acts and the LAST one in config order wins the
-  # field it names, so this OFF outranks the dusk ON on this socket alone. `once: true` with a
-  # `time_of_day` gate is window-scoped -- it consumes only the `night` slot, never the dusk
-  # rule's `evening`/`afternoon` budgets, and stands down after firing so a human who relights
-  # the lamp after midnight keeps it lit.
+  # Cupboard lamp out for the night
   - name: 'Past midnight - turn off hallway cupboard lamp'
     once: true
     conditions:
-      time_of_day: [night]    # 00:00-04:59; the night period already starts at midnight
+      time_of_day: [night]    # 00:00-04:59
     targets:
       Hallway_Cupboard_Outlet: OFF
 
-  # Pre-dawn restore: answers a home-theater player-gone hand-off (a forced poke, which
-  # consumes no budget) and nothing else. `forced_only` keeps natural timer/sensor ticks out of
-  # the dark morning entirely -- a movie that ends at 05:00 gets these lamps back, a 00:26
-  # presence blip in the middle of a session does not. The period list stops at 04:59 while
-  # civil dawn moves with the season (03:09 in June, 07:45 in December), so
-  # `hour: { lt: sunrise }` covers midnight -> dawn, which no day-period list can express (a
-  # single `hour:` bound cannot wrap midnight).
-  # Keep this rule to the lamps it owns. Any target a presence-gated rule owns (a room light
-  # that should only burn when someone is in it) does NOT belong here: the same hand-off poke
-  # re-evaluates that rule as well, so an occupant gets the light back at its own level and an
-  # empty house stays dark.
+  # Pre-dawn restore: forced runs only (home-theater hand-off); socket lamps only
   - name: 'Pre-dawn restore - turn on ambient lamps'
     forced_only: true
     conditions:
       time_of_day: [night, morning]
-      hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
+      hour: { lt: sunrise }    # midnight -> civil dawn
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON

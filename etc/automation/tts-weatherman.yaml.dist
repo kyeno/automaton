@@ -1,11 +1,6 @@
 # ttsWeatherMan Configuration
-# Rule-based TTS weather announcer with sensor data interpolation.
-# Builds a speech message from a base sentence and condition-matched additions,
-# then routes through AI -> TTS pipeline (or direct TTS if AI unavailable).
-# Sensor values can be interpolated into i18n strings using {{ DeviceName.property }}
-# syntax (e.g., "{{ Outdoor Temperature.temperature }}" resolves to live sensor data).
-# When multiple rules match, only the one with the highest priority fires; default
-# priority is 0, higher number = higher precedence.
+# Rule-based TTS weather announcer; sensor values interpolate into i18n strings via
+# {{ DeviceName.property }}. Highest-priority matching rule wins (default 0).
 # Reference: doc/automations/weatherman.md
 #
 # Template -- copy to tts-weatherman.yaml and customize for your home.
@@ -17,20 +12,13 @@ silence_between: "0230-1030"     # Suppress execution between these local times 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 
-# OPTIONAL -- Add a proverb to every announcement, placed after the report body and
-# BEFORE the "next update" closer (so the next-update time stays last). The proverb is
-# drawn at random from etc/i18n/<locale>/proverbs.txt (one per line) and fills the
-# {% proverb %} token of the weatherman bundle's proverb keys.
-#
-# Two keys exist because the two output paths need different wording:
-#   ai_proverb -- direction carried in the AI prompt, so the model announces the
-#                 proverb in its own voice;
-#   tts_proverb -- spoken verbatim by direct TTS when AI is unavailable.
+# OPTIONAL -- add a random proverb from etc/i18n/<locale>/proverbs.txt to every
+# announcement, before the "next update" closer. Two keys, one per output path:
+#   ai_proverb  -- direction carried in the AI prompt
+#   tts_proverb -- spoken verbatim by direct TTS
 add_proverb: false
 
-# OPTIONAL -- Route reports through the AI engine before TTS when it is configured and
-# available (default ON). Set to false to always speak the report directly, skipping the
-# LLM round-trip entirely (greeter keeps its own use_ai flag at false).
+# OPTIONAL -- route reports through the AI engine before TTS (default ON)
 use_ai: true
 
 sensors:
@@ -39,19 +27,15 @@ sensors:
   humidity: 'Outdoor Temperature'          # Same device as temp (combined sensor)
   pressure: 'Kitchen Temperature'           # Separate barometer (may vary)
 
-# OPTIONAL -- Extra parameters forwarded verbatim into the TTS server request for every
-# utterance produced by this automation (radio-style jingle framing). Each entry applies
-# only when set; leave empty to keep the plain { model, text, output_endpoint } shape.
-# Wave files must exist on the TTS server side. intro_spacing may be negative (= overlap).
-# A named profile from the locale tts.yaml profiles: registry may supply the same fields
-# (tts_profile: 'news'); explicit entries below win over the profile field by field.
+# OPTIONAL -- extra params forwarded into every TTS request; a `tts_profile` from the locale
+# tts.yaml registry can supply the same fields (explicit entries win). Waves must exist on
+# the TTS server; intro_spacing may be negative (= overlap).
 tts_options:
   intro:          # Wave filename played before the synthesized speech
   outro:          # Wave filename played after the synthesized speech
   intro_spacing:  # Seconds between intro end and speech start; negative = overlap
 
-# Stand-down guard -- while any listed player is in one of these statuses the whole automation stays
-# quiet so a movie is not interrupted by weather chatter. Hosts combine with OR; force does NOT bypass it.
+# Stand-down guard: stay quiet while these players are playing; force does NOT bypass
 video_player_suppression:
   htpc: [playing]      # Home theater / HTPC player
   bedroom: [playing]   # Bedroom player

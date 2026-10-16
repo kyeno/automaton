@@ -9,8 +9,7 @@ locale:
   language: en_US
   # Time display format: "12h" (01:30pm) or "24h" (13:30)
   time_format: "24h"
-  # Observer coordinates driving the sun-based rule shorthands ("sundawn"/"sundusk"):
-  # WGS84 decimal degrees, latitude positive north, longitude positive east
+  # Observer coordinates for the sun shorthands ("sundawn"/"sundusk"): WGS84 decimal degrees
   geo_latitude: 52.0
   geo_longitude: 21.0
 
@@ -24,37 +23,33 @@ ai:
   conversation_ttl_sec: "15m"   # how long idle conversations linger in Redis before purge
   max_conversation_turns: 10    # message turns retained in context window
   strip_ai_formatting: true     # strip markdown/emoji before UI/TTS
-  include_chat_history_in_system_calls: false  # system-origin announcements receive prior chat context; false keeps them standalone
+  include_chat_history_in_system_calls: false  # give system-origin announcements prior chat context
 
-# --- AI BRIDGE: dedicated MQTT channel letting external clients (web UI / STT
-# backends) talk to the shared AI conversation
+# --- AI BRIDGE: MQTT channel for external clients (web UI / STT backends) to use the AI conversation
 ai_bridge:
   enabled: true               # master switch
-  topic_base: "automaton/ai"  # dedicated tree, kept OUTSIDE zigbee2mqtt/*
+  topic_base: "automaton/ai"  # MQTT topic tree, outside zigbee2mqtt/*
   forward_events: true        # stream tool/device interactions over MQTT too
 
 # --- ALERTS: spoken notifications for notable system events
 # Reference: doc/monitors/offline-alerts.md
 alerts:
-  # --- Zigbee devices leaving the mesh
-  # Speak a warning when a configured Zigbee device leaves the network
+  # --- Zigbee devices leaving the mesh: spoken warning
   zigbee_offline_tts: true
   # Per-device re-warning cooldown ("90s","15m", or ms); 0 = warn on every leave event
   zigbee_offline_cooldown_ms: "30m"
   # Device names never announced (e.g., intentionally removed sensors)
   zigbee_offline_ignore: []
-  # Jingle framing profile name from the locale tts.yaml `profiles:` (empty = none).
-  # Sentences live in etc/i18n/<locale>/alerts.yaml. Explicit framing wins over the
-  # profile, key by key:
+  # Jingle profile from the locale tts.yaml `profiles:` (empty = none); explicit
+  # tts_options below win key by key. Sentences: etc/i18n/<locale>/alerts.yaml.
   # zigbee_offline_tts_options:
   #   intro: 'alarm.wav'
   #   outro: 'end.wav'
   #   intro_spacing: -1.5
   zigbee_offline_tts_profile: ''
 
-  # --- Mission-critical network hosts going offline
-  # Hosts are polled by NetworkPresence; the names below must exist in
-  # etc/device/network.yaml (IPs live there, never in this file).
+  # --- Mission-critical network hosts going offline. Names must exist in
+  # etc/device/network.yaml (IPs live there).
   network_offline_tts: true
   network_offline_cooldown_ms: "30m"
   network_offline_ignore: []
@@ -63,8 +58,8 @@ alerts:
   network_offline_announce_boot: true
   # Speak the recovery sentence when a watched host comes back
   network_offline_announce_recovery: false
-  # Allow-list of watched hosts; per-host overrides optional (null = defaults).
-  # Overrides accept cooldown_ms, tts_profile and a tts_options block:
+  # Watched hosts; per-host overrides optional (null = defaults), accepting
+  # cooldown_ms, tts_profile and a tts_options block:
   # network_offline_devices:
   #   core-server:
   #   dns-server:
@@ -110,12 +105,12 @@ automation:
 
 # --- UI: terminal interface. See doc/ui/index.md for widget/channel reference.
 ui:
-  # Jingle framing profile for text typed into the TTS window (window 3): a name
-  # from etc/i18n/<locale>/tts.yaml `profiles:`; empty = plain speech
+  # Jingle profile for text typed into the TTS window; a name from the locale
+  # tts.yaml `profiles:`; empty = plain speech
   tts_profile: ''
   status_bar:
     lines:
-      # Line 1 -- time + time-of-day (left); activity indicator follows the left side
+      # Line 1 -- time + time-of-day
       - left:
           - type: time
             render_seconds: false

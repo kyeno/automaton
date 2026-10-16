@@ -4,28 +4,17 @@
 # Każda sekcja zawiera wiersze podzielone ścieżką wyjścia, jak w pakietach greeter i gardener:
 #   <sekcja>.tts -- wypowiadane dosłownie, gdy use_ai jest wyłączone / AI niedostępne
 #   <sekcja>.ai  -- polecenie wysłane do modelu; model wypowiada własny komunikat
-# Placeholders (uzupełniane w trakcie działania z CHWILI ZDARZENIA, nigdy z bieżącego zegara):
-#   {% time %}        -- lokalny czas zdarzenia, zero-wypełniony format 24-godzinny "HH:MM"
-#   {% time_words %}  -- ta sama chwila wypowiedziana słownie: "szósta osiemnaście" -- godzina
-#                        na zegarze 12-godzinnym, żeńskim porządkownikiem od słowa "godzina",
-#                        minuty liczebnikiem głównym, bez słowa minut co pełną godzinę. Liczy
-#                        ją kod (src/lib/polish.js przez src/lib/date.js); w locale bez
-#                        generatora token zwraca cyfry, więc zdanie nigdy się nie gubi.
-#   {% time_of_day %} -- lokalne słowo pory dnia z date.yaml: "rano", "w południe",
-#                        "po południu", "wieczorem", "w nocy"
+# Placeholders (uzupełniane z CHWILI ZDARZENIA, nigdy z bieżącego zegara):
+#   {% time %}        -- lokalny czas zdarzenia, format 24-godzinny "HH:MM"
+#   {% time_words %}  -- ta sama chwila wypowiedziana słownie ("szósta osiemnaście");
+#                        liczy ją kod (src/lib/polish.js przez src/lib/date.js)
+#   {% time_of_day %} -- lokalne słowo pory dnia z date.yaml
 #   {% hours %}       -- godzina zdarzenia w formacie z locale.time_format (12h lub 24h)
 #   {% minutes %}     -- minuty zdarzenia, bez wypełniania zerem
-# Godzina jest w polskim rodzaju żeńskiego: mówi się "szósta osiemnaście", nigdy
-# "sześć osiemnaście". Silnik TTS czytający cyfry nie umie tego sam, więc formy godzinowe
-# liczy kod -- wiersz tts mówi godzinę słownie i nie potrzebuje żadnej instrukcji, a wiersz
-# ai dostaje gotowe słowa zamiast gramatycznego wykładu. Mały model nie musi odmieniać cyfr,
-# więc prompt jest krótki i tani.
-#
-# Zasada sformułowań: komunikat nigdy nie mówi "świt cywilny" / "zmierzch cywilny" -- to
-# terminologia pomiarowa, nie język domowy. Wiersze mówią, co robi światło, podają godzinę i
-# nazywają zdarzenie kalendarzowym świtem / zmierzchem danego dnia; wiersze ai przekazują te
-# same fakty modelowi w tej samej kolejności, więc improwizowany komunikat pozostaje zwyczajny
-# i zawsze wymawia godzinę.
+# Polska godzina jest rodzaju żeńskiego ("szósta osiemnaście"), więc formy godzinowe liczy
+# kod -- wiersze dostają gotowe słowa, a nie cyfry do odmienienia.
+# Komunikaty używają języka domowego: "kalendarzowy świt / zmierzch tego dnia", nigdy
+# "świt cywilny" / "zmierzch cywilny".
 #
 # Szablon -- skopiuj do twilight.yaml i dostosuj zdania. Nazwy sekcji muszą odpowiadać
 # kluczom rules[].sentence z etc/automation/tts-twilight.yaml.

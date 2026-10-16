@@ -1,67 +1,39 @@
 # TTS GARDENER -- Configuration
-# Watches soil-moisture flower sensors and announces plant hydration
-# status by voice, with sentences chosen from moisture thresholds tuned below.
-#
-# Two ways in:
-#   * reactive  -- any state change on a listed flower sensor triggers an evaluation;
-#                  speech fires ONLY when some plant has worsened past its last announced
-#                  band (per-flower severity tracking) AND the worst plant reached a band
-#                  marked "reactive: true" below, so periodic battery-sensor blips at the
-#                  same level never re-announce and a slow drift into "Getting dry" waits
-#                  for the scheduled report instead; recovery lowers the baseline silently
-#                  and the next drop below a band speaks again. Event reports ignore
-#                  announce_times entirely -- they speak on their own -- and are throttled
-#                  by event_cooldown below so the TTS server never voices a report on top
-#                  of the one before it;
-#   * scheduled -- a full status report (even "everything's fine") at each announce_times
-#                  slot once per day, driven by the minute-granularity tick timer below.
-#                  Each slot consumes the shared once-per-day marker (Redis key
-#                  "auto:TtsGardenerAutomation:once:announce_slot_HHmm"), so a restart
-#                  inside the grace window cannot re-fire a slot that already spoke.
+# Voice reports on plant soil moisture, chosen from the moisture bands in `rules:` below.
+# Two entry points:
+#   reactive  -- any change on a listed flower sensor is evaluated; it speaks only when a
+#                plant worsened past its last announced band and the worst one reached a
+#                band marked `reactive: true`. Recovery lowers the baseline silently.
+#                Throttled by event_cooldown; announce_times does not apply to these.
+#   scheduled -- a full status report at each announce_times slot, once per day.
 # Manual runs ("/automation run|force TtsGardenerAutomation") always speak immediately.
 #
-# A third thing runs beside those two, on top of whichever trigger fired: the stuck-probe
-# watchdog. Every stuck_check_interval it snapshots every probe's moisture and compares it with
-# the snapshot of the previous cycle -- a probe reporting byte-for-byte the same reading is
-# flagged, because a capacitive probe frozen on one value is usually stuck rather than soil that
-# is perfectly stable, and gets named in a warning telling you to give it a poke. The snapshot is
-# data recording, not speech, so it is taken on every run -- silent period and down channels
-# included; only the warning is gated by silence_between, stuck_warn_cooldown and stuck_speak.
-# Snapshot and warning marker live in Redis ("auto:TtsGardenerAutomation:stuck:snapshot" and
-# ":stuck:warned"), so a restart in the middle of a cycle keeps the baseline to compare against.
+# Stuck-probe watchdog, running alongside both: every stuck_check_interval it compares each
+# probe's moisture with the previous snapshot and flags an unchanged reading as a stuck probe,
+# naming it in a warning. Snapshots are taken on every run; only the warning is gated by
+# silence_between, stuck_warn_cooldown and stuck_speak. State lives in Redis.
 #
-# Output routing is a precise boolean switch (use_ai) like ttsGreeter:
-#   use_ai false -> speak the bucket's tts line directly (default);
-#   use_ai true  + AI available -> send the bucket's ai instruction to the model, which
-#                   speaks its own report; empty reply / error / AI down -> warn log +
-#                   plain TTS sentence instead (no spoken fallback notice).
+# Output routing: use_ai false -> speak the band's tts line directly; use_ai true -> send the
+# band's ai instruction to the model (empty reply / error / AI down -> warn log + tts line).
 #
-# rules are evaluated top-down per plant; FIRST matching band wins. Thresholds are yours
-# to tune freely -- keep them contiguous or accept that gaps degrade to the healthy band.
-# Each rule's "sentence" names a section of the gardener i18n bundle
-# (etc/i18n/<locale>/gardener.yaml), which holds tts/ai lines with runtime placeholders:
+# rules are evaluated top-down per plant; first matching band wins. Each "sentence" names a
+# section of etc/i18n/<locale>/gardener.yaml, with runtime placeholders:
 #   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
-#   {% driest_flower %}    -- name of the single driest plant
-#   {% driest_moisture %}  -- that plant's moisture value as a percentage ("21%")
-#   {% stuck_flowers %}    -- every probe that did not move since the previous snapshot, "Name (NN%)"
-#   {% stuck_window %}     -- the comparison window spoken in the active locale ("24 hours")
-# The percent sign travels inside the value, not inside the template words, so the plain TTS
-# path (AI down) speaks the unit too -- a bare "21" was read as a number with nothing on it.
+#   {% driest_flower %}    -- the single driest plant
+#   {% driest_moisture %}  -- that plant's moisture as a percentage ("21%")
+#   {% stuck_flowers %}    -- probes unchanged since the previous snapshot, "Name (NN%)"
+#   {% stuck_window %}     -- the comparison window in the active locale ("24 hours")
 # Reference: doc/automations/gardener.md
 
 triggers_zigbee: [Kuchnia Kwiatek Babci, Kuchnia Kwiatek Biale Drzewko, Kuchnia Kwiatek Pomaranczowy, Sypialnia Kwiatek Bonsai, Sypialnia Kwiatek Cytrynka, Sypialnia Kwiatek Drzewo]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
-# All six Kwiatek probes are listed here.
 
 moisture_property: 'soil_moisture'    # state key carrying the percent value on those devices (z2m exposure-dependent)
 
-use_ai: true                     # true  -> route each announcement through AI -> TTS when available
-                                 #         (warn log + plain TTS sentence if the AI is down);
-                                 # false -> direct TTS only, never touches the AI pipeline
+use_ai: true                     # true -> route announcements through AI -> TTS; false -> direct TTS
 
-# Spoken framing for every report, on both output paths. The profile names the entry of the
-# active locale's tts.yaml profiles: registry (etc/i18n/pl_PL/tts.yaml); explicit tts_options
-# entries below win over the profile field by field. Remove both to keep plain speech.
-tts_profile: 'garden'            # -> intro 'creatorshome-digital-click-357350.mp3', 0s spacing
+# Spoken framing for every report, on both output paths. The profile names an entry of the
+# active locale's tts.yaml `profiles:`; explicit tts_options entries win field by field.
+tts_profile: 'garden'            # profile from the active locale's tts.yaml
 #tts_options:
 #  intro: 'intro-chime.wav'      # Wave filename played before the report
 #  outro: null                   # Wave filename played after the report

@@ -1,7 +1,7 @@
 # AI Communication -- Polish Language Bundle
 # -----------------------------------------
 # All messages passed TO and FROM the LLM, plus UI-facing AI messages.
-# Loaded by i18nLoader based on 'language' setting in ai.yaml / AI_LANG env var.
+# Loaded by i18nLoader based on locale.language in etc/automaton.yaml.
 #
 # Template -- copy to ai.yaml and customize system_prompt/devices for your home.
 

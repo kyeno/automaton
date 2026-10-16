@@ -10,10 +10,9 @@ computers:
   my-pc: 0.0.0.0
   laptop: 0.0.0.0
 
-# Mission-critical hosts: NetworkPresence polls them like every other entry and the
-# NetworkDeviceOfflineMonitor speaks a warning when one stops answering. The names to
-# announce are listed in etc/automaton.yaml -> alerts.network_offline_devices, and the
-# sentences live in etc/i18n/<locale>/alerts.yaml (see doc/monitors/offline-alerts.md).
+# Mission-critical hosts: polled by NetworkPresence; a spoken warning is announced when
+# one stops answering. Names: etc/automaton.yaml -> alerts.network_offline_devices;
+# sentences: etc/i18n/<locale>/alerts.yaml (doc/monitors/offline-alerts.md).
 servers:
   # core-server: 0.0.0.0
   # dns-server: 0.0.0.0
@@ -30,21 +29,14 @@ appliances:
   # Smart appliances tracked on the network
   # - "Appliance Name": 0.0.0.0
 
-# Video players polled by the VideoPlayerMonitor. Each entry is an object
-# (NOT a bare IP string) so NetworkPresence does not treat it as a ping target.
-# The endpoint IP resolves from the same-named "computers" entry above; an
-# optional "host" key overrides that lookup, and a player with neither is
-# skipped with an error log.
-# `parser` selects the response parser:
-#   vlc -- VLC HTTP API (http://<host>:<port>/requests/status.json, JSON)
-#   mpc -- MPC-HC web interface (http://<host>:<port>/variables.html; parsing
-#          verified against MPC-HC 1.9.16.63, expected to hold for 1.9.x)
-# An optional per-player `timeout_ms` key overrides the shared fetch timeout
-# (default 1200 ms) when one host's web server runs slower than the rest.
-# For MPC-HC, enable the web interface via View -> Options -> Player ->
-# Web Interface: turn on "Listen on port" and turn off "Allow access from
-# localhost only". The compression setting does not matter (the built-in HTTP
-# client decompresses transparently).
+# Video players polled by the VideoPlayerMonitor. Each entry is an object (not a bare IP),
+# so NetworkPresence does not ping it. The IP resolves from the same-named "computers"
+# entry, or from an optional "host" key.
+#   parser     -- response parser: vlc (VLC HTTP API, /requests/status.json)
+#                or mpc (MPC-HC web interface, /variables.html)
+#   timeout_ms -- optional per-player fetch timeout (default 1200 ms)
+# MPC-HC: enable the web interface under View -> Options -> Player -> Web Interface
+# ("Listen on port" on, "Allow access from localhost only" off).
 videoPlayers:
   # my-pc:                          # IP resolved from computers: my-pc
   #   port: 8080
