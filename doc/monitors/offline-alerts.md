@@ -7,7 +7,7 @@ Two monitors turn "something disappeared" into a spoken sentence, so you hear ab
 | `ZigbeeDeviceOfflineMonitor` | Zigbee devices leaving the mesh (`device_leave`) | `devices:removed` | `zigbee_device_offline` |
 | `NetworkDeviceOfflineMonitor` | Mission-critical LAN hosts going offline | `network:<host name>` | `network_device_offline` / `network_device_online` |
 
-Detection stays where it already lives -- `DeviceContainer` reports Zigbee removals, [Network Presence](./network-presence.md) sweeps the LAN and persists transitions. These monitors only subscribe, decide *whether* a given event deserves a sentence, and speak it. All shared spoken-alert policy (master switch, ignore list, cooldown, TTS availability gate, sentence interpolation, jingle framing) is owned by one base class, [`src/monitor/base/alertMonitorBase.js`](../../src/monitor/base/alertMonitorBase.js).
+DeviceContainer detects Zigbee removals; NetworkPresence detects LAN transitions. `AlertMonitorBase` handles speech switches, ignore lists, cooldowns, templates, and framing.
 
 ## Configuration (`alerts:` in `etc/automaton.yaml`)
 
@@ -22,6 +22,7 @@ Every value is read **per event**, so `/config reload` applies changes without a
 | Explicit framing | `alerts.zigbee_offline_tts_options` | `alerts.network_offline_tts_options` | unset |
 | Announce list | — | `alerts.network_offline_devices` | — (allow-list; empty = silent) |
 | Boot sweep | — | `alerts.network_offline_announce_boot` | `true` |
+| Recovery speech | — | `alerts.network_offline_announce_recovery` | `false` |
 
 ```yaml
 alerts:
@@ -43,7 +44,7 @@ alerts:
       tts_options: { intro: 'router.wav' }
 ```
 
-**The network family is an allow-list:** only the hosts under `network_offline_devices` are watched, and a name missing from `etc/device/network.yaml` can never produce a transition event, so it is reported once at startup (`... is not monitored by network.yaml -- it will never be announced`).
+Only listed `network_offline_devices` are announced. Names absent from `network.yaml` warn at startup.
 
 **Per-host overrides** (`cooldown_ms`, `tts_profile`, `tts_options`) win over the family keys for that host; a `null` entry means plain defaults.
 
@@ -63,9 +64,7 @@ Resolution order: bundle key (per-device entry → `default`) → the monitor's 
 
 ## Framing
 
-`..._tts_profile` names an entry of the active locale's `tts.yaml` `profiles:` registry, `..._tts_options` supplies `intro` / `outro` / `intro_spacing` explicitly and wins field by field. Both are resolved by the shared rules in [`src/lib/ttsProfiles.js`](../../src/lib/ttsProfiles.js) -- see [TTS Integration](../installation/tts-integration.md). Nothing configured means a plain `{ text }` payload: alerts never add jingles you did not ask for.
-
-| Recovery speech | — | `alerts.network_offline_announce_recovery` | `false` |
+`..._tts_profile` selects a locale profile; `..._tts_options` overrides its fields. Empty settings add no framing. See [TTS Integration](../installation/tts-integration.md).
 
 ## Behaviour Worth Knowing
 

@@ -2,9 +2,9 @@
 
 ## Overview
 
-Roller shutters, lights, and other mechanisms are controlled over a shared MQTT bus by both automation systems and humans (physical remotes, wall switches, mobile apps). Because zigbee2mqtt publishes every state change to the same topic regardless of who caused it, the system must distinguish its own command echoes from genuine human-initiated state changes — otherwise automations fight with the user.
+DeviceBase distinguishes automation command echoes from manual MQTT changes and applies a human-interaction cooldown.
 
-**Policy:** ONLY autonomous rule-engine actions count as `AUTOMATION`. Every other actor counts as `HUMAN`: physical remote presses, YAML interaction targets, Home Assistant / zigbee2mqtt UI actions routed through us, unmodeled wall switches, **and AI chat commands** (a person gave the AI the order, so the action traces back to a human). This policy is what keeps rules like `salon-rolety` from re-firing after a person takes over a device.
+**Policy:** Autonomous commands use `AUTOMATION`. Remote presses, interactions, AI chat commands, and other human-directed actions use `HUMAN`.
 
 The classification system implements this policy using:
 
@@ -24,12 +24,12 @@ Three enums track different kinds of provenance:
 
 - **`DeviceCommandSource`** (`src/enum/deviceCommandSource.js`) — who issued an outgoing command; passed explicitly as the second argument of `receiveCommand()`:
 
-  | Caller | Source passed | Why |
-  |--------|---------------|-----|
-  | Rule-based automation base (`ruleBasedAutomationBase.js`) | `AUTOMATION` | Autonomous rule/timer decision |
-  | AI tool builder (`ai/toolBuilder.js`) | `HUMAN` | A person gave the AI the order |
-  | Remote action routing (`device/type/remote.js`) | `HUMAN` | Physical button press |
-  | Interaction targets (`interaction/container/interactionContainer.js`) | `HUMAN` | Human-configured action |
+  | Caller | Source passed |
+  |--------|---------------|
+  | Rule-based automation base (`ruleBasedAutomationBase.js`) | `AUTOMATION` |
+  | AI tool builder (`ai/toolBuilder.js`) | `HUMAN` |
+  | Remote action routing (`device/type/remote.js`) | `HUMAN` |
+  | Interaction targets (`interaction/container/interactionContainer.js`) | `HUMAN` |
 
 - **`DeviceStateOrigin`** (`src/enum/deviceStateOrigin.js`) — who last changed a device's *state*. Used by DeviceBase for classification and by automations to decide whether to act.
 - **`AiChatMessageOrigin`** (`src/enum/aiChatMessageOrigin.js`) — authorship of chat messages (user vs system periodic service). Unrelated to device state.
@@ -61,7 +61,7 @@ The value is persisted to Redis under `zigbeedevice:<slug>:<id>` so it survives 
 
 ### CommandCorrelator (`src/device/base/deviceBase.js`)
 
-A causality-token tracker that holds **at most one active expectation per device** — always the most recent *rule-engine* command. Human-directed commands never register tokens; they cancel the pending one instead. A live token is therefore unambiguous evidence that the current motion was started by an automation, and anything contradicting it is by definition external intervention.
+The correlator keeps the latest automation expectation per device. A newer command replaces it; a human command cancels it without creating a token.
 
 `register()` captures at dispatch time: the expected state (`ON/OFF/OPEN/CLOSE/STOP/TOGGLE` or `POS:N`), its family (`instant` | `travel` | `wildcard`), the anchor position/state from cached state, and a TTL chosen by family.
 
@@ -91,11 +91,11 @@ Travel commands (`OPEN`/`CLOSE`/`POS:N`) imply continued motion until their targ
 | Progress then halt | Something external stopped our motion (e.g., wall-switch STOP on an unmodeled device) | Flip origin to `human` + write cooldown |
 | Zero progress | The device never responded at all (offline/faulty) | Preserve attribution, write **no** cooldown, log a distinct warning, back off identical retries |
 
-The zero-progress branch implements the policy **"no observable effect ⇒ no attribution change"**: if nothing moved, there is nothing a person could have done — blaming a human would fabricate a lockout that blocks automation from ever retrying a dead actuator. Instead `receiveCommand()` suppresses re-dispatch of the *identical* description while the cached position stays unchanged and the backoff window (`automation.failed_command_backoff_ms`, default 10 min) has not elapsed; any real state change clears the backoff early so recovery is immediate once the device comes back. The token itself is deliberately kept alive until its natural TTL expiry rather than discarded: label-only travelers (e.g., roller shutters reporting only STOP→OPEN→CLOSE during motion) can complete after the stall window, and late completions then still match as automation echoes instead of falling into the unmatched-change → human fallback. `STOP`, instant, and wildcard expectations do not arm the watchdog: for our own STOP command, halting *is* the expected outcome.
+With zero progress, identical automation retries are blocked until device state changes or `automation.failed_command_backoff_ms` expires (default `10m`). The token remains valid until TTL expiry so late completion can still match. STOP, instant, and wildcard commands do not arm the watchdog.
 
 ### Settle Absorption (Post-Completion Tail)
 
-Roller shutters report motor status in the same `state` field as their travel direction — moving states such as `OPEN`/`CLOSE`, then idle `STOP`. After a token-consuming echo confirms the commanded outcome, z2m frequently sends follow-up reports describing the *same physical event* settling down (e.g., `{position: 12, state: "STOP"}` right after reaching 12%). Without special handling those tails fall into the "unmatched state change" branch and flip origin to `human` — the exact failure mode behind the Salon shutter misclassification. Two complementary rules absorb them:
+After a positional completion, follow-up motor reports are absorbed by two rules:
 
 1. **Positional stability gate** in `#didStateChange()`: when both old and new payloads carry finite positions within ±2% of each other, differences confined to the `state` label are treated as motor-status churn at a fixed point, not input events. Non-positional devices (lights etc.) never satisfy this gate and keep strict label comparison.
 2. **Settling snapshot**: a positional echo starts a short-lived window (`automation.settle_absorb_window_ms`, default 10 s). While active, follow-ups consistent with the settled position — pure label/status churn or wobble within ±5% (`SETTLE_WOBBLE_TOLERANCE`) — are absorbed without changing origin or cooldowns. Any motion beyond that tolerance drops the snapshot immediately and is classified normally, so a genuine human action right after completion is still caught in one report. Label-only echoes do not start the window (no positional reference exists), keeping legacy behavior for such outcomes.
@@ -104,7 +104,7 @@ Roller shutters report motor status in the same `state` field as their travel di
 
 ## Message Classification Flow
 
-When an MQTT message arrives for a device, `handleMqttMessage()` first checks `shouldTrackOrigin()`: only mechanism devices participate in origin classification; sensors/remotes/bridges just refresh their cached payload (they are never automation targets, so classifying them would be noise). For tracking devices the decision tree is:
+Only mechanisms track origin. Sensors, remotes, and bridges update cached payloads without classification. Mechanism reports follow this flow:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -130,7 +130,7 @@ When an MQTT message arrives for a device, `handleMqttMessage()` first checks `s
                                              └─ otherwise           → HUMAN + cooldown
 ```
 
-The key insight: a state change with **no** live rule-engine expectation can only have been caused by someone else. And a change that **contradicts** an active expectation is, by construction, external intervention — there is no timestamp heuristic involved anywhere.
+Unexplained state changes and reports conflicting with an active automation token are classified as human input.
 
 ### Position & Label Matching Semantics
 
@@ -148,7 +148,7 @@ The key insight: a state change with **no** live rule-engine expectation can onl
 | `STOP` command: movement > 5% from stop anchor | `conflict` (something else drove it) |
 | `TOGGLE`: first report differing from pre-command snapshot | `echo`; identical periodic reports do not consume |
 
-Stale/optimistic re-advertisement guard: a positional terminal match arriving **before any forward progress has been observed and still inside the pre-motion grace after dispatch** (`automation.travel_echo_grace_ms`, default 2 s) does not consume the token — covers frequently re-advertise their last-known (possibly stale) state within milliseconds of accepting a command, and zigbee2mqtt may even advertise an estimate already at target while our cached anchor says otherwise (e.g., a cover parked far from 80% immediately echoing `{position: 79}` back on a `POS:80` dispatch). Consuming it there would orphan the motion our command actually triggers into the unmatched-change → human fallback. Such early reports yield no verdict (`null`) so the token stays alive and attribution is preserved; genuine completions confirm normally once the grace elapses or real progress exists, external reversals are still caught as conflicts, and truly stationary devices resolve later via the zero-progress watchdog path with attribution kept.
+Before any forward progress, a near-target report inside `automation.travel_echo_grace_ms` (default `2s`) does not consume a travel token. It returns no verdict and preserves attribution. Later completion or progress can confirm the token; reversal still counts as conflict.
 
 Cold start protection: when cached state is empty (first boot or after Redis wipe), incoming data is treated as calibration — no token exists yet and origin stays `unknown`, so initial z2m advertisements are never misclassified.
 
@@ -172,7 +172,7 @@ Failures are logged loudly (warn/error): a silent miss here means automations ma
 
 ### Checking the Cooldown
 
-Before automation dispatches commands to any device, `AutomationBase.checkAndLogHumanInteraction()` checks the Redis key. As defense in depth it also consults the live device itself: if `stateOrigin === 'human'` and `stateLastAt` falls inside the same cooldown window, the device is skipped even when Redis is unavailable. The recency bound guarantees a stale origin from long ago can never block automation forever. This replaces the old pure fail-open behavior on Redis outages.
+`AutomationBase.checkAndLogHumanInteraction()` checks Redis cooldowns and recent live `human` origin. The live fallback uses the same recency limit when Redis is unavailable.
 
 ---
 
@@ -191,7 +191,7 @@ Before publishing any command, `#isCommandRedundant()` compares it against cache
 
 When suppressed, no MQTT message is published and no token is registered; origin still reflects the provenance of the attempt — and a suppressed HUMAN command still starts the cooldown.
 
-A related gate suppresses *retries* of ineffective automation commands: when an automated travel command produces zero observable response (see Motion-Stall Watchdog), re-dispatching the identical description is skipped until the device state changes or `automation.failed_command_backoff_ms` elapses. Human-directed commands are never subject to either suppression.
+After a zero-progress stall, identical automation retries wait for state change or the configured backoff. Human commands bypass this retry backoff, but still use normal no-op suppression.
 
 ---
 

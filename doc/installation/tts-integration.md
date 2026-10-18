@@ -1,11 +1,11 @@
 # TTS (Text To Speech) Integration
 
-Automaton integrates with external text-to-speech backends via TCP audio endpoints. The TTS service reads AI responses aloud through a configured audio endpoint, enabling voice feedback in your home automation setup.
+Automaton sends text to a TTS HTTP API. The server synthesizes speech and streams audio to the configured TCP endpoint.
 
 ## Requirements
 
 - A running TTS server instance ([kyeno/tts-server](https://github.com/kyeno/tts-server)) or compatible backend
-- `.env` variable `TTS_TCP_ENDPOINT` pointing to your TTS server's IP and port
+- `TTS_API_URL` for the HTTP API and a TCP audio destination (`TTS_TCP_ENDPOINT` or a template/request override)
 - Audio output capability on the machine running tts-server
 
 ## Configuration
@@ -15,16 +15,17 @@ Automaton integrates with external text-to-speech backends via TCP audio endpoin
 Add to `.env`:
 
 ```env
+TTS_API_URL=http://127.0.0.1:7423/tts
 TTS_TCP_ENDPOINT=127.0.0.1:9876
 ```
 
-This is the global default destination for all TTS requests. If this variable is not set, TTS functionality is disabled at startup with a warning message. You can get the same effect for a single run by starting Automaton with `--no-tts`, which overrides any configured TTS settings.
+`TTS_TCP_ENDPOINT` is the fallback audio destination. `TTS_API_URL` enables the service; `--no-tts` disables it for one run.
 
 ### Per-Request Override
 
-Any component emitting the internal `tts:speak` EventBus event may attach extra parameters to its payload, and they merge into **that request only** -- every other speaker keeps the plain shape. For each optional field the resolution order is runtime event value > locale template default (see Request Parameters below).
+A `tts:speak` event can override parameters for that utterance. Runtime fields take precedence over the locale template.
 
-Framing (the `intro` / `outro` / `intro_spacing` trio) is resolved for every speaker by one shared owner, [`src/lib/ttsProfiles.js`](../../src/lib/ttsProfiles.js), so all of them read the same two optional config keys and follow the same rules:
+`src/lib/ttsProfiles.js` resolves speech framing from two keys:
 
 ```yaml
 tts_profile: 'alarm'        # name of a profiles: entry in the active locale's tts.yaml
@@ -37,7 +38,7 @@ tts_options:                # explicit framing; wins over the profile key by key
 - **Precedence:** the named profile forms the base, an explicit `tts_options` block overrides it field by field, and an empty/absent shape yields no framing at all -- the request keeps the plain `{ model, text, output_endpoint }` body.
 - **Malformed entries never break speech.** A wrong type or an empty filename is dropped with a warning; an unknown profile name warns once per name (not once per utterance) and contributes nothing.
 - **Both output paths are covered.** On the AI path the framing travels through `AiAssistant.processMessage(..., { tts })` so the model's own spoken reply carries it; on direct TTS and on AI-failure fallback it is spread straight into the emission.
-- **A missing jingle costs the chime, not the announcement.** The tts-server validates `intro` / `outro` filenames and refuses the **whole** request when a file is absent, so `TtsService` retries the utterance once with `intro`, `outro` and `intro_spacing` dropped, and logs the server's own reason (`TTS API returned HTTP 400 -- "intro" file ... not found`). A rejection with no framing left to drop is reported as a failure and never retried.
+- **Missing audio:** when the server rejects a framing file, TtsService logs the reason and retries once without framing. Requests with no framing left to remove are not retried.
 
 Speakers wired to the resolver:
 
@@ -75,7 +76,7 @@ profiles:
   #   intro_spacing: -1.5
 ```
 
-A `profiles:` entry carries framing only -- never `output_endpoint`, and never `model` / `piper_effects` / `sox_effects`: those stay locale-template settings applied to every utterance in the locale. The audio sink stays `runtime event > locale template > TTS_TCP_ENDPOINT`, so a jingle can never redirect where the voice is played. Profiles are looked up case-insensitively; audio files must exist on the machine running tts-server (the filename crosses the wire untouched, so `.wav` and `.mp3` both work as long as the server serves them).
+Profiles contain only framing fields. Voice settings remain in the locale template. Destination precedence is runtime event → locale template → `TTS_TCP_ENDPOINT`. Profile names are case-insensitive; audio filenames must exist on the TTS server.
 
 See [Configuration Guide](../configuration.md) for full i18n bundle structure.
 
@@ -97,7 +98,7 @@ Every request is an HTTP POST of a JSON body to the URL from `TTS_API_URL`:
 
 ## How It Works
 
-When Automaton produces spoken output (AI reply, automation utterance such as the weatherman, or a UI speak command), the TTS service POSTs that JSON body -- text plus voice parameters and the destination endpoint -- to the tts-server's HTTP API. The tts-server synthesizes the speech and streams the resulting WAV over TCP to the requested `output_endpoint`, where your audio hardware picks it up.
+TtsService POSTs text, voice settings, and destination to `TTS_API_URL`. The server returns audio over TCP to `output_endpoint`:
 
 The flow is:
 
@@ -124,7 +125,7 @@ Configure your preferred voice provider in tts-server's configuration. See the [
 |---------|-------|
 | No audio output | Verify tts-server is running and `TTS_TCP_ENDPOINT` points to correct IP/port |
 | Wrong language | Ensure matching locale bundle exists in `etc/i18n/{locale}/tts.yaml` |
-| TTS disabled at startup | Confirm `TTS_TCP_ENDPOINT` is set in `.env` and that `--no-tts` was not passed |
+| TTS disabled at startup | Confirm `TTS_API_URL` and a valid locale voice model are set, and `--no-tts` was not passed |
 
 ---
 

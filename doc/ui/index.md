@@ -2,7 +2,7 @@
 
 > **In this section:** [Commands Reference](./commands/index.md)
 
-Automaton includes an optional IRC-style terminal UI built on [`terminal-kit`](https://github.com/cronvel/terminal-kit). It provides multi-window browsing, live log streaming, device monitoring, AI chat, and slash-command input — all within a single terminal session. The UI is **disabled** when running as a system service (`--no-ui`).
+The optional terminal-kit UI shows logs, devices, rules, AI chat, and speech output. Start with `--no-ui` to disable it.
 
 ## Layout
 
@@ -28,7 +28,7 @@ The screen is partitioned into three fixed slots by `UiLayoutManager`:
 | **Status** | 2 lines | Dynamic widgets: time, channel name, backscroll indicator, activity pings |
 | **Input** | 1 line | Slash commands or AI chat messages |
 
-If the terminal width drops below `ui.layout.min_width` (74 columns by default), rendering is suppressed and a "TERMINAL TOO NARROW" warning is shown instead. The floor is set by the device window's table: its columns are sized to the content they hold, and 74 columns is the narrowest layout that keeps a full fleet row on one line.
+Below `ui.layout.min_width` (default 74 columns), the UI shows a resize warning.
 
 ### Status Bar Widgets
 
@@ -63,15 +63,15 @@ Windows are the primary content area displayed in the main slot. Each window ext
 
 > The `ai` and `tts` windows are created only when their backing services are configured (`AI_API_URL` + model for AI, `TTS_API_URL` for TTS). When a service is disabled or unconfigured its window simply does not exist in the UI.
 
-**Device window header:** the `device` window opens with a line carrying the localized current date (the `date_sentence` template of the active locale's date bundle) plus today's sunrise and sunset, rendered `HH:MM` from the configured coordinates. The times are the raw sunrise/sunset, not the civil-twilight instants used for daylight gating in rules; a location without coordinates shows `--:--`. The header is part of the window's 5-second refresh, so the midnight date rollover and the next day's solar times appear by themselves.
+**Device header:** localized date plus raw sunrise and sunset (`HH:MM`), refreshed every five seconds. Missing coordinates show `--:--`.
 
-**Device window sections:** the table groups devices by what they are — **Sensors** (readings), **Mechanisms** (actuators: mechanisms, dual switches, dual dimmers), **Remotes** (last action) and, only when any exist, **Unclassified**: devices the container could not map to a type, shown with their last-seen time and battery. Unclassified is deliberately *not* Mechanisms — an unmapped device is a dummy that answers power commands by faking a state change, so a mechanism row for a renamed soil probe would claim control over hardware that cannot be controlled. A row here means the friendly name no longer matches `etc/device/zigbee.yaml`; see [Device Definitions](../configuration.md#3-device-definitions). The Sensors **Humid** column shows `humidity` and falls back to `soil_moisture` when a device reports no air humidity, so soil probes are readable there; air humidity wins whenever a device reports both.
+**Device sections:** Sensors, Mechanisms, Remotes, and Unclassified. Unclassified devices need a type/name mapping in `etc/device/zigbee.yaml`. The Humid column shows air humidity, falling back to soil moisture.
 
-**Device window columns:** the table has no fixed widths. Each column is as wide as the longest text it holds, header label included, and every cell is rendered with one leading and one trailing space, so columns never touch each other and no name is ever truncated. The **Name** column belongs to all four sections and **Batt** to the three battery-powered ones (Sensors, Remotes, Unclassified); shared columns are measured once over the whole frame, which keeps the sections aligned against each other. Mechanisms sit on mains power and report no battery, so their table is Name, State and Origin only — an always-empty column would just steal width from the rest of the row. Header labels go through the same renderer as the data rows, so a header always sits inside its own column, and a missing value renders as full-width blanks, leaving the grid intact. The rows are printed as preformatted text: the plain print path word-wraps and would collapse that padding back into glued columns.
+**Device columns:** widths fit content without truncating names. Shared columns align across sections; missing values are blank. Mechanisms show Name, State, and Origin; battery devices also show Batt.
 
-**Rules window:** the `rules` window is a read-only tab/box view of the rule-based automations. The tab bar carries one bracketed label per automation, alphabetically; the focused automation's label is starred and only its box is drawn. Each box is an ASCII frame holding a compact indented log of that automation's last 3 calls -- oldest at the top, newest at the bottom where the live tail is -- with the time, what triggered the call (`timer`, a device topic, `manual`, and `!` for forced calls), the call outcome, and the rules the call fired (or, when it fired none, why: the suppression or failure reason). Outcomes are `acted` in green when the call dispatched a command, deferred a device to recent human interaction, or delegated an automation; `noop` and `no-match` in grey when nothing was dispatched; `suppressed` and `skipped` in yellow when a silent period, the video-player stand-down, or react-on-change gating silenced the call; and `blocked` in red when the context build failed. Opening the window seeds the boxes from each automation's own call history (the last 10 calls per automation), and calls then arrive live on the `automation:runCompleted` EventBus channel published by `RuleBasedAutomationBase`; the older `automation:ruleMatched` / `automation:ruleActed` channels fold the rules into the call that fired them and flip its outcome to `acted`. An automation that exposes only the per-match history is grouped by run id (or timestamp) so it still renders as calls. The frame and the indented log are printed through the whitespace-preserving preformatted path, so the box edges and the call indentation survive window wrapping. A 5-second refresh repaints the frame; `/rules` lists the automations, `/rules <name>` focuses one tab, and `/rules all` shows every box again. `/automation debug <name>` prints the full match history for one automation.
+**Rules window:** one tab per automation, showing its last three calls with trigger, outcome, matched rules, and reason. Forced calls have `!`. Green means acted; grey means no action; yellow means suppressed/skipped; red means context build failed. Calls arrive live and refresh every five seconds. `/rules <name>` focuses a tab; `/rules all` shows all boxes; `/automation debug <name>` shows full history.
 
-**Spoken framing in the TTS window:** text you type into the `tts` window is spoken through the same shared framing rules as every other speaker, using the profile named by `ui.tts_profile` (see [TTS Integration](../installation/tts-integration.md)). Unset or unknown means a plain `{ text }` utterance — no jingle is invented for typed input.
+**Typed speech:** `ui.tts_profile` selects a locale framing profile. Empty or unknown profiles add no jingle; see [TTS Integration](../installation/tts-integration.md).
 
 The input mode determines how the bottom line is interpreted:
 
@@ -80,10 +80,7 @@ The input mode determines how the bottom line is interpreted:
 
 ### AI Transcript Prefixes
 
-The `ai` window keeps one transcript of the whole shared conversation, whoever authored each line. Every
-line is rendered from the same EventBus channels (`ai:userMessage` / `ai:assistantMessage`), so a prompt
-typed at the keyboard and one published on the MQTT AI bridge (`src/monitor/aiBridgeMonitor.js`, topics
-`automaton/ai/*`) take the identical path to the screen:
+AI transcript lines use `ai:userMessage` / `ai:assistantMessage` events for both local input and the MQTT bridge:
 
 | Prefix | Meaning |
 |--------|---------|
@@ -96,10 +93,7 @@ Lines starting with `*` are status notes rather than conversation: `* AI is thin
 `* AI thought for N seconds` around each turn, and `* AI turned ON Salon Light` for every device
 interaction the assistant performs.
 
-**Assistant name:** `ai.name` in `etc/automaton.yaml` is the single source of truth for how the
-assistant is named. It fills the `{% name %}` token in the i18n system prompt (`etc/i18n/<locale>/ai.yaml`),
-signs the transcript prefix above, and appears in the device-interaction action lines. Change it and
-`/config reload` picks it up on the next turn; leave it blank and every naming site falls back to `AI`.
+**Assistant name:** `ai.name` fills the system-prompt name, transcript prefix, and action lines. Empty values use `AI`; `/config reload` applies changes.
 
 ## Channels
 
@@ -173,46 +167,22 @@ Used by AiWindow. When you press Enter, your message is sent directly to the AI 
 
 ### Running Under GNU Screen
 
-The UI works inside `screen`, but start the session with a modern terminal type so
-terminal-kit receives the full xterm keymap and color support instead of its
-conservative fallback profile:
+Start GNU Screen with an xterm profile for full key and color support:
 
 ```bash
 screen -T xterm-256color
 ```
 
-With the default `TERM=screen` everything still functions correctly (basic colors only);
-the flag above simply restores 256-color output and keeps detach/reattach across
-differently sized terminals behaving consistently.
+The default `TERM=screen` profile uses basic colors.
 
 ---
 
 ## Source Code Layout
 
-```
-src/ui/
-├── ui.js                        # Main Ui class (initialization, event loop, dispatch)
-├── channels.js                  # ChannelManager singleton (config-driven routing)
-├── layout/
-│   └── uiLayoutManager.js       # Three-slot screen partitioner
-├── widgets/
-│   ├── statusBar.js             # Status bar renderer + activity tracking
-│   ├── inputComponent.js        # Input line handler (readline wrapper)
-│   └── slotWidgets/             # Individual status bar widget renderers
-│       ├── separatorWidget.js
-│       ├── stateWidget.js
-│       ├── tempWidget.js
-│       ├── textWidget.js
-│       ├── timeOfDayWidget.js
-│       ├── timeWidget.js
-│       └── widgetBase.js
-├── windows/
-│   ├── baseWindow.js            # Abstract base (buffering, scrolling, rendering)
-│   ├── logWindow.js             # Winston transport → live log display
-│   ├── deviceWindow.js          # Device status monitor
-│   └── aiWindow.js              # AI chat interface
-└── commands/                    # Pluggable slash-command system
-    ├── base/commandBase.js      # Abstract command contract
-    ├── container/commandContainer.js  # Autodiscover + registry
-    └── *.Cmd.js                 # Concrete implementations
-```
+| Path | Contents |
+|------|----------|
+| `src/ui/ui.js`, `channels.js` | UI lifecycle and channel routing |
+| `src/ui/layout/` | Screen layout |
+| `src/ui/widgets/` | Input, status bar, and slot widgets |
+| `src/ui/windows/` | Window rendering and buffers |
+| `src/ui/commands/` | Slash commands and registry |

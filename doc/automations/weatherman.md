@@ -1,6 +1,6 @@
 # TTS Weather Man
 
-The **ttsWeatherMan** automation is a rule-based weather announcer that builds a speech message from a base sentence template and condition-matched additions, then routes it through the AI → TTS pipeline (or falls back to direct TTS if the AI provider is unavailable). It supports live sensor data interpolation inside i18n strings using `{{ DeviceName.property }}` syntax. Like the [greeter](./greeter.md), its side effect is speech rather than device dispatch: rules declare no `targets:` maps, so nothing is resolved against the device container.
+TTS Weather Man combines live sensor values with locale templates and the highest-priority matching rule. It speaks directly or uses AI rewriting with TTS fallback.
 
 ## How It Works
 
@@ -23,7 +23,7 @@ ai_prefix (AI path only) -> [opener] -> core message -> [proverb] -> [next-updat
 
 `ai_prefix` is the only AI-exclusive part — it is an instruction to the model and is never read aloud. Everything after it is plain text meant to be spoken.
 
-When `add_proverb: true`, the proverb sits **after the report body but before the next-update closer**, so the next-update time stays the last thing said. That placement is why the AI wording makes no positional claim ("remind your listeners of a proverb" rather than "close with this"), and why it avoids the "at the end" phrasing `ai_prefix` already uses for its own anecdote instruction. On the last run of a session there is no closer, so the proverb becomes the final line on its own.
+With `add_proverb: true`, the proverb follows the body and precedes the next-update closer. The closer is omitted on the last run of a session.
 
 ## Dynamic Sensor System
 
@@ -125,11 +125,13 @@ rules:
 
 ### Time-of-Day Periods
 
-The `time_of_day` condition matches five fixed clock-based periods identical year-round (night 00–04, morning 05–10, noon 11–12, afternoon 13–17, evening 18–23); matching is hour-granular with no gaps or overlaps. Because the zones are clock-based rather than daylight-based, a warm late-afternoon now matches `[morning, noon, afternoon]` until 17:59 even in summer, while star-sky talk waits for real deep night (`[night]`, midnight through pre-dawn) all year — and rules written before commit `c1e8c6f` may have silently lost hours they used to cover ("Warm day" above stops matching once evening begins at 18:00). Full rationale, old-vs-new boundary comparison and impact analysis live in [Time-of-Day Periods](../architecture/time-of-day-periods.md); run `/automation coverage <name> legacy` to diff any automation against both schemes.
+Rules use fixed local periods: night 00–04, morning 05–10, noon 11–12,
+afternoon 13–17, evening 18–23. See [Time-of-Day Periods](../architecture/time-of-day-periods.md).
+Use `/automation coverage <name>` to inspect gaps and overlaps; append `legacy` for older seasonal periods.
 
 ## TTS Server Passthrough Options
 
-The optional `tts_options` block forwards extra parameters **verbatim** into the JSON body of every TTS server request that this automation produces -- a per-automation way to shape how its own voice sounds without touching the global locale template (`etc/i18n/{locale}/tts.yaml`). It exists primarily for radio-style jingle framing:
+`tts_options` adds speech framing to every announcement:
 
 | Key | Type | Meaning |
 |-----|------|---------|
@@ -137,14 +139,14 @@ The optional `tts_options` block forwards extra parameters **verbatim** into the
 | `outro` | string | Wave filename (on the TTS server side) played after the synthesized speech |
 | `intro_spacing` | number | Seconds between intro end and speech start; negative values overlap them (e.g., `-2.5`) |
 
-The same trio may be named once per locale instead: `tts_profile: 'report'` points at an entry of the active locale's `tts.yaml` `profiles:` registry, and explicit `tts_options` entries override that profile **field by field**. Resolution belongs to the shared [TTS framing profiles](../installation/tts-integration.md) owner (`src/lib/ttsProfiles.js`), so the weatherman, the greeter, the gardener, the spoken offline alerts and the UI speak window all read the same two keys with the same rules.
+`tts_profile` selects a locale profile; explicit `tts_options` override its fields. See [TTS Integration](../installation/tts-integration.md) for shared resolution and fallback rules.
 
 Behaviour details:
 
-- **Optional everywhere.** Absent or empty entries are simply not sent; when nothing is configured the request keeps the plain `{ model, text, output_endpoint }` shape. Malformed entries (wrong type, empty filename) are dropped with a warning instead of failing the run.
-- **Both output paths covered.** The options travel through the EventBus `tts:speak` payload: on the AI path they are threaded via `AiAssistant.processMessage(..., { tts })` so the rewritten reply carries them too, and on direct TTS / AI-failure fallback they are spread straight into the emission.
-- **Merge precedence** in the TTS service is runtime event params > locale `tts.yaml` defaults -- though these keys are intentionally *not* shipped in any locale template, since jingle framing is an automation-level presentation choice rather than a voice-model setting.
-- Wave files must exist on the machine running tts-server; only their filenames cross the wire.
+- Empty values are omitted; malformed values warn and are dropped.
+- Options apply to AI output, direct TTS, and AI-failure fallback.
+- Runtime event values override locale defaults.
+- Audio files must exist on the TTS server.
 
 ## Interpolation Syntax
 
@@ -190,7 +192,7 @@ warning_hot_day: 'WARNING: It is hot outside. Avoid prolonged exposure.'
 # ... further warning_* / soothing_* sentence keys
 ```
 
-A Polish bundle (`pl_PL/weatherman.yaml`) ships with the same keys, including `time_sentence` templates whose clock is pre-rendered **in words** (`{% time_words %}` → *dziewiąta trzydzieści dwa*, computed by `src/lib/polish.js` through `src/lib/date.js`) so tiny models never convert a clock string into words and the TTS engine never has to decline one. To add support for another language, create a new `weatherman.yaml` in your locale directory with translated keys matching those used in the automation's YAML config.
+Translate the same keys in each locale’s `weatherman.yaml`. Polish clock words are generated by `src/lib/polish.js` through `src/lib/date.js`.
 
 ## File Map
 

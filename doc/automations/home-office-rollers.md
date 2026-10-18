@@ -1,6 +1,6 @@
 # Home Office Rollers
 
-The **Home Office Rollers** automation is a rule-based roller-shutter controller for a home office (or any room with blinds). On every timer tick — and immediately whenever an outdoor sensor publishes a new reading — it evaluates your rules against live illuminance, temperature, time-of-day and network-presence context, then merges *all* matching results per target using **"most-closed-wins"** logic so overlapping rules always resolve to the most closed position.
+Evaluates illuminance, temperature, time, and presence rules on timer/sensor events. For each shutter, the most closed matching position wins.
 
 ## How It Works
 
@@ -11,7 +11,7 @@ The **Home Office Rollers** automation is a rule-based roller-shutter controller
 
 ## Most-Closed-Wins Merging
 
-Because many rules can be true at once ("warm & not bright → open" while someone is home parking shutters partway), they never fight — the automation simply picks the most closed outcome per shutter:
+Matching commands merge per shutter using the lowest position: CLOSE = 0, OPEN = 100.
 
 | Intent | Example condition set | Resulting merge |
 |--------|-----------------------|-----------------|

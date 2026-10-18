@@ -1,117 +1,95 @@
 # TTS Twilight
 
-The **ttsTwilight** automation announces civil dawn and sunset out loud — one sentence when civil dawn begins, one when sunset begins, each on its own minute and each framed by its own audio signature. It speaks instead of commanding devices: its rules declare no `targets:` maps, so the base class has nothing to resolve against the device container. Everything that decides *what is said* lives in YAML: the sentences, the voice framing, and the gate each event must pass.
+Announces civil dawn and actual sunset using the configured coordinates and locale.
+The template uses direct TTS; `use_ai: true` enables AI rewriting with TTS fallback.
 
 ## How It Works
 
-1. A timer anchored to wall-clock minute boundaries ticks every `timer_interval` (shipped: `1m`). Each tick computes today's civil dawn and sunset instants from the active locale's `geo_latitude` / `geo_longitude` — the same coordinates the roller automations use, and the same civil-dawn / actual-sunset definitions behind the `sundawn` / `sundusk` context keys. The first tick is scheduled onto the next boundary rather than starting at process-start phase, so every event lands in the same minute as a tick.
-2. An event is announceable only while it is *fresh*: its instant has already passed, and not more than `announce_grace` ago (shipped: `5m`). A machine that slept through dawn therefore announces it late, inside the window, and a restart hours later stays silent instead of announcing yesterday's dawn. A grace shorter than the tick warns at startup, because an exact-minute event could then fall between two ticks.
-3. Which event is being announced is decided by the rule gates, evaluated through the shared rule engine. The shipped pair is mutually exclusive across the whole day: dawn owns the dawn-to-dusk window, dusk owns everything from dusk on. Rules are evaluated in YAML order and the first announceable one speaks, so dawn and dusk can never both fire on the same tick.
-4. `once: true` reuses the rule engine's daily marker in Redis (`auto:<automation>:once:<rule-slug>`) so a rule speaks at most once per day, surviving restarts. When Redis is unavailable the marker checks fail open — the freshness window is what bounds the repeats.
-5. Output routing is the same explicit boolean switch the greeter and gardener use:
-   - `use_ai: false` → speak the bundle section's `tts` line directly through TTS;
-   - `use_ai: true` + AI available → send the section's `ai` instruction to the model, which composes its own announcement (`AiAssistant` fires `tts:speak` for it);
-   - `use_ai: true` + AI down / empty reply / provider error → warn in logs and speak the plain `tts` line instead. There is deliberately **no spoken fallback notice** — a dawn must not be announced twice.
-6. A manual run (`automaton automation run TtsTwilightAutomation`) previews the *upcoming* event — the next dawn at 03:00, the next dusk at 12:00 — so you can hear what is coming. A preview never consults and never consumes the daily marker, so the real announcement still fires on its own minute.
-7. A configured `silence_between` window suppresses timer runs; a forced run (`automaton automation force TtsTwilightAutomation`) bypasses that window and the daily marker alike, so it announces whatever is fresh right now. The freshness window itself is never bypassed — a forced run hours after dawn stays quiet, because the announcement it would make is not today's.
-
-When **neither** the AI pipeline nor the TTS server is available, the run is skipped before any evaluation work. When the locale has no coordinates, the automation warns (once per day, not once per tick) and stays silent.
+- A minute-aligned timer checks today's solar events.
+- Events are eligible from their instant until `announce_grace` expires (default `5m`).
+  A grace shorter than the timer interval warns at startup.
+- The first eligible matching rule speaks. `once: true` stores a daily Redis marker;
+  unavailable Redis allows repeats within the freshness window.
+- Manual runs preview the next event without reading or writing daily markers.
+- Forced runs bypass silence and markers, but still require a fresh event.
+- Missing coordinates warn once per day. Runs skip when both AI and TTS are unavailable.
 
 ## Configuration
 
+Copy [tts-twilight.yaml.dist](../../etc/automation/tts-twilight.yaml.dist) to
+`etc/automation/tts-twilight.yaml`.
+
 ```yaml
-use_ai: true                       # true -> AI composes the announcement, plain TTS on failure
-timer_interval: "1m"               # tick driving the announcements -- keep at minute granularity
-announce_grace: "5m"               # announce an event this long after its instant (catch-up window)
-silence_between: null              # "HHmm-HHmm" local window to stay quiet; null = announce at any hour
-
-rules:                             # dawn first, dusk second -- first announceable rule wins per tick
+use_ai: false
+timer_interval: "1m"
+announce_grace: "5m"
+silence_between: null
+rules:
   - name: 'Civil dawn'
-    event: 'sundawn'               # civil dawn instant computed from locale.geo_* (alias: sunrise)
-    conditions: { hour: { gte: 'sundawn', lt: 'sundusk' } }   # gate: the dawn-to-dusk window
-    sentence: 'twilight.sundawn'
-    once: true                     # one announcement per day (the rule engine's Redis marker)
-    tts_profile: 'sundawn'         # -> profiles.sundawn in the active locale's tts.yaml
-
+    event: sundawn
+    conditions: { hour: { gte: sundawn, lt: sundusk } }
+    sentence: twilight.sundawn
+    once: true
   - name: 'Sunset'
-    event: 'sundusk'               # sunset instant computed from locale.geo_* (alias: sunset)
-    conditions: { hour: { gte: 'sundusk' } }   # gate: from dusk on, the dawn window is closed
-    sentence: 'twilight.sundusk'
-    once: true                     # one announcement per day (the rule engine's Redis marker)
-    tts_profile: 'sundusk'         # -> profiles.sundusk in the active locale's tts.yaml
+    event: sundusk
+    conditions: { hour: { gte: sundusk } }
+    sentence: twilight.sundusk
+    once: true
 ```
 
-
-| Key | Shipped | Meaning |
-|-----|---------|---------|
-| `use_ai` | `true` | `true` routes each announcement through the model, with plain-TTS fallback — the words-of-the-hour wording lives in the `ai` lines, so the shipped home runs on the AI path |
-| `timer_interval` | `1m` | Timer tick. The first tick is scheduled onto the next boundary, so announcements are minute-anchored |
-| `announce_grace` | `5m` | Freshness window: announce an event only this long after its instant (a missing or malformed value falls back to `5m`) |
-| `silence_between` | `null` | `"HHmm-HHmm"` local window that suppresses timer runs |
-| `rules[].event` | — | `sundawn` / `sunrise` or `sundusk` / `sunset` — which solar instant the rule announces |
-| `rules[].conditions` | `after_latest_of` of its own event | Gate evaluated by the shared rule engine; `hour:` bounds accept the `sundawn` / `sundusk` shorthands |
-| `rules[].sentence` | — | Bundle section to speak, e.g. `twilight.sundawn` (the leading segment is a namespace; the bundle carries `sundawn:` / `sundusk:`) |
-| `rules[].once` | `true` | One announcement per day per rule |
-| `rules[].tts_profile` / `tts_options` | — | Framing applied to this rule's announcements (see below) |
+| Key | Meaning |
+|-----|---------|
+| `use_ai` | AI rewriting when true; unavailable AI, errors, or empty replies fall back to plain TTS |
+| `timer_interval` | Check cadence; default `1m` |
+| `announce_grace` | Catch-up window; invalid or missing values use `5m` |
+| `silence_between` | Optional local `HHmm-HHmm` suppression window |
+| `rules[].event` | `sundawn` / `sunrise` for civil dawn; `sundusk` / `sunset` for actual sunset |
+| `rules[].conditions` | Shared rule conditions; absent conditions default to the event's `after_latest_of` gate |
+| `rules[].sentence` | Bundle section, e.g. `twilight.sundawn` |
+| `rules[].once` | One announcement per local day |
+| `rules[].tts_profile` / `tts_options` | Optional per-rule speech framing |
 
 ## Language Bundles
 
-Sentences live in `etc/i18n/{locale}/twilight.yaml`, one section per rule with a `tts` line and an `ai` instruction:
+`etc/i18n/{locale}/twilight.yaml` contains `sundawn` and `sundusk` sections, each with a
+plain `tts` sentence and an `ai` instruction. AI fallback speaks the plain sentence
+without a separate fallback announcement.
 
-```yaml
-sundawn:
-  tts: 'Dzień dobry. Wschód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
-  ai: 'Powiedz własnymi słowami, że nastał świt, jest {% time_words %} {% time_of_day %}, słońce właśnie wzeszło, ... że lada moment włączysz dzienne automatyki domowe. Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- ...'
+| Placeholder | Value |
+|-------------|-------|
+| `{% time %}` | Event's 24-hour `HH:MM` |
+| `{% time_words %}` | Spoken clock words; digit clock if the locale has no generator |
+| `{% time_of_day %}` | Event's localized period word from `date.yaml` |
+| `{% hours %}` / `{% minutes %}` | Event's clock parts using the locale's hour format |
 
-sundusk:
-  tts: 'Zachód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
-  ai: 'Powiedz własnymi słowami, że nastał zmierzch, jest {% time_words %} {% time_of_day %}, słońce właśnie zaszło, ... że lada moment włączysz wieczorne automatyki domowe. Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- ...'
-```
-
-- `{% time_words %}` → the event instant spoken as words in the locale's language: `06:18` becomes **szósta osiemnaście** in Polish (12-hour clock, feminine ordinal agreeing with *godzina*, cardinal for the minutes, no minutes word on the exact hour). Computed by code — see "The hour in words" below — and it degrades to the digit clock in a locale whose language has no generator, so a sentence never breaks
-- `{% time %}` → the event's own solar instant, zero-padded 24-hour clock (`05:40`, `18:20`) — always 24h so TTS never disambiguates AM/PM
-- `{% time_of_day %}` → the localized day-period word for that instant, taken from `date.yaml` `period_words:` (`rano`, `w południe`, `po południu`, `wieczorem`, `w nocy`) — the same words the weatherman's opening line uses, owned by `src/lib/date.js`
-- `{% hours %}` / `{% minutes %}` → the same instant split into clock parts, the hour in the locale's `time_format` (12-hour in a `12h` locale, so `18:20` is `6`) — the parts an `ai` line asks the model to voice as words
-
-Every one of them is derived from the **event instant**, never from the running clock: a catch-up tick four minutes after dawn, and a manual preview of dawn taken at 03:00, both speak dawn's hour and dawn's `rano`.
-
-**No survey jargon out loud.** Civil dawn and sunset are the *instants* the automation works with; they are not words anyone says at home, so the shipped sentences never name them. They say what the light is doing ("it's gonna get bright soon", "it's gonna darken soon"), they name the hour, and they call the event the calendar sundawn / sundusk of the day. The `ai` line carries the same facts to the model — the calendar sundawn/sundusk of the day and its clock time — and repeats the ban, so an improvised announcement stays as plain as the spoken one.
-
-**The hour in words.** A TTS engine reading `06:18` says "sześć osiemnaście", and that is not how Polish names an hour: the hour is a feminine adjective agreeing with *godzina* — **szósta** osiemnaście. Declining it is arithmetic, not creativity, so the automation does it in code: [`src/lib/polish.js`](../../src/lib/polish.js) spells the clock out (12-hour clock, feminine ordinal for the hour, cardinal for the minutes, hours 13-23 read as 1-11) and `src/lib/date.js` → `getClockWords()` serves it only to locales whose language has a generator. `{% time_words %}` is that phrase, and both paths consume it: the plain `tts` line is spoken as *Wschód słońca, szósta osiemnaście rano*, and the `ai` line hands the model the finished words instead of a grammar lecture — the hour sits inside the very fact the model is asked to convey (*że nastał świt, jest szósta piętnaście rano*), because a small CPU-bound model that is handed the words will say them, while one that is only told not to write digits may skip the hour entirely. `17:37` at an afternoon event arrives as *piąta trzydzieści siedem po południu*. English needs no generator at all — "six eighteen" is already what English says — so `getClockWords()` returns `null` there, `{% time_words %}` falls back to the digit clock, and its `ai` line keeps asking for words in prose.
-
-Every placeholder above is filled by the automation, so a bundle that names none of them is complete. The `tts` line is spoken verbatim on the plain-TTS path (and as the fallback when AI fails); the `ai` line is an *instruction* to the model — never read aloud itself.
-
-A missing section warns and skips the rule; a placeholder the automation does not fill warns and skips that sentence, so a typo in a template stays visible in the logs instead of being spoken.
+All values use the event instant, including catch-up runs and previews.
+Polish clock words use feminine hour ordinals on a 12-hour clock, e.g.
+`17:37` → `piąta trzydzieści siedem`. The generator lives in `src/lib/polish.js`
+and is exposed by `src/lib/date.js` through `getClockWords()`.
+Missing sections or unresolved placeholders warn and skip that sentence.
 
 ## TTS Profiles
 
-Each rule names a `tts_profile:` resolved by the shared [TTS framing profiles](../installation/tts-integration.md) owner (`src/lib/ttsProfiles.js`) against the active locale's `tts.yaml` `profiles:` registry — so dawn and dusk are recognizable by their jingle alone:
+Profiles are optional. Define them in the locale's `tts.yaml`, then set each rule's
+`tts_profile`:
 
 ```yaml
 profiles:
-  sundawn:                        # ttsTwilight -- civil dawn announcement
-    intro: 'soumages-bird-sound-2-370343.mp3'
-    intro_spacing: -1             # -1 = intro tail overlaps the speech start by one second
-  sundusk:                        # ttsTwilight -- sunset announcement
-    intro: 'freesound_community-cricket-chirp-101026.mp3'
-    intro_spacing: 0              # 0 = intro ends exactly as the speech starts
+  sundawn: { intro: 'dawn.wav', intro_spacing: -1 }
+  sundusk: { intro: 'dusk.wav', intro_spacing: 0 }
 ```
 
-The shipped entries name a birdsong intro for dawn and a cricket-chirp intro for dusk, so the two events are recognizable by their jingle alone. Audio files must exist on the machine running tts-server, so the filenames are a deployment decision: the `.dist` template leaves `intro` commented out and carries `intro_spacing` only. A profile carries framing only — never `output_endpoint`, and never `model` / `piper_effects` / `sox_effects`, which stay locale-template settings. An explicit `tts_options:` block on a rule overrides the profile field by field, and an unknown profile name warns once and contributes nothing: the sentence is spoken plain.
+Audio files must exist on the TTS server. Explicit `tts_options` override profile fields;
+unknown profiles warn and add no framing. See [TTS Integration](../installation/tts-integration.md).
 
 ## Component Paths
 
 | Component | Path |
 |-----------|------|
-| Automation class | `etc/automation/ttsTwilightAutomation.js` |
-| Configuration | `etc/automation/tts-twilight.yaml` (+ `.dist` template) |
-| Language bundles | `etc/i18n/{locale}/twilight.yaml` (+ `.dist` templates) |
-| Solar instants | `src/lib/sun.js` → `getSunTimes()` (returns `sundawn` / `sundusk` as civil dawn / actual sunset, falling back to sunrise where civil dawn is undefined) |
-| Gate evaluation | `src/automation/base/ruleBasedAutomationBase.js` → `conditionsMatch()` |
-| Spoken clock words | `src/lib/polish.js` (numerals, hour ordinals) behind `src/lib/date.js` → `getClockWords()` |
-| TTS framing profiles | `src/lib/ttsProfiles.js` |
+| Class | `etc/automation/ttsTwilightAutomation.js` |
+| Solar times | `src/lib/sun.js` |
+| Rule conditions | `src/automation/base/ruleBasedAutomationBase.js` |
+| Framing | `src/lib/ttsProfiles.js` |
 | Tests | `tests/test-tts-twilight.js` |
 
----
-
-→ Back to [Automations](./index.md) · Related: [TTS Integration](../installation/tts-integration.md) · [TTS Greeter](./greeter.md) · [Configuration Guide](../configuration.md)
+Related: [Automations](./index.md) · [Configuration](../configuration.md)

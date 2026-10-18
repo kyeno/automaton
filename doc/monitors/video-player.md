@@ -1,6 +1,6 @@
 # Video Player Monitor
 
-The **Video Player monitor** (`src/monitor/videoPlayerMonitor.js`) polls media players over their HTTP APIs and normalizes each into a small status vocabulary, so automations can react to "a movie is playing in the living room" without caring which player software is involved. The flagship consumer is the [Home Theater Mode](../automations/home-theater-mode.md) automation.
+Polls VLC and MPC-HC HTTP APIs and publishes normalized player status for [Home Theater Mode](../automations/home-theater-mode.md) and other automations.
 
 ## Status Vocabulary
 
@@ -11,7 +11,7 @@ The **Video Player monitor** (`src/monitor/videoPlayerMonitor.js`) polls media p
 | `stopped` | Player open, nothing playing |
 | `offline` | No usable player signal — host known to be offline, host not yet polled, or the player stopped answering (3 consecutive failures) |
 
-`offline` is an ordinary, always-available status: rules accept it by listing it explicitly (`[paused, stopped, offline]`), while playback requirements (`[playing]`) stay inert. The raw cause behind an `offline` status (presence-offline vs. unreachable player) is kept in debug logs only — it is **not** a status transition, so drifting between the two never re-fires automations. See [Rule Engine Restore & Ownership](../architecture/rule-engine-restore-semantics.md) for the semantics and typical patterns.
+Rules match `offline` only when listed. Changes between raw offline causes are debug-log-only and do not emit status events.
 
 ## How It Works
 
@@ -23,19 +23,11 @@ The **Video Player monitor** (`src/monitor/videoPlayerMonitor.js`) polls media p
 
 ## Playback Settle
 
-A raw `playing` report from a player can mean either "a movie is genuinely playing" or just "the user opened the player and started scrubbing through titles". To keep lights and roller-suppression from flickering while someone chooses what to watch, the monitor applies a **settle delay**: an effective status of `playing` is only reported once the *same* media title has been observed playing continuously for at least the settle window (**60 seconds** by default). Until then an unsettled `playing` reads as `stopped`, so dark-mode rules and the top-level `video_player_suppression` guard stay inert during browsing/skipping. Once settled, play/pause act immediately with no further delay.
+Effective `playing` requires the same title to play continuously for 60 seconds by default. Until settled, status is `stopped`. Once settled, pause/resume of the same title is immediate.
 
-Because both rule-engine consumers already read `getStatus(host)`, this behavior is global to every video-player-driven automation (per-rule `video_player` conditions *and* the suppression guard) without any YAML change.
+Both `video_player` conditions and `video_player_suppression` use this effective status.
 
-**The settle window has a mirror effect on the restore side.** While a player is unsettled it reads
-as `stopped`, so a player that merely became reachable again — `offline → stopped`, on its way to
-playing — satisfies a `[paused, stopped]` condition exactly like a real pause. A light-restore rule
-keyed on status alone therefore restores the room *on the way into a movie*, and dark mode puts it
-out again once playback settles: a visible flash, repeating on every settle window. The cure is the
-[`state_transition`](../configuration.md#transition-origin-gate-state_transition) condition, which
-names the origin of the player's last recorded transition (`{ from: playing }`) so only a genuine
-departure from playback restores light. Home Theater's restore and delegate rules use it; the
-`offline` hand-off rule deliberately does not.
+Use [`state_transition`](../configuration.md#transition-origin-gate-state_transition) with `from: playing` on restore rules. This excludes `offline → stopped` startup reports. The separate offline delegation rule stays ungated.
 
 Reset semantics:
 
@@ -53,7 +45,7 @@ The per-host watch-session state is held in StateService under these keys (visib
 - `videoPlayer.<host>.sinceMs` — epoch-ms timestamp of when that title began continuous playback
 - `videoPlayer.<host>.settled` — whether the settle window has elapsed for the current title
 
-Providers expose a best-effort `extractTitle()` used purely for identity tracking (MPC-HC reads `<p id="file">`, falling back to `<p id="title">`; VLC probes common JSON fields such as `input_name`/`name`). When a player cannot report a title, the dwell timer still applies but a movie change cannot be detected by name — a documented graceful degradation.
+MPC-HC reads the file/title fields; VLC uses available media-name fields. Without a title, the settle timer still works but cannot detect title changes.
 
 ## Configuration
 

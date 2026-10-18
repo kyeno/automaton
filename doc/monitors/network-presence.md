@@ -1,12 +1,12 @@
 # Network Presence Monitor
 
-The **Network Presence monitor** (`src/monitor/networkPresence.js`) watches hosts on the local network and answers one question per host: *is it online right now?* Automations use the answer as a `presence` condition — e.g. "someone's laptop is home, so park the office shutters".
+Checks LAN hosts and exposes `online` / `offline` presence to automation rules.
 
 ## How It Works
 
-- Every 5 seconds each configured host is checked with `arping` (one packet, 2 s wait per attempt, retried once — a single answer can be suppressed by ARP cache). Checks run in parallel, up to 4 hosts at a time, so a sweep takes as long as its slowest host and not as long as all of them added up. Arping is used instead of plain ping because many devices silently drop ICMP but still answer ARP.
-- The result is cached in Redis with a 60-second TTL and mirrored in memory; a `network:<name>` EventBus event is published **only on transitions** (online ↔ offline), never on every sweep.
-- `getPresence(name)` returns `online`, `offline`, or `null` when nothing is known yet (cold start, expired cache, unknown host). It never guesses — rules decide what "unknown" means via the [`presence` condition](../configuration.md).
+- Hosts are checked every 5 seconds with `arping`: one packet, 2-second timeout, one retry, up to four hosts in parallel.
+- Results are cached in Redis for 60 seconds and mirrored in memory. `network:<name>` events publish only on transitions.
+- `getPresence(name)` returns `online`, `offline`, or `null` for unknown/expired state.
 
 ## Configuration
 
@@ -38,7 +38,7 @@ triggers_network:        # Re-evaluate when these hosts change state
 rules:
   - name: 'Day: laptop present'
     conditions:
-      presence: my-laptop   # host is online
+      presence: laptop      # host is online
     targets: ...
 ```
 

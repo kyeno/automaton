@@ -1,21 +1,16 @@
 # TTS Greeter
 
-The **ttsGreeter** automation greets people when their computers come back online. Instead of greeting every blip, it measures *how long the host was absent* from the transition history (`DatabaseService.priorStateDurationMs()` — the interval between the host's two most recent state changes) and picks a message bucket from pure YAML data — quick reboots get a joke, short returns get *"did you forget something?"*, real absences get a proper welcome -- plus an optional localized absence note (how long ago the host was last seen online when that is under 24h, its full calendar date and clock time otherwise) whenever transition history knows how long the host was away. Adding a new condition is a config change, not a code change. It speaks instead of commanding devices: its rules declare no `targets:` maps, so the base class has nothing to resolve against the device container.
+TTS Greeter announces when a configured host returns online. YAML windows select a greeting from the recorded absence duration.
 
 ## How It Works
 
-1. On each `network:<host>` event (or timer/forced run covering all configured hosts), the automation checks whether that host is **online now**. Going-offline events are observed but never spoken about.
-2. The absence duration comes from the database: how long the host sat offline *before this return*. With no prior history yet (fresh install, pruned rows) it fails open with the full welcome rather than staying silent at the door.
-3. The duration is matched top-down against `greeting_windows` — first match wins. The shipped bands are contiguous so every return speaks; if you want a silent range, add your own gaps deliberately.
-4. Output routing is an explicit boolean switch, unlike WeatherMan which always prefers AI:
-   - `use_ai: false` → speak the bucket's `tts.<host>` sentence directly;
-   - `use_ai: true` + AI available → send the bucket's `ai.<host>` instruction to the model, which speaks its own greeting (`AiAssistant` fires `tts:speak` for it);
-   - `use_ai: true` + AI down / empty reply / provider error → warn in logs and speak the plain TTS sentence instead. There is deliberately **no spoken fallback notice** here — a missed greeting must not be announced twice.
-5. When history provides an absence duration, a localized note from the bundle's `absence_note.*` section is appended after the greeting in two tiers: below 24h it says how long ago the host was last seen online (*"...8 hours ago"*, via lib/date's speech-oriented phrase), from 24h up it gives the full calendar date plus zero-padded 24-hour clock time of the offline transition itself (`DatabaseService.priorTransitionTs()`) -- both render through lib/date's date/time machinery and degrade silently when data or templates are missing. TTS notes ship as `_named` / `_anonymous` pairs: the possessive form (*"Twój komputer ..."*) is spoken only when the host's `welcome.tts` line addresses them by name; machines without a personal greeting get the neutral one.
+1. On `network:<host>` events, greet only hosts that are currently online. Timer/forced runs check all configured hosts.
+2. Read the preceding offline duration from SQLite. Missing history selects the full welcome.
+3. Match `greeting_windows` top-down; first match wins. Gaps in the windows produce silence.
+4. `use_ai: false` speaks the TTS sentence; `true` uses AI with plain-TTS fallback.
+5. Append an absence note when history is available: duration below 24h, offline-transition date and 24-hour time at 24h or more.
 
-A host may deliberately omit lines for some buckets — e.g., a shared HTPC only needs the *welcome* line. Returns landing in a bucket where that host has no `tts`/`ai` line are treated as *"greeting not required"* and skip silently (debug log, nothing spoken). A window whose `sentence` names a section missing from the bundle entirely still warns so typos stay visible; partial configurations (one channel present) keep the existing warn-and-fallback behavior.
-
-If **neither** the AI pipeline nor the TTS server is available, the run is skipped entirely before any evaluation work. A configured `silence_between` window suppresses runs unless forced.
+Missing per-host bucket lines skip silently; a missing bundle section warns. Silence periods suppress runs unless forced. Runs skip when both AI and TTS are unavailable.
 
 ## Greeting Windows
 
@@ -51,9 +46,9 @@ tts_profile: 'greeting'                 # shipped default -- entry of the locale
 #  intro_spacing: -1.5                  # negative = overlap intro with speech start
 ```
 
-The shipped config points `tts_profile:` at the `greeting:` entry of `etc/i18n/{locale}/tts.yaml`, whose `intro:` is `lubecin123-info-computer-sound-299367.mp3` with `intro_spacing: 0`; retune the jingle there, or uncomment the `tts_options:` block to override single fields for this automation alone. Set `tts_profile: ''` (the `.dist` template default) and every greeting stays a plain `{ text }` utterance.
+Set `tts_profile` to a profile in the locale’s `tts.yaml`, or use `tts_options` for field overrides. The `.dist` default is empty: no jingle.
 
-On the AI path the resolved framing travels through `AiAssistant.processMessage(..., { tts })`, so the model's own spoken greeting carries it; on the plain-TTS path and on the AI-failure fallback it is spread straight into the `tts:speak` payload.
+Framing applies to AI speech, direct TTS, and fallback speech.
 
 ## Language Bundles
 
@@ -92,9 +87,9 @@ absence_note:
     long:   'Dodatkowo wspomnij, że komputer ostatnio był włączony {% last_online_date %}, o godzinie {% last_online_time %}.'
 ```
 
-- `{% time_phrase %}` → localized duration including unit word ("58 minut"), via lib/date's speech-oriented formatter and the date bundle's `duration_units` — fills the sub-24h tier (*"...włączony 58 minut temu"*)
-- `{% last_online_date %}` / `{% last_online_time %}` → both available together in the ≥24h tier: localized calendar date (the same `date_sentence` machinery WeatherMan uses) plus zero-padded 24-hour clock time ("07:35", always 24h so TTS voices never disambiguate AM/PM), rendered at the offline transition's own timestamp
-- `_named` / `_anonymous` TTS variants are chosen per host at runtime — possessive only when that host's `welcome.tts` line contains a `{% name_vocative %}` / `{% name_genitive %}` placeholder. Older bundles still carrying legacy `short_*` lines keep working for the sub-24h tier instead of dropping the note entirely.
+- `{% time_phrase %}` → localized duration for absences below 24h, using `date.yaml` duration units.
+- `{% last_online_date %}` / `{% last_online_time %}` → localized date and 24-hour `HH:MM` at the offline transition, for absences of 24h or more.
+- `_named` is selected when the host’s `welcome.tts` uses a name placeholder; otherwise `_anonymous` is used. Legacy `short_*` lines remain supported for recent absences.
 
 Missing sections or unresolvable tokens simply drop the note — the main greeting always stands alone.
 

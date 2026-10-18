@@ -1,6 +1,6 @@
 # Email Notifications
 
-The **EmailService** is the outbound mail channel. It turns a notification into a plain-text email addressed to the house owners, using locale-aware templates, and delivers it over SMTP. It is the only service that talks to an external mail relay, and it is deliberately decoupled from speech: a notification can be mailed even when the speaker is muted, in a silent period, or when no TTS/AI output channel is up.
+EmailService sends locale-templated plain-text notifications to `house_owners` over SMTP. Delivery is independent of speech silence and AI/TTS availability.
 
 The service owns four things:
 
@@ -11,7 +11,7 @@ The service owns four things:
 
 ## How a Notification Becomes a Mail
 
-A component never formats an email itself. It calls `EmailService.notify()` with a *kind*, the announcement *message* (the same text the speaker would have said), and optional *tokens* and *meta*:
+Call `EmailService.notify()` with a kind, message, and optional tokens/meta:
 
 ```js
 await EmailService.notify({
@@ -30,9 +30,9 @@ The service then:
 4. Renders the **subject** (prefix + template line) and the **body** (greeting, the announcement message, signature, footer).
 5. Queues one copy per owner on a single FIFO chain and returns immediately — a slow or dead relay can never block the caller.
 
-The body is the announcement text verbatim, wrapped in the template's greeting and signature. That is what makes the mail a faithful copy of what was (or would have been) said: the announcement pipeline generates the text once and hands the same string to the speaker, the AI bridge and the mail.
+The body wraps the supplied message with the locale greeting, signature, and footer.
 
-Unanswered `{% placeholder %}` tokens are **removed**, not passed through — a mail is read, not heard, and a leftover placeholder is a bug the owner should not have to look at.
+Unresolved `{% placeholder %}` tokens are removed.
 
 ## Configuration
 
@@ -81,7 +81,7 @@ The terminal UI exposes the channel through `/mail` (alias `/email`):
 | `/mail test [address]` | Queue the configuration-check mail to the owner list, or to one explicit address. |
 | `/mail help` | Usage. |
 
-The test mail uses the `test:` template section and is **not** subject to the per-kind cooldown — it is a request, not a notification, so a cooldown never silences it.
+Test mail uses the `test` template and bypasses notification cooldowns.
 
 ## Delivery Model
 

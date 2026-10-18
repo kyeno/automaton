@@ -2,7 +2,7 @@
 
 > **[← Back to Terminal UI](../index.md)**
 
-The Automaton terminal UI supports slash commands typed into the input bar at the bottom of each window. Commands are **only available in interactive terminal mode** — they are entirely disabled when running as a system service with `--no-ui`.
+Slash commands are available in interactive UI mode. `--no-ui` disables them.
 
 ## Quick Reference
 
@@ -22,11 +22,11 @@ The Automaton terminal UI supports slash commands typed into the input bar at th
 | `/win [arg]` | Switch window by shortcut number or id |
 | `/rules [arg]` | Drive the rules window tabs: bare lists the automations, `<name>` focuses one automation's box, `all` shows every box again |
 
-> **Note:** `/automation run <name>` calls that automation's `execute()` immediately with trigger reason `manual` (visible as "Triggered by: manual" under its `Auto:<name>` log context). Normal guards still apply -- silent periods, per-rule daily `once:` markers, and human-interaction cooldowns are respected exactly as for timer or event triggers. `/automation force <name>` dispatches the same way but carries `force: true`: the silent period and any already-consumed per-rule `once:` marker no longer block execution -- and it neither consumes nor refreshes that day's marker, so repeated forced or delegated pokes stay safe -- while human-interaction cooldowns are intentionally kept so a manual poke never fights a device someone just touched. Appending `first` (`/automation force <name> first`) additionally carries `forceFirst: true`, which forces the first-of-day day-position so the dated opening time line renders -- a debug poke for the date-fused clock sentence.
+`/automation run <name>` evaluates immediately with normal guards. `force` bypasses silence and daily-marker checks/writes, but retains human cooldowns and video suppression. Add `first` to force the dated first-of-day opening line.
 
-> **Note:** `/config set <parameter.path> <value...>` validates the value exactly like startup loading (`ensureValidated()` + unknown-parameter guard), but reports problems instead of crashing -- a rejected change is never applied. Values are parsed as YAML just like `-c/--config-override`, so numbers, booleans and quoted strings keep their natural types. Changes are runtime-only: the YAML file on disk stays untouched until you edit it by hand or restart. Both `debug` and `set` operate on the main config file only -- its resolved path is shown in the usage output, so there is no per-file selection to get wrong.
+`/config set <path> <value>` applies schema-validated YAML values in memory only. Invalid changes are rejected. `debug` and `set` target the main config.
 
-> **Note:** `/config reload` re-reads every config file from disk and swaps the result into the running process -- no restart needed for edited values to take effect. It works in two phases: first all candidate files are loaded and validated strictly, and only if everything is clean does anything change; a schema violation anywhere aborts the whole reload with every problem listed verbatim while the live configuration stays byte-for-byte intact (nginx-style). The YAML file is treated as the source of truth, so any memory-only `/config set` overrides are discarded and reported explicitly. After a successful swap, only subsystems that were actually affected get refreshed. Relevance is detected both from automaton.yaml subtrees AND from content movement in the active locale's per-locale bundles (`etc/i18n/{dir}/tts.yaml` + `ai.yaml`), which live outside any config section and are fingerprinted before/after the swap: the i18n bundle refreshes when `locale.*` or the locale's ai.yaml moved, the TTS template (model + params) when `locale.*` or the locale's tts.yaml moved, and the AI conversation (+ provider snapshot) resets when `ai.*`, `locale.*` or the locale's ai.yaml moved -- each one gated behind an "is initialized" check so half-built services are never touched. Stale rendered output in existing windows is cleared whenever any relevant setting moved, and the channel-definition cache resets when `ui.windows` did; adding or removing window definitions still requires a restart because window instances are built eagerly at startup. The sequence registry (`etc/sequence/sequences.yaml`) is rebuilt on every successful reload once the container took part in bootstrap -- added/renamed/removed entries take effect immediately with each moving slug named in the report, engaged loops stop gracefully first (in-flight step lists finish), and an unreadable file keeps the current registry intact instead of wiping it.
+`/config reload` validates candidate files before swapping them into memory. Failure keeps the live configuration; success discards runtime overrides and reports them. Changed locale/AI/TTS settings refresh their initialized services and relevant window output; AI changes reset the conversation. Window-definition changes require a restart. Sequence reload stops loops gracefully and rebuilds entries; unreadable sequence files retain the existing registry.
 
 ### Keyboard Shortcuts
 
@@ -63,16 +63,13 @@ All commands are routed through CommandContainer's two-phase dispatcher:
 1. **Exact match** — if input equals a registered verb name or alias, execute immediately with no arguments
 2. **Prefix match** — split at first space; if any registered verb + " " is a prefix of the input, extract everything after the space as the argument and pass it to that command's `execute()` method
 
-This means `/clear` matches exactly (no args), while `/win 2` matches by prefix (verb="win", args="2"). String operations (`startsWith`) are used instead of regex for performance.
+`/clear` uses exact lookup; `/win 2` dispatches `win` with argument `2`.
 
 ### How It Works
 
-1. At UI initialization, **CommandContainer** scans `src/ui/commands/*.js` using the Autoloader utility
-2. Each file exports a class extending `CommandBase` with static properties: `name`, `description`, `takesArgs`, and optionally `aliases`
-3. The container instantiates each command with a shared context object and registers it under its name plus all aliases
-4. When Ui receives user input, it strips the leading `/` and delegates to `CommandContainer.handle(rawInput)`
-5. The container performs exact-match lookup first, then prefix-match fallback
-6. The matched instance's `.execute(args)` is called
+The autoloader scans `src/ui/commands/*.js`, constructs each `CommandBase` subclass
+with shared context, and registers its name and aliases. UI input drops the leading `/`
+and calls `CommandContainer.handle()`, which selects the command and calls `execute(args)`.
 
 ---
 
@@ -240,7 +237,7 @@ Tab completion offers `all` plus every automation the window has seen.
 
 ### `/config [arg]`
 
-Operates on the **main config file only** — both `debug` and `set` target it directly, so there is no per-file selection token anymore. The resolved main-config path is printed in every usage view to remove any ambiguity about which document is being inspected or overridden.
+`debug` and `set` operate on the main config; usage output shows its path.
 
 | Invocation | Behaviour |
 |------------|-----------|
@@ -253,7 +250,7 @@ Stray arguments after `debug`, missing values for `set`, schema violations, type
 
 ### `/interaction [arg]`
 
-Full parity with `/automation`: bare invocation shows usage help with the registered interaction names listed last.
+Bare `/interaction` shows usage and registered interaction names.
 
 | Invocation | Behaviour |
 |------------|-----------|
@@ -261,11 +258,11 @@ Full parity with `/automation`: bare invocation shows usage help with the regist
 | `/interaction debug <name>` | One interaction in detail: per-action rows (`type=… targets=device:COMMAND … calls=…`), or top-level config keys when no actions exist. Name resolution is case-insensitive; odd YAML shapes (null entries, scalar targets) never break rendering |
 | `/interaction run <name> [actionType]` | Calls that interaction's `execute()` now. When two or more words are given and only the leading part is a registered name, the trailing word selects which YAML-defined action fires (`{action: "<type>"}` payload); otherwise the whole string is treated as the name |
 
-Kind metadata comes from `InteractionContainer.getSourceInfo(name)` (authoritative registry view) with an instance-prototype fallback so minimal containers still render fully.
+Kind metadata comes from `InteractionContainer.getSourceInfo(name)`, with a prototype fallback.
 
 ### `/device [arg]`
 
-Lists and inspects devices across **both** registries — Zigbee devices from DeviceContainer (bridge/coordinator excluded) and network-presence devices from NetworkPresence' configured-device view. Bare invocation prints per-registry counts plus usage help and the de-duplicated union of known names.
+Lists Zigbee and network devices, excluding the Zigbee bridge. Bare invocation shows counts, usage, and known names.
 
 | Invocation | Behaviour |
 |------------|-----------|
@@ -273,11 +270,11 @@ Lists and inspects devices across **both** registries — Zigbee devices from De
 | `/device list zigbee` / `list network` | One section only (filter token is case-insensitive; unknown filters report the valid options) |
 | `/device debug <name>` | Cross-registry lookup, case-insensitive. A single hit renders its full detail view (Zigbee: type/id/last-state JSON/origin/active kind; network: category/IP/presence). Names present in BOTH registries are reported as ambiguous and each side renders under a labelled block |
 
-Network presence states come from `NetworkPresence.getPresence(name)`: warm cache renders `online`/`offline`; cold or expired caches (or a missing Redis) degrade to `unknown` instead of failing the command. Missing services on either side print explicit "(none registered/configured)" notes rather than crashing.
+Network presence renders `online` / `offline`, or `unknown` for cold/expired cache or missing Redis. Missing services render empty sections.
 
 ### `/sequence [arg]`
 
-Drives sequence instances configured in `etc/sequence/sequences.yaml` — ordered device choreography with optional loops (see the Sequences section of the [Configuration Guide](../../configuration.md)). Bare invocation lists every registered sequence with its live status (`running (on)` / `idle`, plus `[LOOP]` while a loop session is engaged). Names accept both slugs and friendly names case-insensitively, so multi-word names work as-is; tab completion offers subcommands first, then known sequence names after `run` / `loop start` / `loop stop`.
+Controls entries in `etc/sequence/sequences.yaml`. Names accept slugs or friendly names case-insensitively; tab completion offers subcommands and registered sequences.
 
 | Invocation | Behaviour |
 |------------|-----------|

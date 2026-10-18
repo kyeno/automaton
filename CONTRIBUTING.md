@@ -1,12 +1,10 @@
 # Contributing to Automaton
 
-Thank you for your interest in contributing! This document outlines the conventions, expectations, and processes for contributing to Automaton.
+Conventions for code, tests, and pull requests.
 
 ## Project Philosophy
 
-Automaton is a **pure JavaScript** project. We intentionally do not use TypeScript — this is a design decision that keeps the codebase accessible and avoids build-step complexity. Pull requests adding TypeScript, transpilation steps, or type-checking tooling will be declined.
-
-That said, we value good documentation of types and interfaces. All public APIs use JSDoc annotations so IDEs can provide autocomplete and inline type hints without any compilation step.
+Use JavaScript ES modules and JSDoc. TypeScript, transpilation, and type-checking tooling are not accepted.
 
 ## Code Conventions
 

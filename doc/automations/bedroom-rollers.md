@@ -1,6 +1,6 @@
 # Bedroom Rollers
 
-The **Bedroom Rollers** automation is a minimal rule-based roller-shutter controller for a bedroom: it closes every shutter at night once outdoor light drops below a threshold. It ships with an optional **pilot remote interaction** — a 3-button remote that moves the shutters via YAML targets while delegating outlet on/off decisions to a custom JavaScript handler that reads outdoor light first. Together they demonstrate both halves of the interaction system (declarative `targets:` actions *and* `calls:` delegation to custom JS logic).
+Closes bedroom shutters in low light during evening/night. An optional pilot-remote interaction adds full travel, 20% steps, and sensor-based outlet control.
 
 ## How It Works
 
@@ -56,13 +56,13 @@ The companion interaction pairs a physical remote with the shutters *and* an out
 
 ### End-Stop Feedback
 
-When *every* shutter in the group already sits at the requested end stop, the press is answered with a short double beep and **no command is sent** - the same acknowledgement the balcony light button gives when its timed cycle is already running. Pressing "close" on a fully closed group beeps; pressing "open" on a fully open group beeps. A +/-2% tolerance counts as "at the limit".
+When every shutter is within ±2% of the requested end stop, the interaction double-beeps and sends no command.
 
-The gate deliberately requires *all* shutters to be at the end stop. If even one can still move, the whole group is commanded and the shutters that are already there are dropped by DeviceBase's own redundancy check, so no pointless MQTT traffic is generated.
+If any shutter can move, the group receives the command; device-level no-op suppression drops redundant targets.
 
 ### How the Split Works
 
-Travel lives in `RollerShuttersBase` (`src/interaction/base/rollerShuttersBase.js`), which reads each shutter's cached position from DeviceContainer, computes the target, and decides whether to beep or command. The YAML entry therefore only delegates via `calls:` for the four travel actions - the shutter commands can no longer sit in declarative `targets:`, because the engine runs `targets` before `calls` and there is no way to veto a target once it has been sent. `2_single` (STOP) keeps using `targets:` since it needs no position lookup.
+`RollerShuttersBase` reads positions and handles travel. Delegate travel actions through `calls`; YAML `targets` run first and cannot be cancelled by the handler. STOP can remain a direct target action.
 
 A concrete room only fixes its identity and its shutter list:
 
@@ -76,7 +76,7 @@ export default class SalonRollersInteraction extends RollerShuttersBase {
 
 Side effects attach through the `onOpened()` / `onClosed()` hooks, which fire only on a real full travel - never on a 20% nudge and never on a beep-gated press (nothing moved in either case).
 
-Released as obfuscated templates so they work out of the box once you rename devices to your own:
+Copy these templates and set your device names:
 
 - `etc/interaction/interaction.yaml.dist` — the `bedroom_pilot_remote` example entry
 - `etc/interaction/bedroomRollersInteraction.js.dist` — the generic handler template

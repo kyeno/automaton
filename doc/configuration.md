@@ -1,6 +1,6 @@
 # Configuration Guide
 
-A detailed walkthrough of every configuration file and section in Automaton. The shipped templates represent a real, working home deployment -- customize device names, network addresses, and automation rules to match your own setup.
+Configuration files, keys, and examples. Copy `.dist` templates to active names and set your own devices, hosts, and thresholds.
 
 ## Configuration Hierarchy
 
@@ -35,11 +35,11 @@ Copy `.env.example` to `.env` and adjust values. This file is gitignored and sho
 | `SMTP_USER` | No | Relay login address; also the sender fallback when `email.from` is empty | `automaton@example.com` |
 | `SMTP_PASS` | No | Relay login password | `…` |
 
-> The AI and TTS services are optional — unset URLs disable those features at startup with a warning. The `--no-ai` / `--no-tts` / `--no-email` startup flags disable them per-run without touching `.env`. The email relay secrets live here; the behavioural email settings (`enabled`, `from`, `notify`, `cooldown_ms`) and the `house_owners` recipient list live in `etc/automaton.yaml` — see [Email Notifications](services/email.md).
+AI, TTS, and email are optional. Unset their connection variables or use `--no-ai`, `--no-tts`, or `--no-email`. Email behavior and recipients live in the main config; see [Email Notifications](services/email.md).
 
 ### Overriding settings from the command line
 
-Any parameter of `etc/automaton.yaml` can be overridden for a single run using the repeatable `-c` / `--config-override` flag; values are interpreted as YAML and go through the same strict schema validation as the file itself (an unknown key or wrong type aborts startup):
+Use repeatable `-c` / `--config-override` options for per-run main-config overrides. Values use YAML syntax; unknown keys and invalid types abort startup.
 
 ```bash
 sh bin/automaton -c "locale.language: en_US" -c "ai.temperature: 0.7"
@@ -68,7 +68,7 @@ automation:
   # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
 ```
 
-This prevents automations from overriding manual device changes within the specified cooldown window. Like `timer_interval`, the value is polymorphic: plain numbers are milliseconds, strings use the `<integer><unit>` grammar (`d`, `h`, `m`, `s`). The optional origin-classification tuning keys fine-tune origin classification -- see [Automation vs Human Differentiation](architecture/automation-human-differentiation.md) for what each one controls.
+During the cooldown, automations skip manually changed devices. Numbers are milliseconds; duration strings accept `d`, `h`, `m`, and `s`. See [origin classification](architecture/automation-human-differentiation.md) for the tuning keys.
 
 ### Locale Section
 
@@ -83,7 +83,7 @@ locale:
 
 ### Geolocation (under `locale`)
 
-Observer coordinates that power the sun-based rule shorthands (`sundawn` / `sundusk`) used by the merged-gate conditions and `hour:` bounds described in [Automation Rules](#4-automation-rules-etcautomationyaml). They live inside the `locale:` section alongside language/time format:
+Solar conditions use observer coordinates under `locale`:
 
 ```yaml
 locale:
@@ -99,7 +99,7 @@ TTS is configured entirely through environment variables and locale-specific i18
 
 - **`TTS_API_URL`** (`.env`) — TTS server API endpoint; service auto-enables when set
 - **`TTS_TCP_ENDPOINT`** (`.env`) — Global audio playback destination (`ip:port`). Can also be overridden per-request via EventBus event payloads or per-locale in `etc/i18n/{locale}/tts.yaml`
-- **Per-request extras** — Components emitting `tts:speak` events may attach extra TTS server parameters to individual utterances (e.g., intro/outro jingle waves); they merge into that request only, with runtime values winning over locale template defaults. Framing is resolved for every speaker by one shared owner (`src/lib/ttsProfiles.js`) from two optional keys -- `tts_profile:` (a named entry of the locale `tts.yaml` `profiles:` registry) and `tts_options:` (explicit fields, winning over the profile field by field). Wired speakers: the weatherman, greeter and gardener automations, the [spoken offline alerts](monitors/offline-alerts.md) and the UI speak window (`ui.tts_profile`). See [TTS Integration](installation/tts-integration.md).
+- **Per-request extras** — `tts:speak` payloads override locale defaults for that utterance. `tts_profile` selects a locale framing profile; `tts_options` overrides its fields. See [TTS Integration](installation/tts-integration.md).
 
 ### AI Section
 
@@ -116,11 +116,11 @@ ai:
   include_chat_history_in_system_calls: false  # System-origin turns (announcements) receive prior chat history; false = standalone [default]
 ```
 
-**Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (see [Automations](./automations/index.md); how system-originated announcements stay out of conversation caching is covered in [AI Conversation Caching](architecture/ai-conversation-caching.md)).
+**Periodic announcements:** configured by individual [automations](./automations/index.md). Their AI turns do not persist; see [AI Conversation Caching](architecture/ai-conversation-caching.md).
 
 ### Email Section
 
-The email channel mails the house owners about notifications (currently the gardener's stuck-probe warning). The relay connection and credentials are the `SMTP_*` variables in `.env`; this section holds the behavioural settings, and `house_owners:` (a top-level key, not nested under `email:`) names the recipients.
+Email currently sends gardener stuck-probe warnings. Configure `SMTP_*` in `.env`, behavior under `email`, and recipients under top-level `house_owners`.
 
 ```yaml
 house_owners:                     # who gets the mail
@@ -143,7 +143,7 @@ email:
 - **`email.cooldown_ms`** — per-kind re-notification window; `0` mails every event.
 - **`email.notify`** — map of kind → boolean; a kind set to `false` is muted, a kind with no entry is allowed.
 
-The sentence templates live in `etc/i18n/<locale>/email.yaml`, one section per kind plus a `test:` section for the `/mail test` mail. The channel is independent of speech: a silent period, `stuck_speak: false` or a missing TTS output never blocks the mail. See [Email Notifications](services/email.md).
+Templates live in `etc/i18n/<locale>/email.yaml`. Email is independent of TTS availability and speech silence. See [Email Notifications](services/email.md).
 
 ### UI Section
 
@@ -211,14 +211,14 @@ ui:
       readonly: true         # Read-only: the automation call boxes are written by the automations
 ```
 
-Each window has an IRC-style channel name, display title, keyboard shortcut (`Alt+N`), and read-only flag. The AI window must have `readonly: false` to accept chat input. The `ai` and `tts` windows exist only when their backing services are configured. The `rules` window shows every rule-based automation as a box holding its last calls, one tab per automation (see [UI Windows](ui/index.md)).
+Windows have a channel, title, `Alt+N` shortcut, and input flag. AI chat requires `readonly: false`. AI and TTS windows appear only when configured; the rules window shows recent automation calls. See [Terminal UI](ui/index.md).
 
 ```yaml
 ui:
   tts_profile: ''            # Optional: framing profile for text typed into the TTS speak window
 ```
 
-`ui.tts_profile` names an entry of the active locale's `tts.yaml` `profiles:` registry; unset (the default) means typed utterances are spoken plain, with no jingle. See [UI Windows](ui/index.md).
+`ui.tts_profile` selects a locale TTS framing profile for typed speech; empty means no jingle.
 
 ### Alerts Section
 
@@ -262,7 +262,7 @@ logger:
     trace: var/log/trace.log
 ```
 
-Uses Winston for structured logging with file rotation; non-absolute paths resolve relative to the project root. A fifth **TRACE** level (raw MQTT payloads, token lifecycle events, rule-miss explanations from rule-based automations) routes exclusively to the dedicated `trace` log file -- never to the console or UI log window. Passing `--no-trace` at startup suppresses the stream entirely.
+Winston rotates structured logs. Relative paths resolve from the project root. TRACE contains MQTT payloads, command tokens, and rule skips; it goes only to the trace file. `--no-trace` disables it.
 
 ---
 
@@ -291,7 +291,7 @@ Device types determine behavior:
 | `remote` | Input devices that trigger interactions (wall switches, wireless controllers) |
 | `sensor` | Read-only devices providing measurements (temperature, humidity, soil moisture, illuminance) |
 
-Names must match the bridge's `friendly_name` **exactly** — renaming a device in Zigbee2MQTT breaks its mapping here. A device with no mapping is judged by the definition the bridge reports: a measurement-only device (temperature / humidity / soil moisture / illuminance, with nothing actuating) is auto-classified as `sensor` with a warning naming it, while anything that actuates falls back to a dummy that only mirrors state. The startup line `Instantiated by type: Sensor:9 Mechanism:8 Device:1 ...` counts every device by resolved type, so a stray `Device:N` is the tripwire for a drifted name, and the device window lists unmapped devices under **Unclassified** instead of presenting them as controllable mechanisms. The soil-probe case end to end: [TTS Gardener](automations/gardener.md).
+Names must exactly match Zigbee2MQTT `friendly_name`. Unmapped measurement-only devices can be auto-classified as sensors; other unmapped devices become dummies under Unclassified. Startup warnings and type counts identify missing mappings.
 
 ### Network Hosts (`etc/device/network.yaml`)
 
@@ -381,7 +381,7 @@ rules:
       Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
 ```
 
-**Condition key naming.** All rule condition keys use snake_case (`time_of_day`, `video_player`, `state_changed_ago_minutes`, `state_transition`, `after_latest_of`, `any_of`, ...). The legacy kebab-case spellings (`time-of-day`, `video-player`, `state-changed-ago-minutes`, `state-transition`) no longer evaluate -- a stale key simply never matches -- and there is no silent alias period. At activation, every rule still carrying one logs a loud warning pinning down the exact location in its conditions tree (including nested `any_of`/`all_of` groups) together with the replacement name; rename them when you see it.
+**Condition key naming.** Use snake_case: `time_of_day`, `video_player`, `state_transition`, etc. Legacy kebab-case keys never match and log their location and replacement at activation.
 
 ### Day Periods (`time_of_day`)
 
@@ -395,11 +395,11 @@ The `time_of_day:` condition matches against five **fixed clock-based** periods 
 | afternoon | 13–17   |
 | evening   | 18–23   |
 
-These replaced the older sun-derived boundaries in commit `c1e8c6f` -- rules written before that change may silently miss hours they used to cover (or fire where they shouldn't). See [Time-of-Day Periods](architecture/time-of-day-periods.md) for the full rationale, old-vs-new comparison and impact analysis; use `/automation coverage <name> legacy` inside a running instance to diff any automation's behavior against both schemes.
+Periods are fixed clock labels. Use solar bounds for daylight schedules and `/automation coverage <name> [legacy]` to inspect coverage. See [Time-of-Day Periods](architecture/time-of-day-periods.md).
 
 ### Wall-Clock Hour (`hour`)
 
-The optional `hour:` condition gates rules against the **actual local clock hour** (0-23) instead of calendar-derived day-period labels. It accepts either an exact number or comparison bounds (`lt`/`lte`/`gt`/`gte`); each bound may also be a sun-event token that resolves to today's real dawn/dusk moment:
+`hour` accepts an exact local hour or `lt` / `lte` / `gt` / `gte` bounds. Bounds may use clock times or solar tokens:
 
 | Form | Meaning |
 |------|---------|
@@ -410,9 +410,9 @@ The optional `hour:` condition gates rules against the **actual local clock hour
 | `hour: { gte: 'predusk' }` | At/after **sunset minus 30 minutes** -- a dusk-anchored offset (see below) |
 | `hour: { gte: 1230 }` / `{ lte: '12:30' }` | At/after 12:30, before/at 12:30 -- minute-precision clock bounds |
 
-Unlike `time_of_day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
+Combine `hour` with other conditions using AND. Integer-hour bounds retain hour granularity; clock-time and solar bounds use sub-hour precision. Invalid or unresolvable bounds fail closed.
 
-**Minute-precision clock bounds.** A plain hour bound tops out at 23, so a mid-day boundary such as "the sun is over the building from 12:30" was previously unwriteable. Bounds now also accept clock times, accepted as integers or strings in three spellings:
+**Minute-precision clock bounds.** Accepted forms:
 
 | Spelling | Example | Resolves to |
 |----------|---------|-------------|
@@ -420,24 +420,23 @@ Unlike `time_of_day`, it is evaluated directly from the live clock on every tick
 | Colon clock time | `'12:30'`, `'22:00:30'` | 12:30, 22:00:30 |
 | Fractional hour | `12.5` | 12:30 |
 
-Values in `0..23` stay plain hours, so `hour: { gte: 23 }` keeps its existing meaning. A number that parses as a clock time is always read as a clock time: `100` is `01:00`, not 100 o'clock. Anything outside both readings (`24`, `99`, `1299`, `'abc'`) is malformed and fails closed. The static analyzer resolves these bounds to fractional hours before sweeping the clock grid, so a `lte: 1230` bound correctly stops covering the day at 13h.
+Values `0..23` are hours; `100` is 01:00. Malformed bounds such as `24`, `99`, `1299`, or `abc` fail closed. Static coverage converts clock bounds to fractional hours before sweeping.
 
 **Sun tokens.** `sundawn`/`sunrise` resolve to civil dawn (sun 6° below the horizon). `sundusk`/`sunset` resolve to actual sunset, not civil dusk. The solar provider also exposes raw sunrise/sunset through `getSunriseSunset()`.
 
-**Named clock anchors (`midnight`, `noon`).** A bound may name a fixed point on the axis instead of spelling out a number: `hour: { gte: 'midnight' }` and `hour: { gte: 'noon' }` resolve to `00:00` and `12:00`. They are accepted in any bound slot, case-insensitively and with surrounding whitespace ignored; an unrecognised word fails closed like any malformed bound.
+**Named clock anchors (`midnight`, `noon`).** Resolve to 00:00 and 12:00. Names are case-insensitive and trimmed; unknown words fail closed.
 
-**Dusk-anchored offset (`predusk`).** A bound may also name a *sun event shifted by a fixed offset*: `hour: { gte: 'predusk' }` resolves to today's sunset **minus 30 minutes** -- the moment lamps are worth switching on, while the sky is still dimming, rather than at the very end of twilight. It is written for rules that mean "a little before dusk" and cannot afford a hard-coded clock time, which drifts by hours across the year. Like the sun tokens it hangs on, `predusk` is resolved from the solar instants computed from `locale.geo_latitude`/`locale.geo_longitude`, and **fails closed when no location is configured**. It is accepted in `hour:` bounds and as a candidate in the merged gates below. The offset is applied on the current calendar day, so at extreme latitudes where sunset lands just after midnight the floor sits below the axis start and a `gte` bound is trivially satisfied.
+**Dusk-anchored offset (`predusk`).** Actual sunset minus 30 minutes, using the configured coordinates. Accepted in `hour` bounds and merged gates; fails closed without a usable location. The offset may fall before midnight at extreme latitudes.
 
-**The hour axis starts at midnight and never wraps.** Bounds compare on one day's axis running `00:00 → 23:59`, so a bound pair cannot cross midnight: `hour: { gte: 22, lt: 6 }` is unsatisfiable and matches nothing, and a rule that means "the whole night" must be written as an explicit OR -- `any_of: [{ hour: { gte: sunset } }, { hour: { lt: sunrise } }]`. Two consequences are worth remembering:
+**Overnight windows.** Hours do not wrap: `{ gte: 22, lt: 6 }` never matches.
+Use `any_of: [{ hour: { gte: sunset } }, { hour: { lt: sunrise } }]` for sunset through
+civil dawn. `lt: sunrise` already includes midnight; no lower bound is needed.
 
-- **A lower bound at midnight is never needed.** `hour: { lt: sunrise }` already means *midnight → civil dawn*, because nothing on the axis lies below `00:00`. Writing `hour: { gte: 'midnight', lt: sunrise }` describes the same window with a bound that can only ever be true -- accepted, harmless, but it hides the intent, so prefer the single bound.
-- **A bare `gte: sunset` is only half a night.** On its own it covers sunset → `23:59` and silently drops `00:00` → civil dawn; the morning half has to be added as its own arm.
-
-The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports; a sun-token bound is treated as satisfied there since real dawn/dusk times are not part of the static clock grid.
+Static coverage excludes `hour` from sensor dimensions and treats solar bounds as satisfied; it does not compute solar timing.
 
 ### Merged Sun/Clock Gate Conditions (`after_latest_of` / `after_earliest_of`)
 
-Where `time_of_day`, `hour` and `season` each assert one fixed boundary, these two conditions let a single rule wait for the **later** of several candidate moments ("whichever is later") or open at the **earlier** of them ("whichever is earlier"). Each condition takes a list of candidates; the rule fires once "now" has passed the selected extreme of those candidates' resolved instants:
+These conditions select the latest or earliest resolved instant on the current day:
 
 | Key | Fires when now >= ... | Use case |
 |-----|----------------------|----------|
@@ -467,20 +466,13 @@ conditions:
   after_earliest_of: [sundawn, 'morning']
 ```
 
-They compose with every other condition as usual (all must hold), so a rule can pair them with strict gates -- e.g. `season: spring` + `illuminance: { lte: 15 }` + `after_latest_of: [sundusk, { hour: 19 }]`. Unresolvable candidates are dropped; if **none** resolve (no geo configured, unknown shorthand, empty list) the gate fails closed and the rule never fires. The static coverage analyzer treats both keys as reserved/satisfied (like `state_changed_ago_minutes`) since they depend on real sun times rather than the clock-hour grid.
+Other conditions still apply. Unresolvable candidates are ignored; if none resolve, the gate fails closed. Static coverage treats these gates as satisfied.
 
 ### Transition Origin Gate (`state_transition`)
 
-A status condition answers *"what is it now?"* — never *"how did it get there?"*. That gap is
-load-bearing for video players: the playback-settle window publishes an about-to-play player as
-`stopped` for the length of its dwell, so a player that merely started answering HTTP again
-(`offline → stopped`, heading to play) is indistinguishable from one that paused a film
-(`playing → stopped`). A rule keyed on `[paused, stopped]` fires on both, and a light-restore rule
-flashes the room on its way to a movie.
-
-`state_transition:` closes the gap by naming the **origin** of the subject's most recent recorded
-transition. It reads the durable `state_events` history the engine already writes — no timers, no
-delay, no timing assumption:
+`state_transition` checks the origin and/or destination of the subject's last SQLite
+transition. Use it on restore rules to distinguish `playing → stopped` from
+`offline → stopped` during player startup:
 
 ```yaml
     conditions:
@@ -495,23 +487,13 @@ delay, no timing assumption:
 | `'domain:subject': { from: playing, to: stopped }` | Pins **both** sides of the transition |
 | `'domain:subject': { to: offline }` | Origin unconstrained; the destination pinned (`from` absent matches anything) |
 
-Multiple subjects are ANDed, like every other condition. The reference is the same
-`<domain>:<subject>` form `state_changed_ago_minutes` uses — for video players the domain is
-`videoPlayer` and the subject is the host name declared in `triggers_video`/`triggers_network`.
+Subjects use `<domain>:<subject>` and combine with AND. Video player references use `videoPlayer:<host>`.
 
-**Availability.** With no recorded transition for the subject — a store that is down, a host the
-monitor never swept, a fresh install — the gate is **inert**, not fatal, matching
-`state_changed_ago_minutes`: a rule that depends on history never goes silently dark because the
-history is missing. A subject whose first recorded row has no origin (`from_state` is null — it
-appeared, it did not transition) does **not** satisfy a `from:` list.
+**Availability.** Missing history leaves the gate inactive and does not block the rule. An initial row with null `from_state` does not satisfy a `from` list.
 
-**Where it belongs.** Restore and hand-off rules, exactly: they exist to undo dark mode, so they
-should fire when playback *left*, not when a player *appeared*. Leave the `offline` hand-off rule
-ungated — an appearing player must still be able to hand the room back.
+**Restore rules.** Require `from: playing` on pause/stop restores. The separate offline delegation rule can remain ungated.
 
-The static coverage analyzer treats `state_transition` as reserved/satisfied (like
-`state_changed_ago_minutes` and the merged sun gates), since it reads durable history rather than
-the scenario grid.
+Static coverage treats `state_transition` as satisfied; it does not simulate history.
 
 ### Composite Condition Groups (`any_of` / `all_of`)
 
@@ -522,7 +504,7 @@ By default every condition in one rule combines with AND. The two composite keys
 | `any_of:` | **at least one** sub-group fully matches (inclusive -- several branches may match at once) | fails closed |
 | `all_of:` | **every** sub-group fully matches | passes vacuously |
 
-Each list entry is a full condition group in its own right, so composites nest to arbitrary depth and every group keeps combining its scalar entries with AND as usual:
+Entries are condition groups and can nest. Scalar conditions in each group combine with AND:
 
 ```yaml
 rules:
@@ -546,9 +528,9 @@ Notes:
 
 ### Target Keys (`targets:`)
 
-There is no separate declaration section: each rule's `targets:` map addresses devices directly by **target key** — the registered friendly name trimmed, whitespace runs collapsed to single underscores, original casing preserved (`Salon Roleta Okno Lewe` → `Salon_Roleta_Okno_Lewe`). The union of all rule-level keys defines an automation's addressable set; there are no separate aliases to invent or keep in sync.
+Target keys are friendly names with surrounding whitespace trimmed and internal whitespace replaced by underscores, preserving case (`Kitchen Outlet` → `Kitchen_Outlet`). The union of rule targets defines the automation’s device set.
 
-**Every matching rule acts — commands are merged, not first-won.** One evaluation pass collects *all* rules whose conditions hold and folds their contributions target by target, in config order. A rule targeting devices A and B and a later rule targeting C both dispatch in the same tick; nothing is shadowed by an earlier match:
+**All matching rules contribute commands**, merged per target in YAML order:
 
 | Contributions to one target | Result |
 |-----------------------------|--------|
@@ -560,15 +542,15 @@ There is no separate declaration section: each rule's `targets:` map addresses d
 | `OPEN` / `CLOSE` from two rules | Terminal: the later rule's value, nothing is merged |
 | Two position integers (rollers) | Last rule wins |
 
-A rule that wins a target and resolves to nothing (unknown key, a device sitting in human-interaction cooldown) contributes nothing, so an earlier rule's contribution to that target survives. Single-rule behavior is unchanged.
+A rule contributing no command leaves earlier contributions unchanged.
 
-**`priority:` does not participate in device dispatch.** It is honored only by the Weather Man's speech rules (highest wins) and is surfaced as a label by `/automation coverage`. For device automations, the ordering that matters is **the order of rules in the YAML** — move a rule later in the file to let it win a shared target.
+**`priority` selects Weather Man speech rules only.** Device command precedence follows YAML order.
 
-Every automation validates this wiring at activation time against the live device container and logs warnings for problems that would otherwise be silently inert: unknown keys (typos or renamed devices), keys resolving to non-actuator device types (sensors, remotes...), and duplicate keys (two friendly names collapsing onto one key, so only one of the devices is addressable). An automation whose declared targets ALL fail validation fails fast -- the container skips registering just that instance instead of running it silently inert. Automations that declare no targets at all (speech-only or pure `invoke_automation` flows) are valid and simply skip device dispatch.
+Activation warns about unknown targets, non-actuators, and colliding target keys. If all declared targets are invalid, that automation is not registered. Speech-only and delegation-only automations may declare no targets.
 
 ### Timer Interval (`timer_interval`)
 
-The optional `timer_interval` key controls how often an automation evaluates on its periodic timer. It accepts human-readable durations made of `<integer><unit>` tokens where the unit is `d` (days), `h` (hours), `m` (minutes) or `s` (seconds):
+`timer_interval` sets periodic evaluation cadence. Duration tokens use `d`, `h`, `m`, or `s`:
 
 ```yaml
 timer_interval: "90s"      # every 90 seconds
@@ -581,9 +563,9 @@ timer_interval: "3m 45s"   # tokens combine: every 3 minutes 45 seconds
 
 ### React-On-Change Gate (`trigger_on_change_only`)
 
-The optional `trigger_on_change_only: true` key turns the periodic timer into a pure safety net. When enabled, a scheduled (`timer`) tick is **skipped entirely** unless one of the automation's monitored subjects actually transitioned since its last evaluation. Monitored subjects are derived automatically from the `presence` (network) and `video_player` rule conditions -- including hosts referenced inside nested `any_of`/`all_of` condition groups -- the hosts those conditions watch. Event-driven runs (a real EventBus topic) and forced runs always proceed regardless, since they already represent an explicit reason to act.
+With `trigger_on_change_only: true`, timer ticks run only after a monitored presence/player transition since the last evaluation. Subjects are collected from `presence` and `video_player` conditions, including nested groups. Sensor changes and clock boundaries do not qualify. Event-driven and forced runs bypass this gate.
 
-This is what stops a "sticky" automation (one that opts into `override_human_interaction`) from re-firing its rules on every timer tick while its conditions still hold -- e.g., a home-theater instance whose player is stably offline used to re-assert its restore rule on every 15-minute tick. With the gate, the rule fires once on the transition that made its conditions true, then stays quiet until a monitored subject changes again. The gate fails open: if no subjects are monitored, or the state-history store is unavailable, the tick proceeds as usual.
+If no subjects are monitored or history is unavailable, timer ticks proceed normally.
 
 ```yaml
 timer_interval: "15m"          # safety-net cadence
@@ -592,7 +574,7 @@ trigger_on_change_only: true   # skip a tick unless a monitored player/presence 
 
 ### Silence Periods (`silence_between`)
 
-The optional `silence_between` key defines a time window during which an automation's `execute()` call is suppressed entirely. It applies per-automation file — each `.yaml` can have its own independent schedule.
+`silence_between` suppresses execution during a local time range, independently per automation:
 
 ```yaml
 silence_between: "HHmm-HHmm"   # e.g., "0500-0900" or overnight "2300-0600"
@@ -605,7 +587,7 @@ Times use compact four-digit **NATO-style** notation (hours then minutes, no sep
 | `"0500-0900"` | Suppress from 5:00 AM until 8:59 AM |
 | `"2300-0600"` | Suppress from 11:00 PM through midnight into 5:59 AM next day |
 
-Start time is **inclusive**, end time **exclusive**. Suppression blocks **all trigger sources**, not just timer ticks — unlike omitting `timer_interval`, which only disables the periodic timer while leaving event-driven triggers active. Invalid formats warn once and fall through to normal behavior (fail-open); if omitted, no silence period applies.
+Start is inclusive; end is exclusive. All trigger sources are suppressed unless forced. Missing or invalid values impose no silence; invalid formats warn once.
 
 ### Condition Operators
 
@@ -629,11 +611,11 @@ conditions:
     hostname2: playing                      # single value shorthand
 ```
 
-An absent status (host offline, player not answering, or not yet polled) enumerates to the single **`offline`** status -- each rule decides whether that is safe to act on by listing it (e.g. ambient-restore rules use `[paused, stopped, offline]`; ownership hand-back guards use `[offline]`), while playback requirements like `[playing]` stay inert. The raw cause behind `offline` is log-only and never a status transition of its own. `triggers_video: [<host>, ...]` subscribes the automation to status-change events so rules re-evaluate immediately.
+Missing, unreachable, and unpolled players map to `offline`. List that status explicitly to match it. Raw offline-cause changes do not emit status transitions. `triggers_video` subscribes to status-change events.
 
 ### Video Player Suppression (`video_player_suppression`)
 
-The optional top-level `video_player_suppression` key is an automation-wide **stand-down guard** with inverted semantics: instead of listing statuses a rule requires, it lists statuses that make the whole automation stand down. While **any** listed host (OR across hosts) reports one of its listed statuses, `execute()` suppresses the automation -- typically so it does not fight the [Home Theater Mode](automations/home-theater-mode.md) automation over the same devices while a movie runs:
+`video_player_suppression` suppresses the automation while any listed host has a listed status:
 
 ```yaml
 video_player_suppression:
@@ -643,13 +625,13 @@ video_player_suppression:
 - Statuses use the same vocabulary as the `video_player` condition; a host with no recorded status enumerates to `offline`, so it suppresses only when `offline` is listed.
 - Individual rules may opt out with `ignore_video_player_suppression: true`. While the guard is active, only exempt rules are evaluated; when no rule opts out, the automation returns early without even building context.
 - Unlike `silence_between`, the guard is **never bypassed by `/automation force`** -- a forced run must not create device fights.
-- The per-rule `video_player` condition remains the tool for rules that need to *distinguish* player states (e.g. Home Theater Mode's ownership hand-back); the suppression key only replaces the repetitive "not actively playing" allow-list guard duplicated across rules.
+- Use per-rule `video_player` conditions when individual rules need different statuses.
 
-With `restore_state_aware: true` (automation level), restore commands are filtered through pre-command snapshots so an automation only undoes changes it made itself; a rule can mark its targets as unconditional with `force_restore: true`. Full snapshot, ownership, and no-op suppression semantics are covered in [Rule Engine Restore & Ownership](architecture/rule-engine-restore-semantics.md).
+Restore uses explicit rules, not snapshots. `restore_state_aware` and `force_restore` are not implemented. See [Restore & Ownership](architecture/rule-engine-restore-semantics.md).
 
 ### Delegating to Other Automations (`invoke_automation`)
 
-A rule can hand control to one or more loaded automations instead of -- or alongside -- issuing device commands itself. This is how [Home Theater Mode](automations/home-theater-mode.md) hands a room back to its owners when a player goes offline: a single gone rule force-fires both the roller owner and the ambient-lights owner in one rule.
+`invoke_automation` runs other loaded automations, with or without device targets. Example: delegate to roller and ambient owners when a player goes offline.
 
 ```yaml
 rules:
@@ -668,45 +650,42 @@ Every form below resolves to the same set of `{name, force}` targets:
 - **Names object** -- `invoke_automation: { names: [NameA, NameB], force: true }`; one shared force flag applied to every listed name.
 
 - `name` must match an automation registered by the container exactly; unknown names log a warning and are skipped without aborting the run.
-- Invocations fire **after** a rule matches but **before** any device dispatch, so a rule whose only action is invoking still works even though it issues no device command of its own (the automation just needs at least one device in scope for `execute()` to proceed).
-- If several matched rules -- or several entries within one rule -- reference the same target within one run, that automation fires **once**; `force: true` is OR-merged across all those references.
-- A mutual `A -> B -> A` chain is capped at a fixed nesting depth (5) to break accidental cycles.
+- Invocations run after matching and before device dispatch. Rules may contain only invocations.
 
 ### Force Semantics and Once Markers
 
-`/automation force <n>` -- and any forced `invoke_automation` -- bypasses both the *checking* and the *writing/updating* of per-rule once-per-day markers as well as the silent-period guard. In other words a forced or delegated poke never consumes an automation's daily budget, so repeated forced runs stay safe. Human-interaction cooldowns are intentionally **not** bypassed either way, and the top-level `video_player_suppression` stand-down guard is also never bypassed by force.
+Forced runs bypass silence and daily-marker checks/writes. They retain human cooldowns and video suppression, and do not consume the daily budget.
 
 ### Daily Once Markers (`once`)
 
-Adding `once: true` to a rule makes it act **at most once per local calendar day -- per time window when the rule declares a `time_of_day` condition**. A rule covering several periods (e.g. `[evening, night]`) therefore gets one slot in EACH listed window: an early pre-dawn firing consumes only that window's budget and never blocks actual dusk, while re-firing inside the same window stays blocked. When its conditions first match and commands are dispatched -- or every targeted device is deferred due to recent human interaction -- the rule records a marker in Redis (`auto:<name>:once:<rule slug>`, suffixed with the active period as `<...>:<period>` for window-scoped rules) storing the local calendar day, and stands down for the rest of that window; humans then keep full control until the next window opens. If nothing happened at all (no dispatches, no deferrals), the rule keeps retrying on later ticks. Markers self-reset each day; storage failures fail open.
+`once: true` grants one action per local calendar day. With a `time_of_day` condition
+anywhere in the condition tree, the budget is per active period instead.
 
-**A `time_of_day` gate counts no matter where it sits in the conditions tree** -- at the top level, or nested inside `any_of:` / `all_of:`. A rule whose window list lives in an `any_of` branch gates on that window exactly like a top-level one, so it must get the same per-window budget; a rule whose gate is nested used to receive a single bare all-day marker, which let a 00:26 pre-dawn firing silently eat the 18:33 dusk firing. Only rules with **no** `time_of_day` gate anywhere are all-day-scoped (one slot per calendar day, resetting at local midnight). `/automation debug <name>` shows the condition summary, and the skip log names the window (`already acted today during evening`) when the rule is window-scoped.
+A marker is written after dispatch or human-cooldown deferral. Runs that do neither retry
+on later evaluations. Redis keys are `auto:<name>:once:<rule-slug>`, with `:<period>` for
+window-scoped rules. Markers store the local date; storage failures fail open.
+Forced runs neither check nor write markers. Debug output and skip logs show the window.
 
 ### Invoke-Only Rules (`forced_only`)
 
-Adding `forced_only: true` to a rule makes it participate **only in forced or delegated runs** -- `/automation force <n>` or another automation's forced `invoke_automation`. Natural timer/sensor ticks skip such rules entirely, even when their conditions hold and no once-marker is set. This is useful for rules that should only act when explicitly poked by another automation (e.g., a restore rule that answers a hand-off) without ever firing on their own. Because forced runs neither check nor write once-markers, an invoke-only rule can re-fire on every delegation.
+`forced_only: true` includes a rule only in `/automation force` or forced `invoke_automation` runs. Natural timer, sensor, and unforced manual runs skip it. Forced rules can run repeatedly without consuming daily markers.
 
 ### Re-Assert State (`reassert_state`)
 
-Adding `reassert_state: true` to a rule tells the engine to dispatch its commands with **no-op suppression bypassed**: each targeted device receives `{bypassNoOpSuppression: true}` and sends the command onto the wire even if its last *reported* state already equals the commanded value.
+`reassert_state: true` passes `{bypassNoOpSuppression: true}` for the rule's targets,
+sending commands even when cached state matches. Use it for restores that must reach
+stale devices. Forced runs already bypass suppression automatically.
 
-Why this exists: a device can execute an automation command and never report back (a plug relay flips off while still advertising `state:"ON"`). The cache then keeps describing the pre-command world, and a later restore command gets dropped as "already at target" -- freezing the stale value in place. That is exactly how the home-theater ambient lights failed to come back after the player went offline (see [ht-lights-bug](../ht-lights-bug.md)). Forcing the command guarantees a hand-off/restore reaches the radio.
-
-Scope and safety:
-
-- It is **per-rule** and applies only to devices targeted by *that* rule; it does not leak onto other rules' targets in the same run.
-- It covers **natural** runs too. Forced/delegated runs already bypass suppression automatically, so the flag matters for restore paths that fire on their own schedule -- e.g. the `paused`/`stopped` ambient-lighting restore in `home-office-video.yaml`, which is triggered naturally rather than forced.
-- It complements the automatic unverified-state bypass in `DeviceBase` (which fires whenever any prior automation command expired without confirmation); the explicit flag additionally guarantees a re-send even when no such marker is present.
-- Spam-safe: each flagged dispatch sends at most one extra publish per device, and healthy confirmed states are untouched unless the flag is set. `/automation debug <name>` and `/automation coverage <name>` render a `[reassert]` tag next to `[once/day]` / `[invoke-only]` so the flag stays visible.
-
+The flag applies only to contributing targets. It complements DeviceBase's automatic
+bypass after an unconfirmed command. Debug and coverage output display `[reassert]`.
 
 ### Rule Match History
 
-Every rule that matches is recorded by the automation that evaluated it: the last 25 matches per automation, newest first, each carrying the automation name, rule name, timestamp, what triggered the run (`timer`, a device topic, `manual`), the forced flag, whether the match led to an action, and the id of the automation call that fired it. Matches are published live on the EventBus (`automation:ruleMatched`, then `automation:ruleActed` when the run dispatches a command, defers a device to recent human interaction, or delegates). Recording is in-memory only -- a restart starts from an empty history, and a match is recorded even when it produced nothing. `/automation debug <name>` prints the same history for one automation.
+Each automation keeps its last 25 rule matches in memory: rule, time, trigger, forced flag, action result, and run id. Events are `automation:ruleMatched` and `automation:ruleActed`. Restart clears the history; `/automation debug <name>` displays it.
 
 ### Automation Call History
 
-A match history alone cannot answer "what did this automation do when it ran last?", because most runs deliberately do nothing. So every call is recorded too, at the level of the whole `execute()`: the last 10 calls per automation, newest first, each carrying a per-automation run id, timestamp, trigger, forced flag, the rules the call fired, an optional reason, and the call outcome:
+Each automation also retains its last 10 calls: run id, time, trigger, forced flag, matched rules, reason, and outcome:
 
 | Outcome | Meaning |
 |---------|---------|
@@ -717,7 +696,7 @@ A match history alone cannot answer "what did this automation do when it ran las
 | `skipped` | `trigger_on_change_only` gating found no monitored state change, so the scheduled tick was dropped |
 | `blocked` | The context build failed, so no rule could be evaluated |
 
-Finished calls are published on the EventBus (`automation:runCompleted`), which is what feeds the [UI rules window](ui/index.md); the per-rule `automation:ruleMatched` / `automation:ruleActed` events stay published and now carry the same `run` id, so a match folds into the call that fired it instead of standing alone. Forced calls are recorded like any other, with `forced` set, so a `/automation force` poke is visible in the same log.
+`automation:runCompleted` feeds the [rules window](ui/index.md). Rule-match events share the run id; forced calls are recorded normally.
 
 ### Season Conditions
 
@@ -779,7 +758,7 @@ Create `<Name>Interaction.js` in `etc/interaction/`, extending `InteractionBase`
 
 ## 6. Sequences (`etc/sequence/sequences.yaml`)
 
-Ordered device choreography with an optional loop driver. Each entry under `sequences:` is one sequence instance — a first-class being alongside devices and automations. Copy `etc/sequence/sequences.yaml.dist` to `sequences.yaml` and customize; a missing file or bad entries warn at startup but never crash it. Edits on disk take effect immediately through `/config reload` — engaged loops stop gracefully first, then the registry is rebuilt from the fresh file (an unreadable file keeps the current registry intact); no restart needed. Full design rationale lives in [doc/architecture/sequence-entity.md](./architecture/sequence-entity.md).
+Sequences send ordered commands with optional loops. Copy `etc/sequence/sequences.yaml.dist` to its active name. `/config reload` rebuilds entries and stops active loops gracefully; unreadable configuration retains the current registry. See [Sequence Entity](./architecture/sequence-entity.md).
 
 ### Entry schema
 
@@ -791,7 +770,7 @@ Ordered device choreography with an optional loop driver. Each entry under `sequ
 | `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay_ms?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
 | `loop` | no | Block making this a looping sequence: `enabled: true`, `cycle: once \| continuous`, `off_delay_ms: auto \| duration` (gap between end of ON run and start of OFF run), `on_delay_ms: auto \| duration` (gap between end of OFF run and next ON run; only fires on continuous cycles). `auto` = phase starts right when the previous one finishes |
 
-Exactly one of `devices:` (simple) or `on:` (rich) must be present per entry. Durations parse via `temporal.parseDurationMs()` (`"500ms"`, `"3m 45s"`, plain ms numbers); invalid values warn and degrade to absent/auto. Referenced devices that don't exist make their steps inert with a warning — remaining steps still execute.
+Use exactly one of `devices` or `on`. Invalid durations warn and use defaults. Missing devices warn and their steps are skipped.
 
 ### Simple form + pacing
 
@@ -872,9 +851,6 @@ formatting:                # Locale-specific number formatting
   decimal_separator: ","
   thousand_separator: " "
 
-periodic:
-  message: "What is the temperature and humidity outside?..."  # Periodic prompt sent at configured intervals
-
 ui:
   default_greeting: "Hello! How can I help?"
 ```
@@ -883,7 +859,7 @@ ui:
 
 ### TTS Bundle (`tts.yaml`)
 
-Defines voice model settings and audio effects per locale. Referenced by the TTS service when generating speech output. It also carries the optional `profiles:` registry of named framing sets (`intro` / `outro` / `intro_spacing`) that speakers reference by name through `tts_profile:`; profiles never carry `output_endpoint`. See [TTS Integration](installation/tts-integration.md).
+Defines the voice model, effects, and optional framing `profiles` registry. Profiles contain only `intro`, `outro`, and `intro_spacing`. See [TTS Integration](installation/tts-integration.md).
 
 ### Alerts Bundle (`alerts.yaml`)
 
@@ -906,7 +882,7 @@ Owned by the date helper (`src/lib/date.js`): localized day-of-week and month na
 
 ### Proverb List (`proverbs.txt`)
 
-A plain text file: **one proverb per line**, separated by a line feed. The weatherman automation draws a random line from it (via `src/lib/randomLine.js`, which streams the file instead of loading it) and interpolates it into the `{% proverb %}` token of the `ai_proverb` / `tts_proverb` keys in `weatherman.yaml` when `add_proverb: true` is set in `etc/automation/tts-weatherman.yaml`.
+With `add_proverb: true`, Weather Man reads a random line from `etc/i18n/{locale}/proverbs.txt` into `{% proverb %}`. The reader streams the file with bounded memory.
 
 Format rules, enforced by the reader:
 

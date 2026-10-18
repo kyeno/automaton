@@ -20,7 +20,7 @@
 
 > This is a TypeScript-free project. Stop JavaScript pollution.
 
-Automaton is a pure JavaScript Zigbee2MQTT sidekick that provides rule-based automations, device interactions triggered by Zigbee remotes, an AI-powered chat assistant with TTS support, and a terminal UI inspired by classic IRC clients. It connects to your existing Zigbee2MQTT installation via MQTT and uses Redis for state caching.
+Automaton adds YAML rules, remote-button interactions, AI chat, speech, and an IRC-style terminal UI to Zigbee2MQTT. It connects through MQTT and caches device state in Redis.
 
 ## ⚠️ Experimental Software
 
