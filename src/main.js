@@ -27,6 +27,7 @@ import SequenceContainer from './sequence/container/sequenceContainer.js'
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
 import ZigbeeDeviceOfflineMonitor from './monitor/zigbeeDeviceOfflineMonitor.js'
+import FrozenSensorMonitor from './monitor/frozenSensorMonitor.js'
 import NetworkDeviceOfflineMonitor from './monitor/networkDeviceOfflineMonitor.js'
 import AiBridgeMonitor from './monitor/aiBridgeMonitor.js'
 
@@ -221,6 +222,11 @@ async function gracefulDeath(reason, errorLevel = 0) {
             VideoPlayerMonitor.stop()
         }
 
+        if (initialized.has('FrozenSensorMonitor')) {
+            LoggerService.debug('Stopping FrozenSensorMonitor...', 'Main')
+            await FrozenSensorMonitor.stop()
+        }
+
         if (initialized.has('ZigbeeDeviceOfflineMonitor')) {
             LoggerService.debug('Stopping ZigbeeDeviceOfflineMonitor...', 'Main')
             ZigbeeDeviceOfflineMonitor.stop()
@@ -403,6 +409,8 @@ async function bootstrap() {
 
     //  AI Bridge -- optional MQTT channel feeding external prompts (web UI / STT backends)
     await initService('AiBridgeMonitor', () => AiBridgeMonitor.init(), true)
+    // Sensor health runs independently after its notification channels are initialized.
+    await initService('FrozenSensorMonitor', () => FrozenSensorMonitor.init(), true)
 
     const services = []
     if (AiAssistant.isAvailable()) services.push('AI')

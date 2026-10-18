@@ -30,6 +30,7 @@ healthy:
   tts: 'Wszystkie Twoje rośliny są dobrze nawodnione. Wilgotność podłoża wygląda świetnie -- nic nie wymaga podlania.'
   ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Ogłoś krótko i z przyjemnością, że wszystkie rośliny w ogrodzie mają odpowiednią wilgotność i dziś nikt nie potrzebuje wody.'
 
+# Legacy gardener watchdog wording; current sensor health uses frozen-sensors.yaml.
 stuck:
   tts: 'Uwaga: czujniki wilgotności gleby {% stuck_flowers %} podają dokładnie taki sam odczyt jak {% stuck_window %} temu. Czujnik zamrożony na jednej wartości to zwykle zawieszony czujnik, a nie idealnie stabilna gleba -- szturchnij go i sprawdź, czy liczba drgnęła.'
   ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Poinformuj, że te czujniki wilgotności gleby nie zmieniły odczytu od {% stuck_window %}: {% stuck_flowers %}. Wyjaśnij, że czujnik zamrożony na jednej wartości to zwykle zawieszony czujnik, a nie idealnie stabilna gleba, i zaproponuj szturchnięcie czujnika oraz sprawdzenie odczytu ręcznie. Nie twierdź, że gleba jest sucha, i nie zalecaj podlania.'

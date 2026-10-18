@@ -1,0 +1,5 @@
+# Independent frozen-sensor monitor language bundle. Copy to frozen-sensors.yaml to customize.
+# Tokens: frozen_sensors (names, properties, readings), frozen_window, frozen_count.
+frozen:
+  tts: 'Uwaga: od co najmniej {% frozen_window %} nie zaobserwowano zmiany odczytów tych czujników: {% frozen_sensors %}. Mogły się zawiesić. Sprawdź czujniki; sam stały odczyt nie dowodzi awarii.'
+  ai: 'Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Ostrzeż krótko, że te czujniki mogły się zawiesić, bo od co najmniej {% frozen_window %} nie zaobserwowano zmiany ich odczytów: {% frozen_sensors %}. Zaleć sprawdzenie czujników. Nie wnioskuj o potrzebie podlewania roślin ani nie twierdź, że awaria sprzętu jest pewna.'

@@ -100,6 +100,20 @@ export default {
         type: 'object',
         required: false,
         properties: {
+            frozen_sensors: {
+                type: 'object',
+                properties: {
+                    enabled: { type: 'boolean' },
+                    devices: { type: 'object' },
+                    unchanged_for: { type: ['number', 'string'] },
+                    reminder_interval: { type: ['number', 'string'] },
+                    silence_between: { type: ['string', 'null'] },
+                    speak: { type: 'boolean' },
+                    use_ai: { type: 'boolean' },
+                    tts_profile: { type: 'string' },
+                    tts_options: { type: 'object' }
+                }
+            },
             //  Zigbee devices leaving the mesh.
             device_offline_tts:         { type: 'boolean' },
             device_offline_cooldown_ms: { type: ['number', 'string'] },

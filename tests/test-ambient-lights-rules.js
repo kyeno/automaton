@@ -322,7 +322,12 @@ Object.getPrototypeOf(networkPresence).isOnline = async (name) => PRESENCE[name]
 console.log('\n── Ambient lights execution ──\n')
 
 // Bright morning -> OFF for every listed device (sockets + wall switch)
-let devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
+let devices
+{
+    const restoreMorning = stubDate(9 /* October */, 15, 9)
+    try { devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' }) }
+    finally { restoreMorning() }
+}
 for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
 
 // Settled dusk -> ON only for the two outlets; the wall switch stays untouched. The clock is
@@ -822,9 +827,12 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
 // Morning safety net: the cupboard lamp is in the bright-morning rule as well, so it cannot
 // survive into daylight even on a day that produced no post-midnight trigger at all.
 {
-    const devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
-    for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
-    expectPayload(devices, CUPBOARD_ID, 'OFF')
+    const restoreMorning = stubDate(9 /* October */, 15, 9)
+    try {
+        const devices = await runScenario({ illuminance: 50, timeOfDay: 'morning' })
+        for (const id of ALL_IDS) expectPayload(devices, id, 'OFF')
+        expectPayload(devices, CUPBOARD_ID, 'OFF')
+    } finally { restoreMorning() }
 }
 
 // Config shape (both shipped configs): lit at dusk, out after midnight, cleared at bright

@@ -1,6 +1,6 @@
 /**
- * Durable state-transition history service backed by local SQLite.
- * Single source of truth for timestamped state transitions of monitored entities.
+ * Durable state-transition history and runtime state backed by local SQLite.
+ * Stores monitored transitions plus current state that must outlive history retention.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  * @author Ratan M. Kyeno
@@ -121,6 +121,41 @@ class SDatabaseService {
     }
 
     //  -- Read -------------------------------------------------------------
+
+    /** Read durable runtime state, independent of transition-history retention.
+     * @param {string} key - Namespaced state key.
+     * @returns {Promise<unknown|null>} Decoded JSON value, or null when absent/unavailable. */
+    async getRuntimeState(key) {
+        if (!this.isAvailable()) return null
+        try {
+            const row = this.#db.prepare('SELECT value FROM runtime_state WHERE key = ?').get(String(key))
+            return row ? JSON.parse(row.value) : null
+        } catch (error) {
+            this.#log('warn', `Runtime state read failed for ${key}: ${error.message}`)
+            return null
+        }
+    }
+
+    /** Store JSON runtime state durably without generating a history row on each update.
+     * @param {string} key - Namespaced state key.
+     * @param {unknown} value - JSON-serializable value.
+     * @returns {Promise<boolean>} Whether the write succeeded. */
+    async setRuntimeState(key, value) {
+        if (!this.isAvailable()) {
+            this.#warnUnavailableOnce()
+            return false
+        }
+        try {
+            const json = JSON.stringify(value)
+            if (json === undefined) return false
+            this.#db.prepare('INSERT INTO runtime_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+                .run(String(key), json)
+            return true
+        } catch (error) {
+            this.#log('warn', `Runtime state write failed for ${key}: ${error.message}`)
+            return false
+        }
+    }
 
     /** Current stored label for a subject, or null when absent/unavailable.
      * @param {string} domain - e.g., 'videoPlayer' | 'network'.
@@ -260,6 +295,10 @@ class SDatabaseService {
                 source     TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_state_lookup ON state_events (domain, subject, id);
+            CREATE TABLE IF NOT EXISTS runtime_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         `)
     }
 

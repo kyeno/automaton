@@ -6,6 +6,7 @@
  * normalization, history filtering/ordering, and fail-open behaviour when the store
  * cannot be opened.
  *
+ * Also checks durable JSON runtime-state upserts and persistence across reopen.
  * Uses an isolated temp database so the real project store is never touched.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
@@ -93,9 +94,23 @@ async function main() {
         assert.ok(htpcOnly[i - 1].ts >= htpcOnly[i].ts, 'history ordered newest-first')
     }
 
+    // -- Durable runtime state is separate from retained transition history --
+    const runtimeKey = "automation:probe's frozen state"
+    const runtimeValue = { probes: [{ name: 'Soil Probe', moisture: 40 }], lastWarnAt: 123 }
+    assert.equal(await DatabaseService.getRuntimeState(runtimeKey), null, 'missing runtime state is null')
+    assert.equal(await DatabaseService.setRuntimeState(runtimeKey, runtimeValue), true, 'JSON state write succeeds')
+    assert.deepEqual(await DatabaseService.getRuntimeState(runtimeKey), runtimeValue, 'nested state round-trips')
+    await DatabaseService.close()
+    await DatabaseService.init(dbFile)
+    assert.deepEqual(await DatabaseService.getRuntimeState(runtimeKey), runtimeValue, 'runtime state survives reopening SQLite')
+    assert.equal(await DatabaseService.setRuntimeState(runtimeKey, { probes: [] }), true, 'state can be replaced with a cleared list')
+    assert.deepEqual(await DatabaseService.getRuntimeState(runtimeKey), { probes: [] }, 'upsert replaces previous value')
+
     // -- Close marks unavailable -----------------------------------------
     await DatabaseService.close()
     assert.equal(DatabaseService.isAvailable(), false, 'close() marks the store unavailable')
+    assert.equal(await DatabaseService.getRuntimeState(runtimeKey), null, 'runtime reads fail open after close')
+    assert.equal(await DatabaseService.setRuntimeState(runtimeKey, {}), false, 'runtime writes report unavailable storage')
     assert.equal(await DatabaseService.getCurrent('videoPlayer', 'htpc'), null, 'reads fail open after close')
     r = await DatabaseService.recordTransition({ domain: 'network', subject: 'tv', toState: 'online' })
     assert.equal(r.changed, false, 'writes are no-ops when unavailable')

@@ -120,7 +120,7 @@ ai:
 
 ### Email Section
 
-Email currently sends gardener stuck-probe warnings. Configure `SMTP_*` in `.env`, behavior under `email`, and recipients under top-level `house_owners`.
+Email sends grouped frozen-sensor detections from the [Frozen Sensor Monitor](monitors/frozen-sensors.md). Configure `SMTP_*` in `.env`, behavior under `email`, and recipients under top-level `house_owners`.
 
 ```yaml
 house_owners:                     # who gets the mail
@@ -133,7 +133,7 @@ email:
   subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
   cooldown_ms: "60m"              # per-kind silence after one notification; 0 = mail every event
   notify:                        # per-kind switches; a kind set to false never mails
-    gardener_stuck: true
+    sensor_frozen: true
 ```
 
 - **`house_owners`** — list of `{ name, email }` (a bare address string is also accepted). Entries without a well-formed address are dropped; a missing name falls back to the local part of the address.
@@ -221,6 +221,11 @@ ui:
 `ui.tts_profile` selects a locale TTS framing profile for typed speech; empty means no jingle.
 
 ### Alerts Section
+
+Independent freeze detection is configured under `alerts.frozen_sensors`. See
+[Frozen Sensor Monitor](monitors/frozen-sensors.md) for the device map, 24-hour
+unchanged threshold, 15-minute grouped reminders, initial email and quiet hours.
+
 
 Spoken warnings for notable system events -- Zigbee devices leaving the mesh and mission-critical LAN hosts dropping offline. Every key is read per event, so `/config reload` applies changes without a restart.
 
@@ -823,6 +828,7 @@ Language bundles live in `etc/i18n/{locale}/` where `{locale}` matches BCP 47 ta
 | `ai.yaml` | LLM system prompt, tool descriptions, device roles, UI strings | `.yaml` + `.yaml.dist` |
 | `tts.yaml` | Voice model and audio effect settings per locale, plus the named `profiles:` framing registry | `.yaml` + `.yaml.dist` |
 | `alerts.yaml` | Spoken sentences for system events (offline alerts) | `.yaml` + `.yaml.dist` |
+| `frozen-sensors.yaml` | Independent frozen-sensor warning and AI instruction | `.yaml.dist` (optional `.yaml` override) |
 | `weatherman.yaml` | Weather announcement sentence templates | `.yaml` + `.yaml.dist` |
 | `date.yaml` | Day/month names, period words, duration units (date helper) | system file, no template |
 | `proverbs.txt.dist` | Starter list to copy to `proverbs.txt`; one proverb per line, drawn at random by the weatherman proverb segment | `.dist` template |

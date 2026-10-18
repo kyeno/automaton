@@ -20,8 +20,15 @@
 # Placeholder, ktorego nadawca nie zna, jest z maila usuwany, nigdy w nim nie zostaje.
 # Kopi szablonu do laczienia: email.yaml.dist
 
+# Legacy gardener notification kind; current monitor sends sensor_frozen.
 gardener_stuck:
   subject: 'Zawieszony czujnik gleby: {% stuck_flowers %}'
+  greeting: 'Czesc, {% owner_name %},'
+  signature: "-- \n{% bot_name %}, automatyczna obsluga domu"
+  footer: 'Wygenerowano {% date %} o {% time %} przez automat na {% hostname %}.'
+
+sensor_frozen:
+  subject: 'Zawieszony czujnik: {% frozen_sensors %}'
   greeting: 'Czesc, {% owner_name %},'
   signature: "-- \n{% bot_name %}, automatyczna obsluga domu"
   footer: 'Wygenerowano {% date %} o {% time %} przez automat na {% hostname %}.'

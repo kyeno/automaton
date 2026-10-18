@@ -7,7 +7,7 @@ The service owns four things:
 - **The SMTP transport**, built from the `SMTP_*` secrets in `.env`.
 - **The recipient list**, read from `house_owners:` in `etc/automaton.yaml`.
 - **The templates**, loaded from `etc/i18n/<locale>/email.yaml` in the active locale.
-- **A per-kind cooldown**, so one incident produces one round of mail, not a copy per report.
+- **A per-kind cooldown** limiting repeated requests of the same notification kind. The frozen-sensor monitor separately tracks each incident so voice reminders never request more mail.
 
 ## How a Notification Becomes a Mail
 
@@ -15,10 +15,10 @@ Call `EmailService.notify()` with a kind, message, and optional tokens/meta:
 
 ```js
 await EmailService.notify({
-    kind: 'gardener_stuck',
+    kind: 'sensor_frozen',
     message: 'Soil probe Gerbera has not moved in 24h.',
-    tokens: { stuck_flowers: 'Gerbera (40%)' },
-    meta: { stuck_count: 1 },
+    tokens: { frozen_sensors: 'Gerbera (40%)' },
+    meta: { frozen_count: 1 },
 })
 ```
 
@@ -61,7 +61,7 @@ email:
   subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
   cooldown_ms: "60m"              # per-kind silence after one notification; 0 = mail every event
   notify:                        # per-kind switches; a kind set to false never mails
-    gardener_stuck: true
+    sensor_frozen: true
 ```
 
 - **`house_owners`** — a list of `{ name, email }` (a bare address string is also accepted). Entries without a well-formed address are dropped, not mangled. A missing name falls back to the local part of the address.
@@ -104,7 +104,7 @@ Any component can request a mail without importing the service by emitting on th
 | Config schema | `src/validators/main.js` (`email`, `house_owners`) |
 | Templates | `etc/i18n/<locale>/email.yaml` (+ `.dist`) |
 | Relay secrets | `.env` (`SMTP_*`) |
-| Tests | `tests/test-email-service.js`, `tests/test-tts-gardener.js` |
+| Tests | `tests/test-email-service.js`, `tests/test-frozen-sensor-monitor.js` |
 
 ---
 

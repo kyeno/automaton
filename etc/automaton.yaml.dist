@@ -48,11 +48,25 @@ email:
   subject_prefix: 'Automaton'   # prepended to every subject: "Automaton: <subject>"
   cooldown_ms: "60m"            # per-kind silence after one notification; 0 = mail every event
   notify:                       # per-kind switches; a kind set to false never mails
-    gardener_stuck: true
+    sensor_frozen: true
 
 # --- ALERTS: spoken notifications for notable system events
 # Reference: doc/monitors/offline-alerts.md
 alerts:
+  # Independent sensor-health monitor; see doc/monitors/frozen-sensors.md.
+  frozen_sensors:
+    enabled: true
+    unchanged_for: "24h"        # time since the last observed numeric change
+    reminder_interval: "15m"   # grouped speech reminders; independent 1m sweep
+    silence_between: null      # own quiet hours (HHmm-HHmm); null = speak at any hour
+    speak: true
+    use_ai: true               # AI -> TTS, plain TTS fallback
+    tts_profile: ''
+    devices: {}                # opt in with exact Zigbee2MQTT friendly names
+    # devices:
+    #   Flower Sensor One: { property: soil_moisture, unit: '%' }
+    #   Flower Sensor Two: { property: soil_moisture, unit: '%' }
+
   # --- Zigbee devices leaving the mesh: spoken warning
   zigbee_offline_tts: true
   # Per-device re-warning cooldown ("90s","15m", or ms); 0 = warn on every leave event

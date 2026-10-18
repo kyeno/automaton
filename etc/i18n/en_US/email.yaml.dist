@@ -20,8 +20,15 @@
 # A placeholder the sender cannot answer is removed from the mail, never left in it.
 # Template copy ships as email.yaml.dist.
 
+# Legacy gardener notification kind; current monitor sends sensor_frozen.
 gardener_stuck:
   subject: 'Soil probe stuck: {% stuck_flowers %}'
+  greeting: 'Hello, {% owner_name %},'
+  signature: "-- \n{% bot_name %}, automaton house automation"
+  footer: 'Generated on {% date %} at {% time %} by the automaton running on {% hostname %}.'
+
+sensor_frozen:
+  subject: 'Frozen sensor warning: {% frozen_sensors %}'
   greeting: 'Hello, {% owner_name %},'
   signature: "-- \n{% bot_name %}, automaton house automation"
   footer: 'Generated on {% date %} at {% time %} by the automaton running on {% hostname %}.'

@@ -285,7 +285,7 @@ class ConfigBase {
 
             //  Type checking (a schema may list several allowed types as an array)
             if (def.type && actualValue !== undefined) {
-                const actualType = Array.isArray(actualValue) ? 'array' : typeof actualValue
+                const actualType = actualValue === null ? 'null' : Array.isArray(actualValue) ? 'array' : typeof actualValue
                 const allowedTypes = Array.isArray(def.type) ? def.type : [def.type]
                 if (!allowedTypes.includes(actualType)) {
                     errors.push(

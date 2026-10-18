@@ -45,6 +45,7 @@ Included automations demonstrating rule-engine patterns.
 Singletons watching the world outside Zigbee.
 
 - [Monitors](monitors/index.md) — overview and navigation
+- [Frozen Sensor Monitor](monitors/frozen-sensors.md) — persistent freeze detection, grouped email and recurring speech
 - [Network Presence](monitors/network-presence.md) — arping-based host presence with `presence` conditions
 - [Video Player](monitors/video-player.md) — VLC / MPC-HC status polling with `video_player` conditions
 - [Offline Alerts](monitors/offline-alerts.md) — spoken warnings for Zigbee devices and mission-critical hosts going offline

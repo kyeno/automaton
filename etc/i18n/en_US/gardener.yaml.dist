@@ -32,6 +32,7 @@ healthy:
   tts: 'All your plants are well hydrated. Soil moisture looks good across the board -- no watering needed right now.'
   ai: 'Do not use tools -- base your answer only on the provided information. Give a brief, pleasant all-clear that every plant in the garden is properly hydrated and nothing needs watering today.'
 
+# Legacy gardener watchdog wording; current sensor health uses frozen-sensors.yaml.
 stuck:
   tts: 'Heads up: the soil probes on {% stuck_flowers %} report exactly the same reading as they did {% stuck_window %} ago. A probe frozen on one value is usually the probe being stuck rather than the soil being perfectly stable -- give it a poke and check whether the number moves.'
   ai: 'Do not use tools -- base your answer only on the provided information. Report that these soil moisture probes have not changed their reading at all in the last {% stuck_window %}: {% stuck_flowers %}. Explain that a probe frozen on a single value is usually the probe being stuck rather than the soil being perfectly stable, and suggest poking the probe and checking the reading by hand. Do not claim the soil is dry and do not recommend watering.'

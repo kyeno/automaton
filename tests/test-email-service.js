@@ -105,7 +105,7 @@ async function useWorkingChannel(extra = {}) {
         'email.from': 'automaton@test.local',
         'email.subject_prefix': 'Automaton',
         'email.cooldown_ms': '60m',
-        'email.notify': { gardener_stuck: true },
+        'email.notify': { sensor_frozen: true },
         'house_owners': [
             { name: 'Anna', email: 'anna@test.local' },
             { name: 'Jan', email: 'jan@test.local' },
@@ -124,7 +124,7 @@ function resetSends() {
     relayExplodes = false
 }
 
-const STUCK_TOKENS = { stuck_flowers: 'Gerbera (40%)', stuck_window: '24h' }
+const STUCK_TOKENS = { frozen_sensors: 'Gerbera (40%)', frozen_window: '24h' }
 const STUCK_MESSAGE = 'Soil probe Gerbera has not moved in 24h.'
 
 try {
@@ -136,7 +136,7 @@ try {
     await EmailService.init()
     assert(EmailService.isReady() === true && EmailService.isEnabled() === false,
         'init() without a relay marks the service ready and disabled')
-    assert(await EmailService.notify({ kind: 'gardener_stuck', message: STUCK_MESSAGE }) === false,
+    assert(await EmailService.notify({ kind: 'sensor_frozen', message: STUCK_MESSAGE }) === false,
         'a disabled channel accepts no notification')
     assert(EmailService.send({ to: 'anna@test.local', subject: 'x', text: 'y' }) === false,
         'a disabled channel queues no message')
@@ -176,33 +176,33 @@ try {
     resetSends()
     assert(await EmailService.notify({ message: STUCK_MESSAGE }) === false, 'notify() without a kind sends nothing')
     assert(sent.length === 0, 'a kindless request queues no mail')
-    assert(await EmailService.notify({ kind: 'gardener_stuck', message: '   ' }) === false,
+    assert(await EmailService.notify({ kind: 'sensor_frozen', message: '   ' }) === false,
         'notify() with an empty body sends nothing')
     assert(await EmailService.notify({ kind: 'unknown_kind', message: STUCK_MESSAGE }) === true,
         'a kind with no switch set is allowed to mail')
 
-    await useWorkingChannel({ 'email.notify': { gardener_stuck: false } })
+    await useWorkingChannel({ 'email.notify': { sensor_frozen: false } })
     resetSends()
-    assert(await EmailService.notify({ kind: 'gardener_stuck', message: STUCK_MESSAGE }) === false,
+    assert(await EmailService.notify({ kind: 'sensor_frozen', message: STUCK_MESSAGE }) === false,
         'a kind switched off in email.notify never mails')
     assert(sent.length === 0, 'the switched-off kind queued nothing')
 
     await useWorkingChannel({ 'house_owners': [] })
     resetSends()
-    assert(await EmailService.notify({ kind: 'gardener_stuck', message: STUCK_MESSAGE }) === false,
+    assert(await EmailService.notify({ kind: 'sensor_frozen', message: STUCK_MESSAGE }) === false,
         'an empty owners list notifies nobody')
 
     // -----------------------------------------------------------------------
     console.log('\n-- template rendering --')
     const bundle = yamlParse(readFileSync(resolve(ROOT, 'etc', 'i18n', 'pl_PL', 'email.yaml'), 'utf8'))
-    const expectedSubject = bundle.gardener_stuck.subject.replace('{% stuck_flowers %}', STUCK_TOKENS.stuck_flowers)
+    const expectedSubject = bundle.sensor_frozen.subject.replace('{% frozen_sensors %}', STUCK_TOKENS.frozen_sensors)
     await useWorkingChannel()
     resetSends()
     const accepted = await EmailService.notify({
-        kind: 'gardener_stuck',
+        kind: 'sensor_frozen',
         tokens: STUCK_TOKENS,
         message: STUCK_MESSAGE,
-        meta: { stuck_count: '1' },
+        meta: { frozen_count: '1' },
     })
     await EmailService.flush()
     assert(accepted === true, 'the stuck notification is accepted')
@@ -220,7 +220,7 @@ try {
 
     await useWorkingChannel({ 'email.subject_prefix': '', 'email.cooldown_ms': 0 })
     resetSends()
-    await EmailService.notify({ kind: 'gardener_stuck', tokens: STUCK_TOKENS, message: STUCK_MESSAGE })
+    await EmailService.notify({ kind: 'sensor_frozen', tokens: STUCK_TOKENS, message: STUCK_MESSAGE })
     await EmailService.flush()
     assert(sent[0].subject === expectedSubject, 'an empty email.subject_prefix drops the prefix from the subject')
 

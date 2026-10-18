@@ -8,10 +8,7 @@
 #   scheduled -- a full status report at each announce_times slot, once per day.
 # Manual runs ("/automation run|force TtsGardenerAutomation") always speak immediately.
 #
-# Stuck-probe watchdog, running alongside both: every stuck_check_interval it compares each
-# probe's moisture with the previous snapshot and flags an unchanged reading as a stuck probe,
-# naming it in a warning. Snapshots are taken on every run; only the warning is gated by
-# silence_between, stuck_warn_cooldown and stuck_speak. State lives in Redis.
+# Sensor health is monitored independently by alerts.frozen_sensors in automaton.yaml.
 #
 # Output routing: use_ai false -> speak the band's tts line directly; use_ai true -> send the
 # band's ai instruction to the model (empty reply / error / AI down -> warn log + tts line).
@@ -21,8 +18,6 @@
 #   {% affected_flowers %} -- every plant below the healthy band as "Name (NN%)", driest first
 #   {% driest_flower %}    -- the single driest plant
 #   {% driest_moisture %}  -- that plant's moisture as a percentage ("21%")
-#   {% stuck_flowers %}    -- probes unchanged since the previous snapshot, "Name (NN%)"
-#   {% stuck_window %}     -- the comparison window in the active locale ("24 hours")
 # Reference: doc/automations/gardener.md
 
 triggers_zigbee: [Flower Sensor One, Flower Sensor Two]   # replace with your soil sensor names
@@ -43,9 +38,6 @@ announce_times: ["0830", "1900"] # local HHmm slots for the twice-daily status r
 timer_interval: "1m"            # tick driving announce_times scheduling -- keep at minute granularity
 silence_between: "2300-0600"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
 event_cooldown: "5m"            # minimum gap between two event-driven reports, garden-wide ("5m", "300s", plain ms); 0 disables
-stuck_check_interval: "24h"     # gap between two soil-moisture snapshots -- the stuck-probe comparison cycle ("24h", "12h", "30m", plain ms); 0 disables the watchdog
-stuck_warn_cooldown: "12h"      # minimum gap between two spoken stuck-probe warnings ("12h", "30m", plain ms); 0 speaks on every detection
-stuck_speak: true               # false keeps the stuck-probe warning in the logs only
 
 rules:                          # most severe first -- first matching band wins per plant
                                 # reactive: true  -> a drop into this band may speak on its own

@@ -1,0 +1,5 @@
+# Independent frozen-sensor monitor language bundle. Copy to frozen-sensors.yaml to customize.
+# Tokens: frozen_sensors (names, properties, readings), frozen_window, frozen_count.
+frozen:
+  tts: 'Attention: these sensors have had no observed change for at least {% frozen_window %}: {% frozen_sensors %}. They may be frozen. Check the sensors; a stable reading alone does not prove a fault.'
+  ai: 'Do not use tools -- base your answer only on the provided information. Briefly warn that these sensors may be frozen, with no observed change for at least {% frozen_window %}: {% frozen_sensors %}. Suggest checking the sensors. Do not infer that plants need watering or claim a confirmed hardware fault.'

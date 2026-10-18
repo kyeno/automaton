@@ -152,6 +152,7 @@ const defaultTestScripts = [
   'test-rule-react-on-change.js',
   'test-tts-greeter.js',
   'test-tts-gardener.js',
+  'test-frozen-sensor-monitor.js',
   'test-tts-twilight.js',
   'test-email-service.js',
   'test-service-instantiation.js',
