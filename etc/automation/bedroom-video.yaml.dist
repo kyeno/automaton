@@ -25,6 +25,7 @@ rules:
       video_player: { laptop: [playing, paused, stopped] }
     targets:
       Bedroom_Roller_Left: CLOSE
+      Bedroom_Roller_Right: CLOSE
 
   - name: 'Bedroom: player gone - hand rollers back to their owner'
     conditions:
@@ -48,4 +49,4 @@ rules:
       presence: { laptop: true }
       video_player: { laptop: [playing] }
     targets:
-      Bedroom_Plug: OFF
+      Bedroom_Outlet: OFF

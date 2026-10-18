@@ -25,23 +25,23 @@
 #   {% stuck_window %}     -- the comparison window in the active locale ("24 hours")
 # Reference: doc/automations/gardener.md
 
-triggers_zigbee: [Kuchnia Kwiatek Babci, Kuchnia Kwiatek Biale Drzewko, Kuchnia Kwiatek Pomaranczowy, Sypialnia Kwiatek Bonsai, Sypialnia Kwiatek Cytrynka, Sypialnia Kwiatek Drzewo]   # soil sensors to watch (must exist under sensor: in etc/device/zigbee.yaml)
+triggers_zigbee: [Flower Sensor One, Flower Sensor Two]   # replace with your soil sensor names
 
 moisture_property: 'soil_moisture'    # state key carrying the percent value on those devices (z2m exposure-dependent)
 
-use_ai: true                     # true -> route announcements through AI -> TTS; false -> direct TTS
+use_ai: false                     # true -> route announcements through AI -> TTS; false -> direct TTS
 
 # Spoken framing for every report, on both output paths. The profile names an entry of the
 # active locale's tts.yaml `profiles:`; explicit tts_options entries win field by field.
-tts_profile: 'garden'            # profile from the active locale's tts.yaml
+tts_profile: ''                 # empty = plain speech; optionally name a locale TTS profile
 #tts_options:
 #  intro: 'intro-chime.wav'      # Wave filename played before the report
 #  outro: null                   # Wave filename played after the report
 #  intro_spacing: -1.5           # Seconds between intro end and speech start; negative = overlap
 
-announce_times: ["1045", "1430", "1830", "2330"] # local HHmm slots for the twice-daily status report (each fires once per day)
+announce_times: ["0830", "1900"] # local HHmm slots for the twice-daily status report (each fires once per day)
 timer_interval: "1m"            # tick driving announce_times scheduling -- keep at minute granularity
-silence_between: "0230-1030"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
+silence_between: "2300-0600"    # suppress execution between these local times ("HHmm-HHmm"); set null to disable
 event_cooldown: "5m"            # minimum gap between two event-driven reports, garden-wide ("5m", "300s", plain ms); 0 disables
 stuck_check_interval: "24h"     # gap between two soil-moisture snapshots -- the stuck-probe comparison cycle ("24h", "12h", "30m", plain ms); 0 disables the watchdog
 stuck_warn_cooldown: "12h"      # minimum gap between two spoken stuck-probe warnings ("12h", "30m", plain ms); 0 speaks on every detection

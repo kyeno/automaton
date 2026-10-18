@@ -1,5 +1,5 @@
 /**
- * Home Theater Automation -- Bedroom (Sypialnia) instance.
+ * Home Theater Automation -- Bedroom instance.
  * Per-room deployment of the shared home-theater pattern for the bedroom:
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).

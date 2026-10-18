@@ -198,66 +198,66 @@ try {
     // -----------------------------------------------------------------------
     console.log('\n── unknown history fails open with a full welcome ──')
     greeter.config = { ...shippedConfig, use_ai: false }
-    await seedHistory('meerkat', [{ state: 'online', atMs: NOW }])   // single row -> no prior state
+    await seedHistory('hostname2', [{ state: 'online', atMs: NOW }])   // single row -> no prior state
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
+    await greeter.execute({ trigger: 'network:hostname2' })
     assert(seen.tts.length === 1, 'unknown absence still produces exactly one greeting')
-    assert(seen.tts[0]?.text === expectedText('welcome', 'tts', 'meerkat'), 'unknown absence speaks the welcome alone -- no note without duration data')
+    assert(seen.tts[0]?.text === expectedText('welcome', 'tts', 'hostname2'), 'unknown absence speaks the welcome alone -- no note without duration data')
     assert(seen.periodic.length === 0 && lastPrompt == null, 'no AI involvement on direct-TTS path')
 
     // -----------------------------------------------------------------------
     console.log('\n── window bands pick the right bucket (use_ai:false) ──')
     greeter.config = { ...shippedConfig, use_ai: false }
 
-    await seedHistory('kyeno', [
+    await seedHistory('hostname1', [
         { state: 'offline', atMs: NOW - 8 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:kyeno' })
+    await greeter.execute({ trigger: 'network:hostname1' })
     assert(seen.tts.length === 1, 'absence of 8h speaks once')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedNote(8 * HOUR, 'tts', 'kyeno')}`,
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'hostname1')} ${expectedNote(8 * HOUR, 'tts', 'hostname1')}`,
         '8h absence -> welcome bucket + relative last-seen note ("... ago")'
     )
 
-    await seedHistory('meerkat', [
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - 15 * MIN },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
+    await greeter.execute({ trigger: 'network:hostname2' })
     assert(seen.tts.length === 1, 'short return (15m) speaks once')
     assert(
-        seen.tts[0]?.text === `${expectedText('forgot', 'tts', 'meerkat')} ${expectedNote(15 * MIN, 'tts', 'meerkat')}`,
+        seen.tts[0]?.text === `${expectedText('forgot', 'tts', 'hostname2')} ${expectedNote(15 * MIN, 'tts', 'hostname2')}`,
         '15m absence -> forgot bucket ("did you forget something?") + relative last-seen note'
     )
 
-    await seedHistory('kyeno', [
+    await seedHistory('hostname1', [
         { state: 'offline', atMs: NOW - 90_000 },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    const rebootDecision = await greeter.greetDecisionFor('kyeno')
+    const rebootDecision = await greeter.greetDecisionFor('hostname1')
     assert(rebootDecision.action === 'speak' && rebootDecision.bucket === 'reboot', '90s absence classifies as the reboot band')
-    await greeter.execute({ trigger: 'network:kyeno' })
+    await greeter.execute({ trigger: 'network:hostname1' })
     assert(seen.tts.length === 1, 'quick blip (90s) speaks once')
     assert(
-        seen.tts[0]?.text === `${expectedText('reboot', 'tts', 'kyeno')} ${expectedNote(90_000, 'tts', 'kyeno')}`,
+        seen.tts[0]?.text === `${expectedText('reboot', 'tts', 'hostname1')} ${expectedNote(90_000, 'tts', 'hostname1')}`,
         '90s absence -> reboot bucket with genitive name + relative last-seen note'
     )
 
     // The old silent gap (30m < x < 4h): shipped bands are contiguous now, so a 2h return
     // is greeted -- welcome bucket plus the relative last-seen note.
-    await seedHistory('meerkat', [
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - 2 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
+    await greeter.execute({ trigger: 'network:hostname2' })
     assert(seen.tts.length === 1, '2h absence speaks once (contiguous bands -- no more silent gap)')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(2 * HOUR, 'tts', 'meerkat')}`,
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'hostname2')} ${expectedNote(2 * HOUR, 'tts', 'hostname2')}`,
         '2h absence -> welcome bucket + relative last-seen note'
     )
     assert(seen.system.length === 0 && seen.periodic.length === 0, 'case emits nothing to UI either')
@@ -267,73 +267,73 @@ try {
     greeter.config = { ...shippedConfig, use_ai: false }
 
     // Above the 24h boundary: full calendar date PLUS clock time of the offline moment.
-    await seedHistory('kyeno', [
+    await seedHistory('hostname1', [
         { state: 'offline', atMs: NOW - 30 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:kyeno' })
-    const expectedLongNote = expectedNote(30 * HOUR, 'tts', 'kyeno')
+    await greeter.execute({ trigger: 'network:hostname1' })
+    const expectedLongNote = expectedNote(30 * HOUR, 'tts', 'hostname1')
     assert(expectedLongNote !== '', 'long-variant note resolves in active bundle')
     assert(/\d{2}:\d{2}/.test(expectedLongNote), 'long note carries a zero-padded HH:MM clock time alongside the date')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedLongNote}`,
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'hostname1')} ${expectedLongNote}`,
         '30h absence -> welcome bucket + last-online-on-date-and-time note'
     )
 
     // Boundary itself (exactly 24h): already absolute -- date + time, not a duration phrase.
-    await seedHistory('meerkat', [
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - NOTE_LONG_MIN_MS },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
-    const boundaryNote = expectedNote(NOTE_LONG_MIN_MS, 'tts', 'meerkat')
+    await greeter.execute({ trigger: 'network:hostname2' })
+    const boundaryNote = expectedNote(NOTE_LONG_MIN_MS, 'tts', 'hostname2')
     assert(boundaryNote !== '' && /\d{2}:\d{2}/.test(boundaryNote), 'absence of exactly 24h renders the absolute date+time note')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'meerkat')} ${boundaryNote}`,
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'hostname2')} ${boundaryNote}`,
         'absence of exactly 24h lands in the long tier, not the relative one'
     )
 
     // Just below the boundary: still relative ("... ago"), no clock time or calendar date.
-    await seedHistory('kyeno', [
+    await seedHistory('hostname1', [
         { state: 'offline', atMs: NOW - 23 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:kyeno' })
-    const recentDefaultNote = expectedNote(23 * HOUR, 'tts', 'kyeno')
+    await greeter.execute({ trigger: 'network:hostname1' })
+    const recentDefaultNote = expectedNote(23 * HOUR, 'tts', 'hostname1')
     assert(recentDefaultNote !== '', 'just-below-boundary absence resolves the relative note')
     assert(!/\d{2}:\d{2}/.test(recentDefaultNote), 'relative note carries a duration phrase, not an HH:MM clock time')
     assert(
-        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${recentDefaultNote}`,
+        seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'hostname1')} ${recentDefaultNote}`,
         '23h absence renders "last seen online X ago", not a calendar date'
     )
 
     // -----------------------------------------------------------------------
     console.log('\n── going offline is observed but never greeted ──')
-    await seedHistory('kyeno', [{ state: 'offline', atMs: Date.now() }])   // kyeno ends OFFLINE now
-    const offlineDecision = await greeter.greetDecisionFor('kyeno')
+    await seedHistory('hostname1', [{ state: 'offline', atMs: Date.now() }])   // hostname1 ends OFFLINE now
+    const offlineDecision = await greeter.greetDecisionFor('hostname1')
     assert(offlineDecision.action === 'skip', 'offline host decision is skip')
     assert(/not online/.test(offlineDecision.reason), 'skip reason names the actual state')
     resetSeen()
-    await greeter.execute({ trigger: 'network:kyeno' })
+    await greeter.execute({ trigger: 'network:hostname1' })
     assert(seen.tts.length === 0, 'offline event produces no speech')
 
     // -----------------------------------------------------------------------
     console.log('\n── use_ai:true happy path speaks through the model only ──')
     greeter.config = { ...shippedConfig, use_ai: true }
-    setAi({ available: true, reply: 'Witaj, Edytko!' })
-    await seedHistory('meerkat', [
+    setAi({ available: true, reply: 'Witaj, Alice!' })
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - 8 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
-    const expectedPrompt = `${expectedText('welcome', 'ai', 'meerkat')} ${expectedNote(8 * HOUR, 'ai')}`
+    await greeter.execute({ trigger: 'network:hostname2' })
+    const expectedPrompt = `${expectedText('welcome', 'ai', 'hostname2')} ${expectedNote(8 * HOUR, 'ai')}`
     assert(lastPrompt === expectedPrompt, 'AI receives the ai.<host> instruction + absence-note clause')
     assert(seen.system[0]?.text === lastPrompt, 'UI system echo matches exactly what went to the model')
-    assert(seen.periodic.length === 1 && seen.periodic[0].text === 'Witaj, Edytko!', "model's reply surfaced as periodic response")
+    assert(seen.periodic.length === 1 && seen.periodic[0].text === 'Witaj, Alice!', "model's reply surfaced as periodic response")
     assert(seen.tts.length === 0, 'no double-speak when AI handled it (its own tts:speak is fired by AiAssistant)')
 
     // -----------------------------------------------------------------------
@@ -341,33 +341,33 @@ try {
     greeter.config = { ...shippedConfig, use_ai: true }
 
     setAi({ available: false })   // AI down entirely
-    await seedHistory('meerkat', [
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - 15 * MIN },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
-    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('forgot', 'tts', 'meerkat')} ${expectedNote(15 * MIN, 'tts', 'meerkat')}`, 'AI unavailable -> plain TTS sentence + relative last-seen note spoken once')
+    await greeter.execute({ trigger: 'network:hostname2' })
+    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('forgot', 'tts', 'hostname2')} ${expectedNote(15 * MIN, 'tts', 'hostname2')}`, 'AI unavailable -> plain TTS sentence + relative last-seen note spoken once')
     assert(seen.system.length === 0 && seen.periodic.length === 0, 'AI-down fallback posts no UI notice (warn log only)')
 
     setAi({ available: true, failWith: 'provider exploded' })   // provider throws mid-flight
-    await seedHistory('meerkat', [
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - 8 * HOUR },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
-    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('welcome', 'tts', 'meerkat')} ${expectedNote(8 * HOUR, 'tts', 'meerkat')}`, 'thrown AI error -> plain TTS sentence + relative last-seen note spoken once')
+    await greeter.execute({ trigger: 'network:hostname2' })
+    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('welcome', 'tts', 'hostname2')} ${expectedNote(8 * HOUR, 'tts', 'hostname2')}`, 'thrown AI error -> plain TTS sentence + relative last-seen note spoken once')
     assert(seen.periodic.length === 0, 'thrown AI error surfaces no periodic response')
 
     setAi({ available: true, reply: '' })   // model answers with nothing usable
-    await seedHistory('meerkat', [
+    await seedHistory('hostname2', [
         { state: 'offline', atMs: NOW - 90_000 },
         { state: 'online', atMs: NOW }
     ])
     resetSeen()
-    await greeter.execute({ trigger: 'network:meerkat' })
-    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('reboot', 'tts', 'meerkat')} ${expectedNote(90_000, 'tts', 'meerkat')}`, 'empty AI reply -> plain TTS sentence + relative last-seen note spoken once')
+    await greeter.execute({ trigger: 'network:hostname2' })
+    assert(seen.tts.length === 1 && seen.tts[0].text === `${expectedText('reboot', 'tts', 'hostname2')} ${expectedNote(90_000, 'tts', 'hostname2')}`, 'empty AI reply -> plain TTS sentence + relative last-seen note spoken once')
     assert(seen.system.length >= 1, 'the instruction was still echoed to UI before the failed attempt')
 
     // -----------------------------------------------------------------------
@@ -403,15 +403,15 @@ try {
         // Kyeno is left OFFLINE by the earlier going-offline section and recordTransition()
         // dedupes identical states -- so seed an extra online step to guarantee a clean
         // [offline@NOW-8h -> online@NOW] pair regardless of prior state.
-        await seedHistory('kyeno', [
+        await seedHistory('hostname1', [
             { state: 'online', atMs: NOW - 9 * HOUR },
             { state: 'offline', atMs: NOW - 8 * HOUR },
             { state: 'online', atMs: NOW }
         ])
         resetSeen()
-        await greeter.execute({ trigger: 'network:kyeno' })
+        await greeter.execute({ trigger: 'network:hostname1' })
         assert(
-            seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'kyeno')} ${expectedNote(8 * HOUR, 'tts', 'kyeno')}`,
+            seen.tts[0]?.text === `${expectedText('welcome', 'tts', 'hostname1')} ${expectedNote(8 * HOUR, 'tts', 'hostname1')}`,
             'personal host gets the possessive note (_named) because its welcome line uses their name'
         )
 

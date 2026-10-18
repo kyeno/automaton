@@ -98,7 +98,7 @@ const ambientConfig = {
 }
 const ambient = new FakeRuleBasedAutomation('AmbientLightsAutomation', ambientConfig)
 const weatherman = new FakeRuleBasedAutomation('TtsWeatherManAutomation', {})
-weatherman.getTriggerTopics = () => ['network:kyeno']
+weatherman.getTriggerTopics = () => ['network:hostname1']
 
 /** Plain-object automation without a rule-based prototype chain or any rules. */
 const legacy = {
@@ -182,7 +182,7 @@ console.log('\n\u2500\u2500 List view \u2500\u2500\n')
     assertEqual(lines[0], '\u251c\u2500 AmbientLightsAutomation', 'first entry uses intermediate branch prefix')
     assertEqual(lines[6], '', 'blank line separates entries')
     assertEqual(lines[7], '\u2514\u2500 TtsWeatherManAutomation', 'last entry uses final branch prefix')
-    assertEqual(lines[11].includes('triggers: network:kyeno'), true, 'trigger topics are listed when present')
+    assertEqual(lines[11].includes('triggers: network:hostname1'), true, 'trigger topics are listed when present')
 }
 
 {
@@ -357,7 +357,7 @@ assertEqual(
     'time_of_day=[morning|evening] | season=winter',
     'arrays and scalars mix in one summary'
 )
-assertEqual(AutomationCmd.formatConditionSummary({ presence: { kyeno: true } }), 'presence={"kyeno":true}', 'non-range objects fall back to JSON')
+assertEqual(AutomationCmd.formatConditionSummary({ presence: { hostname1: true } }), 'presence={"hostname1":true}', 'non-range objects fall back to JSON')
 
 // -- Summary -----------------------------------------------------------------------
 

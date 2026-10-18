@@ -148,7 +148,7 @@ console.log('\n\u2500\u2500 i18n bundles \u2500\u2500\n')
         const doc = yamlParseDocument(fs.readFileSync(file, 'utf8'))
         const prompt = String(doc.get('system_prompt') ?? '')
         assert(prompt.includes('{% name %}'), `${rel}: system_prompt carries the {% name %} token`)
-        assert(!/Gerwazy/i.test(prompt), `${rel}: no assistant name hard-coded in the prompt`)
+        assert(!prompt.includes('Your name is "Automaton"') && !prompt.includes('Nazywasz się "Automaton"'), `${rel}: no assistant name hard-coded in the prompt`)
     }
 }
 

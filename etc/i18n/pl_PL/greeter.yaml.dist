@@ -5,7 +5,7 @@
 #   <bucket>.tts.<host> -- spoken verbatim when use_ai is off / AI unavailable
 #   <bucket>.ai.<host>  -- instruction sent to the model; it speaks its own greeting
 # Placeholders: {% name_vocative %} and {% name_genitive %} are filled from names.<host>,
-# so pick whichever case your sentence grammar needs ("Witaj, Macieju!" vs "komputer Macieja").
+# so pick whichever case your sentence grammar needs ("Witaj, Janie!" vs "komputer Jana").
 #
 # Template -- copy to greeter.yaml and customize sentences + host names for your home.
 

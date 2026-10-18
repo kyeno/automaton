@@ -106,7 +106,7 @@ TTS is configured entirely through environment variables and locale-specific i18
 ```yaml
 ai:
   model: your-model-name
-  name: Gerwazy               # Assistant's own name: fills {% name %} in the system prompt, signs the AI window; blank = "AI"
+  name: Automaton             # Assistant's own name: fills {% name %} in the system prompt, signs the AI window; blank = "AI"
   max_tokens: -1              # -1 = unlimited (provider default)
   temperature: 1.0            # 0.0 (deterministic) to 1.0 (creative)
   fetch_timeout_ms: "5m"      # Per-request LLM HTTP timeout ("45s"/"5m"/... or plain ms); final, not retried
@@ -378,7 +378,7 @@ rules:
       presence: hostname1               # Network host present
     targets:                            # Per-target actions; key = registered device name
       Device_Name_A: OPEN               # with spaces replaced by underscores, casing kept
-      Device_Name_B: CLOSE              # e.g. "Kuchnia Gniazdo LED" -> Kuchnia_Gniazdo_LED
+      Device_Name_B: CLOSE              # e.g. "Kitchen LED Outlet" -> Kitchen_LED_Outlet
 ```
 
 **Condition key naming.** Use snake_case: `time_of_day`, `video_player`, `state_transition`, etc. Legacy kebab-case keys never match and log their location and replacement at activation.
@@ -508,14 +508,14 @@ Entries are condition groups and can nest. Scalar conditions in each group combi
 
 ```yaml
 rules:
-  - name: 'After sunset - someone home - full salon ambient'
+  - name: 'After sunset - someone home - full living room ambient'
     once: true
     conditions:
       hour: { gte: sunset }          # top-level scalars still AND together
       illuminance: { lt: 600 }       # with the composite groups below
       any_of:                        # ... "someone" = at least one of these hosts
-        - presence: kyeno
-        - presence: meerkat
+        - presence: hostname1
+        - presence: hostname2
         - presence: htpc
 ```
 
@@ -715,7 +715,7 @@ Accepts a single value or a list: `season: spring`, `season: [winter]`. Detectio
 
 - **Mechanisms** (lights/outlets): `ON`, `OFF`, `TOGGLE`
 - **Mechanisms** (roller shutters): `OPEN`, `CLOSE`, `STOP`, or integer percentage (`0-100`)
-- **Dimmers**: structured object commands pass through verbatim -- e.g., `Salon_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }`; the DualDimmer maps each percentage into its channel's level range at publish time (a bare `{brightness: N}` sets levels only and never switches the relay on)
+- **Dimmers**: structured object commands pass through verbatim -- e.g., `Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }`; the DualDimmer maps each percentage into its channel's level range at publish time (a bare `{brightness: N}` sets levels only and never switches the relay on)
 - **Simple automations**: `action: OFF` applies to all listed devices
 
 ### Custom JavaScript Automations
@@ -764,7 +764,7 @@ Sequences send ordered commands with optional loops. Copy `etc/sequence/sequence
 
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `name` | yes | Friendly name; internally slugified (`'Salon Hazard Light'` → `salon_hazard_light`). Slugs must be unique across all sequences |
+| `name` | yes | Friendly name; internally slugified (`'Living Room Hazard Light'` → `living_room_hazard_light`). Slugs must be unique across all sequences |
 | `delay_ms` | no | Sequence-level inter-step pause (duration like `"500ms"` / `"2s"`, or plain ms number). Absent ⇒ **multi-device endpoint mode** — every step fires back-to-back |
 | `devices` | simple form | Ordered list of names (or `{device, command?, delay_ms?}` objects). ON sends each device `'ON'`; OFF sends each device `'OFF'` in the same order |
 | `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay_ms?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
@@ -779,7 +779,7 @@ sequences:
   - name: 'Ambient Lights'
     delay_ms: '500ms'
     devices:
-      - 'Salon Ambient Left'
+      - 'Living Room Ambient Left'
       - 'Bedroom Ambient'
       - device: 'Kitchen LED Strip'   # object entries allow per-step overrides
         command: 'ON'
@@ -789,17 +789,17 @@ sequences:
 ### Rich form + loop (hazard light oscillation)
 
 ```yaml
-  - name: 'Salon Hazard Light'
+  - name: 'Living Room Hazard Light'
     loop:
       enabled: true
       cycle: continuous
       off_delay_ms: '2s'   # dwell before the OFF swing
       on_delay_ms: '2s'    # dwell before the next ON swing
     on:                               # phase A -- low values
-      - device: 'Salon Dimmer'
+      - device: 'Living Room Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }
     off:                              # phase B -- high values (the swing back)
-      - device: 'Salon Dimmer'
+      - device: 'Living Room Dimmer'
         payload: { state: 'ON', brightness: { l1: 100, l2: 75 } }
 ```
 

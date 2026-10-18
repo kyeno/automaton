@@ -78,9 +78,9 @@ The `etc/` directory contains `.yaml.dist` and `.js.dist` templates. You can eit
   cp etc/interaction/interaction.yaml.dist etc/interaction/interaction.yaml
 
   # i18n bundles
-  cp etc/i18n/en_US/*.dist etc/i18n/en_US/
+  for template in etc/i18n/en_US/*.dist; do cp "$template" "${template%.dist}"; done
   # or for Polish:
-  cp etc/i18n/pl_PL/*.dist etc/i18n/pl_PL/
+  for template in etc/i18n/pl_PL/*.dist; do cp "$template" "${template%.dist}"; done
   ```
 
 ### 3. Custom scripts
@@ -110,7 +110,7 @@ npm start
 npm start -- --no-ui
 ```
 
-> **Tip:** All active config files (`*.yaml`, `*.js`) in `etc/` are gitignored. Your personal setup will never accidentally be committed — only the clean `.dist` templates are tracked. See [Configuration Guide](../configuration.md) for details on every file.
+> **Tip:** Local configuration overrides in `etc/` are gitignored. Shipped implementation scripts and some shared language bundles are already tracked; review `git diff` before committing changes to those files. See [Configuration Guide](../configuration.md) for details on every file.
 
 ## Running
 

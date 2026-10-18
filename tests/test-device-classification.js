@@ -61,7 +61,7 @@ function assert(condition, label) {
 
 /** Current shape: features live in definition.options. */
 const soilProbe = {
-    friendly_name: 'Sypialnia Kwiatek Nowy',
+    friendly_name: 'Bedroom Plant Nowy',
     ieee_address: '0x0001',
     type: 'EndDevice',
     supported: true,
@@ -77,7 +77,7 @@ const soilProbe = {
 
 /** Older shape: features live in definition.features. */
 const soilProbeLegacy = {
-    friendly_name: 'Sypialnia Kwiatek Legacy',
+    friendly_name: 'Bedroom Plant Legacy',
     ieee_address: '0x0002',
     type: 'EndDevice',
     supported: true,
@@ -91,7 +91,7 @@ const soilProbeLegacy = {
 
 /** Composite exposes nest their feature list one level deeper. */
 const soilProbeNested = {
-    friendly_name: 'Sypialnia Kwiatek Nested',
+    friendly_name: 'Bedroom Plant Nested',
     ieee_address: '0x0003',
     type: 'EndDevice',
     supported: true,
@@ -230,7 +230,7 @@ try {
         'config mapping wins with no definition in hand')
     assert(DeviceContainer.classifyDevice('Outdoor Temperature', unmappedSwitch) === 'sensor',
         'config mapping wins even when the definition would veto it')
-    assert(DeviceContainer.classifyDevice('Sypialnia Kwiatek Nowy', soilProbe) === 'sensor',
+    assert(DeviceContainer.classifyDevice('Bedroom Plant Nowy', soilProbe) === 'sensor',
         'unmapped probe classified from the bridge definition')
     assert(DeviceContainer.classifyDevice('Test Unmapped Switch', unmappedSwitch) === 'dummy',
         'unmapped actuator keeps the DummyDevice fallback')
@@ -238,11 +238,11 @@ try {
         'no config entry and no definition -> dummy')
 
     const all = DeviceContainer.getAll({ includeBridge: false })
-    assert(all['Sypialnia Kwiatek Nowy'] instanceof Sensor,
+    assert(all['Bedroom Plant Nowy'] instanceof Sensor,
         'unmapped probe is instantiated as a Sensor, not a DummyDevice')
-    assert(all['Sypialnia Kwiatek Nowy'].getLogPrefix() === 'Sensor',
+    assert(all['Bedroom Plant Nowy'].getLogPrefix() === 'Sensor',
         'probe carries the Sensor log prefix, so the UI buckets it under Sensors')
-    assert(all['Sypialnia Kwiatek Nowy'].shouldTrackOrigin() === false,
+    assert(all['Bedroom Plant Nowy'].shouldTrackOrigin() === false,
         'probe is not an actuator, so the UI never lists it under Mechanisms')
     assert(all['Test Unmapped Switch'] instanceof DummyDevice,
         'unmapped switch is still a DummyDevice')

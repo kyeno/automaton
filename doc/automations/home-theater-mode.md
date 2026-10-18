@@ -58,8 +58,8 @@ A local restore rule:
       - hour: { gte: sunset }
       - hour: { lt: sunrise }
   targets:
-    Living_Room_Plug: ON
-    Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
+    Home_Office_Outlet: ON
+    Home_Office_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 ```
 
 An offline delegation rule:

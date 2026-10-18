@@ -321,7 +321,7 @@ console.log('')
     const periods = ['night', 'morning', 'noon', 'afternoon', 'evening']
     const sweepCtx = (p) => ({
         timeOfDay: p,
-        presence: { kyeno: true, meerkat: true, htpc: true, bedroom: true },
+        presence: { hostname1: true, hostname2: true, htpc: true, bedroom: true },
         videoPlayer: { htpc: 'paused', bedroom: 'playing' },
     })
     const unreachable = ambientDoc.rules

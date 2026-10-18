@@ -39,7 +39,7 @@ Located at `etc/automation/tts-weatherman.yaml`:
 
 ```yaml
 timer_interval: "1h"            # Human-readable interval ("90s", "3m 45s", "1h"); omit to go event-driven
-silence_between: "0230-1030"    # Suppress execution during this time window
+silence_between: "2300-0600"    # Suppress execution during this time window
 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI

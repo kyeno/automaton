@@ -128,7 +128,7 @@ const RULES = [
             time_of_day: ['morning', 'noon', 'afternoon'],
             hour: { gte: 'sunrise' },
             illuminance: { gte: 200, lte: 11000 },
-            presence: 'kyeno',
+            presence: 'hostname1',
         },
         targets: { Salon_Roleta_Okno_Lewe: 40, Salon_Roleta_Okno_Prawe: 12 },
     },
@@ -237,7 +237,7 @@ console.log('\n── Pre-dawn vs. post-dawn ticks ──\n')
 
 const presenceProto = Object.getPrototypeOf(networkPresence)
 const origIsOnline = presenceProto.isOnline
-presenceProto.isOnline = async (name) => name === 'kyeno'
+presenceProto.isOnline = async (name) => name === 'hostname1'
 
 try {
     // 06:06 -- 5 minutes before civil dawn, the street sensor already reads daytime.

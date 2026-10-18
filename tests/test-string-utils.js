@@ -151,7 +151,7 @@ assertEqual(
 
 console.log('\n-- interpolateTokens --\n')
 
-assertEqual(interpolateTokens('Hi {% name %}', { name: 'Gerwazy' }), 'Hi Gerwazy', 'token resolved')
+assertEqual(interpolateTokens('Hi {% name %}', { name: 'ExampleAssistant' }), 'Hi ExampleAssistant', 'token resolved')
 assertEqual(interpolateTokens('{%a%}', { a: 'x' }), 'x', 'no-space token form resolved')
 assertEqual(interpolateTokens('Hi {% name %}! {% name %}', { name: 'AI' }), 'Hi AI! AI', 'repeated tokens resolved')
 assertEqual(interpolateTokens('Hi {% who %}', {}), 'Hi {% who %}', 'unknown token passes through')

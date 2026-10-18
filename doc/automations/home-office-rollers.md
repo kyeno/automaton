@@ -16,7 +16,7 @@ Matching commands merge per shutter using the lowest position: CLOSE = 0, OPEN =
 | Intent | Example condition set | Resulting merge |
 |--------|-----------------------|-----------------|
 | Keep shutters up when warm but dim | `time_of_day: [morning..evening]`, `illuminance < 11000`, `temperature < 25` | `OPEN` unless another matched rule is more closed |
-| Park at a preset while someone is home | `presence: my-laptop`, `illuminance <= 11000` | e.g. left shutter `40`, right shutter `12` — overridden if a `CLOSE` rule also matches |
+| Park at a preset while someone is home | `presence: laptop`, `200 <= illuminance <= 11000` | e.g. left shutter `40`, right shutter `12` — overridden if a `CLOSE` rule also matches |
 | Hard close at night / extreme heat | `illuminance <= 15`, or `temperature >= 29` in afternoon/noon | `CLOSE` wins for that target |
 
 ## Configuration File
@@ -33,8 +33,8 @@ triggers_zigbee:              # Re-evaluate immediately on new readings from the
   - 'Outdoor Temperature'
 
 triggers_network:             # Hosts whose presence can gate rules (see networkPresence)
-  - my-laptop
-  - my-desktop
+  - laptop
+  - my-pc
 
 timer_interval: "1m"          # How often rules are evaluated when no trigger fires
 
@@ -45,8 +45,9 @@ rules:
   - name: 'Day: laptop present, not too bright'
     conditions:
       time_of_day: [morning, noon, afternoon]
-      illuminance: { lte: 11000 }
-      presence: my-laptop
+      hour: { gte: sunrise }
+      illuminance: { gte: 200, lte: 11000 }
+      presence: laptop
     targets:                  # Per-target actions for this rule (key = registered device name, spaces -> _)
       Home_Office_Roller_Left: 40
       Home_Office_Roller_Right: 12

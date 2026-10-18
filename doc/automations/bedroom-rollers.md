@@ -23,7 +23,7 @@ triggers_zigbee:
 timer_interval: "1m"
 
 video_player_suppression:      # Optional stand-down guard (see note below)
-  my-pc: [playing, paused, stopped]
+  laptop: [playing, paused, stopped]
 
 rules:
   - name: 'Night - close all'
@@ -67,9 +67,9 @@ If any shutter can move, the group receives the command; device-level no-op supp
 A concrete room only fixes its identity and its shutter list:
 
 ```javascript
-export default class SalonRollersInteraction extends RollerShuttersBase {
+export default class BedroomRollersInteraction extends RollerShuttersBase {
     constructor() {
-        super({ name: 'SalonRollersInteraction', shutters: SALON_SHUTTERS })
+        super({ name: 'BedroomRollersInteraction', shutters: BEDROOM_SHUTTERS })
     }
 }
 ```

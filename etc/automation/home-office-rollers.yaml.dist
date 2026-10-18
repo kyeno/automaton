@@ -19,8 +19,8 @@ triggers_zigbee:
   - 'Outdoor Temperature'
 
 triggers_network:
-  - my-laptop
-  - my-desktop
+  - laptop
+  - my-pc
 
 timer_interval: "1m"
 
@@ -76,7 +76,7 @@ rules:
       time_of_day: [morning, noon, afternoon]
       hour: { gte: sunrise }
       illuminance: { gte: 200, lte: 11000 }
-      presence: my-laptop
+      presence: laptop
     targets:
       Home_Office_Roller_Left: 40
       Home_Office_Roller_Right: 12
@@ -85,7 +85,7 @@ rules:
     conditions:
       time_of_day: [morning, noon, afternoon]
       illuminance: { gt: 11000, lte: 12700 }
-      presence: my-laptop
+      presence: laptop
     targets:
       Home_Office_Roller_Left: 12
       Home_Office_Roller_Right: CLOSE
@@ -94,7 +94,7 @@ rules:
     conditions:
       time_of_day: [morning, noon]
       illuminance: { gt: 12700 }
-      presence: my-laptop
+      presence: laptop
     targets:
       Home_Office_Roller_Left: 10
       Home_Office_Roller_Right: CLOSE
@@ -103,7 +103,7 @@ rules:
     conditions:
       time_of_day: [evening]
       illuminance: { gt: 250, lte: 1800 }
-      presence: my-laptop
+      presence: laptop
     targets:
       Home_Office_Roller_Left: OPEN
       Home_Office_Roller_Right: 35
@@ -112,7 +112,7 @@ rules:
     conditions:
       time_of_day: [evening]
       illuminance: { gt: 1800, lte: 11000 }
-      presence: my-laptop
+      presence: laptop
     targets:
       Home_Office_Roller_Left: 80
       Home_Office_Roller_Right: 30
@@ -121,7 +121,7 @@ rules:
     conditions:
       time_of_day: [morning, noon, afternoon, evening]
       illuminance: { lte: 11000 }
-      presence: my-desktop
+      presence: my-pc
     targets:
       Home_Office_Roller_Left: 30
       Home_Office_Roller_Right: 70
@@ -130,7 +130,7 @@ rules:
     conditions:
       time_of_day: [morning, noon, afternoon, evening]
       illuminance: { gt: 11000, lte: 12700 }
-      presence: my-desktop
+      presence: my-pc
     targets:
       Home_Office_Roller_Left: 15
       Home_Office_Roller_Right: 30

@@ -104,7 +104,7 @@ assert(await match({ all_of: [] }, {}) === true, 'all_of: [] passes vacuously (m
 console.log('')
 console.log('-- malformed shapes fail closed --')
 console.log('')
-assert(await match({ any_of: 'kyeno' }, {}) === false, 'non-array any_of value fails closed')
+assert(await match({ any_of: 'hostname1' }, {}) === false, 'non-array any_of value fails closed')
 assert(await match({ all_of: {} }, {}) === false, 'non-array all_of value fails closed')
 for (const bad of ['nope', null, 42, [{}], undefined]) {
     assert(await match({ any_of: [bad] }, {}) === false, `sub-group ${JSON.stringify(bad)} fails closed`)
@@ -157,18 +157,18 @@ console.log('')
 console.log('-- static analyzer mirrors runtime semantics (evaluateRule) --')
 console.log('')
 {
-    const orPresence = { any_of: [{ presence: 'kyeno' }, { presence: 'meerkat' }] }
-    assert(evaluateRule(orPresence, { presence: { kyeno: true, meerkat: false } }) === true,
+    const orPresence = { any_of: [{ presence: 'hostname1' }, { presence: 'hostname2' }] }
+    assert(evaluateRule(orPresence, { presence: { hostname1: true, hostname2: false } }) === true,
         'any_of presence: first host online -> satisfied statically')
-    assert(evaluateRule(orPresence, { presence: { kyeno: false, meerkat: true } }) === true,
+    assert(evaluateRule(orPresence, { presence: { hostname1: false, hostname2: true } }) === true,
         'any_of presence: second host online -> satisfied statically')
-    assert(evaluateRule(orPresence, { presence: { kyeno: false, meerkat: false } }) === false,
+    assert(evaluateRule(orPresence, { presence: { hostname1: false, hostname2: false } }) === false,
         'any_of presence: all hosts offline -> rejected statically')
 
-    const andPresence = { all_of: [{ presence: 'kyeno' }, { presence: 'htpc' }] }
-    assert(evaluateRule(andPresence, { presence: { kyeno: true, htpc: true } }) === true,
+    const andPresence = { all_of: [{ presence: 'hostname1' }, { presence: 'htpc' }] }
+    assert(evaluateRule(andPresence, { presence: { hostname1: true, htpc: true } }) === true,
         'all_of presence: every host online -> satisfied statically')
-    assert(evaluateRule(andPresence, { presence: { kyeno: true, htpc: false } }) === false,
+    assert(evaluateRule(andPresence, { presence: { hostname1: true, htpc: false } }) === false,
         'all_of presence: one host offline -> rejected statically')
 
     // fail-closed parity with the runtime evaluator
@@ -179,7 +179,7 @@ console.log('')
 
     // nested sensor bounds + composite keys never leak into the sensor dimension
     const rules = [
-        { conditions: { hour: { gte: 16 }, illuminance: { lt: 600 }, any_of: [{ presence: 'kyeno' }, { temperature: { lte: 24 } }] } },
+        { conditions: { hour: { gte: 16 }, illuminance: { lt: 600 }, any_of: [{ presence: 'hostname1' }, { temperature: { lte: 24 } }] } },
     ]
     assert(JSON.stringify(collectSensorKeys(rules)) === JSON.stringify(['illuminance', 'temperature']),
         'collectSensorKeys sweeps grouped sensor bounds and excludes composite keys')
@@ -189,12 +189,12 @@ console.log('')
 console.log('-- scenario grid picks up hosts referenced inside groups --')
 console.log('')
 {
-    const built = buildScenarios([{ conditions: { any_of: [{ presence: 'kyeno' }, { presence: 'meerkat' }] } }])
-    assert(JSON.stringify(built.meta.presenceHosts) === JSON.stringify(['kyeno', 'meerkat']),
+    const built = buildScenarios([{ conditions: { any_of: [{ presence: 'hostname1' }, { presence: 'hostname2' }] } }])
+    assert(JSON.stringify(built.meta.presenceHosts) === JSON.stringify(['hostname1', 'hostname2']),
         'grouped presence hosts feed the scenario grid dimensions')
     const hit = built.scenarios.some((s) => evaluateRule(
-        { any_of: [{ presence: 'kyeno' }, { presence: 'meerkat' }] }, s.context, s.sensors))
-    assert(hit === true, 'grid contains a scenario where the grouped OR rule matches (kyeno online)')
+        { any_of: [{ presence: 'hostname1' }, { presence: 'hostname2' }] }, s.context, s.sensors))
+    assert(hit === true, 'grid contains a scenario where the grouped OR rule matches (hostname1 online)')
 }
 
 console.log('')
@@ -210,8 +210,8 @@ async function main() {
         '  - name: probe',
         '    conditions:',
         '      any_of:',
-        '        - presence: kyeno',
-        '        - presence: meerkat',
+        '        - presence: hostname1',
+        '        - presence: hostname2',
         '        - presence: htpc',
     ].join('\n'), 'utf8')
 
@@ -231,7 +231,7 @@ async function main() {
     await probe.execute({ trigger: 'timer' })
     assert(probe.built === false, 'gate SKIPS a timer tick with no monitored change yet (grouped subjects)')
 
-    const rec = await DatabaseService.recordTransition({ domain: 'network', subject: 'kyeno', toState: 'online' })
+    const rec = await DatabaseService.recordTransition({ domain: 'network', subject: 'hostname1', toState: 'online' })
     assert(rec.changed === true, 'transition of an any_of-referenced host recorded as a genuine change')
 
     probe.built = false

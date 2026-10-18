@@ -90,7 +90,7 @@ AI transcript lines use `ai:userMessage` / `ai:assistantMessage` events for both
 | `<NAME>` | assistant reply — the name is `ai.name` (`<AI>` when unset); rendered red as `[ERROR: …]` when the turn failed |
 
 Lines starting with `*` are status notes rather than conversation: `* AI is thinking...` and
-`* AI thought for N seconds` around each turn, and `* AI turned ON Salon Light` for every device
+`* AI thought for N seconds` around each turn, and `* AI turned ON Living Room Light` for every device
 interaction the assistant performs.
 
 **Assistant name:** `ai.name` fills the system-prompt name, transcript prefix, and action lines. Empty values use `AI`; `/config reload` applies changes.

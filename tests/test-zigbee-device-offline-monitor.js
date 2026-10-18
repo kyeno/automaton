@@ -128,20 +128,20 @@ async function main() {
         console.log('-- B) per-device cooldown + independence --')
         spoken.length = 0
         setOverride('alerts.zigbee_offline_cooldown_ms', '30m')
-        EventBus.emit('devices:removed', 'Kuchnia Gniazdo')
+        EventBus.emit('devices:removed', 'Kitchen Outlet')
         await sleep(50)
-        EventBus.emit('devices:removed', 'Kuchnia Gniazdo')   // same device again -> suppressed
+        EventBus.emit('devices:removed', 'Kitchen Outlet')   // same device again -> suppressed
         await sleep(50)
         EventBus.emit('devices:removed', 'Lazienka Wlacznik')  // different device -> speaks
         await sleep(50)
         assert(spoken.length === 2, `cooldown suppressed repeat but not other device (got ${spoken.length}: ${JSON.stringify(spoken)})`)
-        assert(spoken.every((t) => t.includes('Gniazdo') || t.includes('Wlacznik')), 'only the two expected devices were announced')
+        assert(spoken.every((t) => t.includes('Kitchen Outlet') || t.includes('Lazienka Wlacznik')), 'only the two expected devices were announced')
 
         // C) master switch off -----------------------------------------------------------
         console.log('-- C) alerts.zigbee_offline_tts=false silences everything --')
         spoken.length = 0
         setOverride('alerts.zigbee_offline_tts', false)
-        EventBus.emit('devices:removed', 'Sypialnia Gniazdo')
+        EventBus.emit('devices:removed', 'Bedroom Outlet')
         await sleep(50)
         assert(spoken.length === 0, 'disabled flag produces no speech')
         setOverride('alerts.zigbee_offline_tts', true)
@@ -175,9 +175,9 @@ async function main() {
         console.log('-- F) cooldown of 0 re-warns on every leave event --')
         spoken.length = 0
         setOverride('alerts.zigbee_offline_cooldown_ms', 0)
-        EventBus.emit('devices:removed', 'Kuchnia Wlacznik Zlew')
+        EventBus.emit('devices:removed', 'Kitchen Sink Switch')
         await sleep(30)
-        EventBus.emit('devices:removed', 'Kuchnia Wlacznik Zlew')
+        EventBus.emit('devices:removed', 'Kitchen Sink Switch')
         await sleep(50)
         assert(spoken.length === 2, `zero cooldown speaks twice for the same device (got ${spoken.length})`)
 
@@ -194,12 +194,12 @@ async function main() {
         setOverride('alerts.zigbee_offline_tts', null)
         setOverride('alerts.zigbee_offline_cooldown_ms', null)
         setOverride('alerts.device_offline_tts', false)
-        EventBus.emit('devices:removed', 'Kuchnia Czujnik Ruchu')
+        EventBus.emit('devices:removed', 'Kitchen Motion Sensor')
         await sleep(50)
         assert(spoken.length === 0, 'legacy master switch off silences the monitor')
         setOverride('alerts.device_offline_tts', true)
         setOverride('alerts.device_offline_cooldown_ms', 0)
-        EventBus.emit('devices:removed', 'Kuchnia Czujnik Ruchu')
+        EventBus.emit('devices:removed', 'Kitchen Motion Sensor')
         await sleep(50)
         EventBus.emit('devices:removed', 'Salon Czujnik Ruchu')
         await sleep(50)
@@ -240,14 +240,14 @@ async function main() {
         payloads.length = 0
         setOverride('alerts.zigbee_offline_cooldown_ms', 0)
         setOverride('alerts.zigbee_offline_tts_profile', 'alarm')
-        EventBus.emit('devices:removed', 'Sypialnia Czujnik')
+        EventBus.emit('devices:removed', 'Bedroom Sensor')
         await sleep(50)
         const framed = payloads[0] ?? {}
         assert(framed.intro === 'alarm-intro.wav' && framed.outro === 'alarm-outro.wav' && framed.intro_spacing === -1.5,
             `profile framing spread into the payload (${JSON.stringify(framed)})`)
 
         setOverride('alerts.zigbee_offline_tts_options', { intro: 'custom.wav', intro_spacing: 0 })
-        EventBus.emit('devices:removed', 'Sypialnia Czujnik')
+        EventBus.emit('devices:removed', 'Bedroom Sensor')
         await sleep(50)
         const mixed = payloads[1] ?? {}
         assert(mixed.intro === 'custom.wav' && mixed.outro === 'alarm-outro.wav' && mixed.intro_spacing === 0,

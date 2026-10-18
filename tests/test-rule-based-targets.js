@@ -160,7 +160,7 @@ class TestTargetsAutomation extends RuleBasedAutomationBase {
 console.log('\n── toTargetKey ──\n')
 assert(toTargetKey('Living Room Light') === 'Living_Room_Light', 'spaces collapse to underscores')
 assert(toTargetKey('  Kitchen   Outlet  ') === 'Kitchen_Outlet', 'leading/trailing + repeated whitespace trimmed/collapsed')
-assert(toTargetKey('Sypialnia Roleta Okno Lewe Lewa') === 'Sypialnia_Roleta_Okno_Lewe_Lewa', 'multi-word names keep casing and word order')
+assert(toTargetKey('Bedroom Roller Window Left Outer') === 'Bedroom_Roller_Window_Left_Outer', 'multi-word names keep casing and word order')
 assert(toTargetKey('BalkonSwiatlo') === 'BalkonSwiatlo', 'single token passes through unchanged')
 
 // ---------------------------------------------------------------------------
@@ -280,18 +280,18 @@ console.log('\n── non-mechanism target types ──\n')
         'all-non-mechanism declarations reject at init like all-missing ones')
 }
 {
-    const plug = register('Kuchnia Gniazdo', new TestMechanism('Kuchnia Gniazdo'))
+    const plug = register('Kitchen Outlet', new TestMechanism('Kitchen Outlet'))
     register('Balkon Temperatura', new Sensor('Balkon Temperatura', 'test-id-sensor-2', {}))
     const cfgMixed = writeConfig('mixed-types.yaml', [
         'rules:',
         "  - name: 'Actuator plus sensor'",
         '    targets:',
-        '      Kuchnia_Gniazdo: OFF',
+        '      Kitchen_Outlet: OFF',
         '      Balkon_Temperatura: OFF'
     ])
     const auto = new TestTargetsAutomation(cfgMixed)
     const devices = auto.loadDevices()
-    assert(devices.size === 1 && devices.has('Kuchnia_Gniazdo'),
+    assert(devices.size === 1 && devices.has('Kitchen_Outlet'),
         'mechanism kept, sensor excluded when both are declared')
     let initOk = true
     try { await auto.init() } catch { initOk = false }

@@ -106,7 +106,7 @@ console.log('')
     const hits = findLegacyConditionKeys({
         illuminance: { lt: 600 },
         any_of: [
-            { presence: 'kyeno' },
+            { presence: 'hostname1' },
             { 'video-player': { htpc: ['playing'] }, all_of: [{ 'time-of-day': ['evening'] }] }
         ]
     })
@@ -144,7 +144,7 @@ console.log('')
         '    conditions:',
         '      illuminance: { lt: 600 }',
         '      any_of:',
-        '        - presence: kyeno',
+        '        - presence: hostname1',
         '        - video-player: { htpc: [playing] }',
         '          all_of:',
         '            - time-of-day: [evening]'
@@ -180,7 +180,7 @@ console.log('')
         '      time_of_day: [evening]',
         '      illuminance: { lt: 600 }',
         '      any_of:',
-        '        - presence: kyeno',
+        '        - presence: hostname1',
         '        - video_player: { htpc: [playing] }'
     ].join('\n'), 'clean')
     assert(warnings.length === 0, `no legacy-key warnings for a fully migrated config (got ${warnings.length})`)

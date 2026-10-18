@@ -33,7 +33,8 @@ rules:
       presence: { my-pc: true }
       video_player: { my-pc: [playing, paused, stopped] }
     targets:
-      Living_Room_Roller_Left: CLOSE
+      Home_Office_Roller_Left: CLOSE
+      Home_Office_Roller_Right: CLOSE
 
   # Player gone: force-fire the roller owner and the ambient-lights owner
   - name: 'Office: player gone - hand back to the room owners'
@@ -57,9 +58,9 @@ rules:
         - hour: { gte: sunset }    # sunset -> midnight
         - hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
     targets:
-      Living_Room_Plug: ON
-      Kitchen_Plug: ON
-      Living_Room_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
+      Home_Office_Outlet: ON
+      Kitchen_Outlet: ON
+      Home_Office_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } }
 
   # One lamp on its own terms: same gates as the restore rule, narrowed to the evening
   # half of the night -- `hour: { gte: sunset }` ends at midnight, so no upper bound needed.
@@ -78,7 +79,7 @@ rules:
       presence: { my-pc: true }
       video_player: { my-pc: [playing] }
     targets:
-      Living_Room_Plug: OFF
-      Kitchen_Plug: OFF
+      Home_Office_Outlet: OFF
+      Kitchen_Outlet: OFF
       Hallway_Cupboard_Outlet: OFF
-      Living_Room_Dimmer: OFF
+      Home_Office_Dimmer: OFF

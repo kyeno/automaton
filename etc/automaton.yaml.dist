@@ -16,7 +16,7 @@ locale:
 # --- AI: provider + conversation settings (API secret stays in .env)
 ai:
   model: gemma-4-E2B-it      # required for chat requests
-  name: Gerwazy           # the assistant's own name: fills {% name %} in the system prompt
+  name: Automaton           # the assistant's own name: fills {% name %} in the system prompt
   max_tokens: -1            # -1 = omit from request, let the provider default apply
   temperature: 1.0          # sampling 0.0-1.0 (lower=deterministic, higher=creative)
   fetch_timeout_ms: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models

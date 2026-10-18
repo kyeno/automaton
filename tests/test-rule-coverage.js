@@ -124,11 +124,11 @@ console.log('\n\u2500\u2500 C. condition evaluation \u2500\u2500\n')
     assertEqual(cov.evaluateRule({ 'time_of_day': 'morning' }, ctx), false, 'non-matching period rejects')
 
     // Presence -- string/array/object normalization; absent host counts as offline.
-    const pctx = { timeOfDay: 'noon', presence: { kyeno: true }, videoPlayer: {} }
-    assertTrue(cov.evaluateRule({ presence: 'kyeno' }, pctx), 'string presence matches online host')
-    assertTrue(cov.evaluateRule({ presence: ['kyeno', 'meerkat'] }, { ...pctx, presence: { kyeno: true, meerkat: true } }), 'array presence requires all listed hosts online')
-    assertEqual(cov.evaluateRule({ presence: ['kyeno', 'meerkat'] }, pctx), false, 'array presence fails when one host is offline')
-    assertTrue(cov.evaluateRule({ presence: { kyeno: false } }, { ...pctx, presence: {} }), 'object form can require a host to be OFFLINE')
+    const pctx = { timeOfDay: 'noon', presence: { hostname1: true }, videoPlayer: {} }
+    assertTrue(cov.evaluateRule({ presence: 'hostname1' }, pctx), 'string presence matches online host')
+    assertTrue(cov.evaluateRule({ presence: ['hostname1', 'hostname2'] }, { ...pctx, presence: { hostname1: true, hostname2: true } }), 'array presence requires all listed hosts online')
+    assertEqual(cov.evaluateRule({ presence: ['hostname1', 'hostname2'] }, pctx), false, 'array presence fails when one host is offline')
+    assertTrue(cov.evaluateRule({ presence: { hostname1: false } }, { ...pctx, presence: {} }), 'object form can require a host to be OFFLINE')
     assertEqual(
         JSON.stringify(cov.normalizePresenceCondition('a')),
         JSON.stringify({ a: true }),
@@ -158,8 +158,8 @@ console.log('\n\u2500\u2500 D. buildScenarios() \u2500\u2500\n')
     const rules = [
         { name: 'bright', conditions: { illuminance: { gte: 400 } } },
         { name: 'dim', conditions: { illuminance: { lt: 900 } } },
-        { name: 'home', conditions: { presence: ['kyeno'] } },
-        { name: 'away', conditions: { presence: { meerkat: false } } },
+        { name: 'home', conditions: { presence: ['hostname1'] } },
+        { name: 'away', conditions: { presence: { hostname2: false } } },
     ]
     const built = cov.buildScenarios(rules)
     const pts = built.meta.pointsBySensor['illuminance']
@@ -171,7 +171,7 @@ console.log('\n\u2500\u2500 D. buildScenarios() \u2500\u2500\n')
     assertEqual(built.scenarios.length, pts.length * 4, 'scenario count equals sensor points x presence subsets')
     const labels = built.scenarios.map((s) => s.label)
     assertTrue(labels.some((l) => l.endsWith('presence=-')), 'all-off baseline scenario present')
-    assertTrue(labels.some((l) => l.endsWith('presence=kyeno+meerkat')), 'both-online combination present')
+    assertTrue(labels.some((l) => l.endsWith('presence=hostname1+hostname2')), 'both-online combination present')
 
     // Truncation cap: many independent sensors would explode the grid; it must stop and flag.
     const bigRules = []

@@ -19,7 +19,7 @@ timer_interval: "1m"
 # Stand-down guard: while a listed player is in a listed status, the whole automation
 # stands down. Hosts combine with OR; statuses: playing, paused, stopped, offline.
 video_player_suppression:
-  my-pc: [playing, paused, stopped]
+  laptop: [playing, paused, stopped]
 
 rules:
   - name: 'Night - close all'

@@ -4,10 +4,10 @@
  * WeatherMan overrides execute(), so -- unlike the other rule-based automations -- it must apply
  * the top-level video_player_suppression gate itself rather than inherit it from the shared flow.
  * These tests pin that integration at its exact seam using the REAL shipped configuration
- * (etc/automation/tts-weatherman.yaml) and the real player hosts defined in this deployment
- * (htpc / bedroom):
- *   - the prod YAML ships a video_player_suppression block covering both players on "playing" only
- *   - htpc playing -> stands down; bedroom playing -> stands down (multi-host OR)
+ * (etc/automation/tts-weatherman.yaml) and the example player hosts defined in the templates
+ * (my-pc / laptop):
+ *   - the template YAML ships a video_player_suppression block covering both players on "playing" only
+ *   - my-pc playing -> stands down; laptop playing -> stands down (multi-host OR)
  *   - paused / offline are NOT listed -> still announces (guard stays inert while browsing)
  *   - backward compatibility: with no video_player_suppression key the guard never suppresses
  *
@@ -62,29 +62,29 @@ try {
 
     console.log('\n── config wiring ──')
     const sup = wm.config?.video_player_suppression ?? {}
-    assert(Array.isArray(sup.htpc), 'guard lists the htpc host')
-    assert(JSON.stringify(sup.htpc) === JSON.stringify(['playing']), `htpc suppresses only on "playing" (${JSON.stringify(sup.htpc)})`)
-    assert(Array.isArray(sup.bedroom), 'guard lists the bedroom host')
-    assert(JSON.stringify(sup.bedroom) === JSON.stringify(['playing']), `bedroom suppresses only on "playing" (${JSON.stringify(sup.bedroom)})`)
+    assert(Array.isArray(sup['my-pc']), 'guard lists the my-pc host')
+    assert(JSON.stringify(sup['my-pc']) === JSON.stringify(['playing']), `my-pc suppresses only on "playing" (${JSON.stringify(sup['my-pc'])})`)
+    assert(Array.isArray(sup.laptop), 'guard lists the laptop host')
+    assert(JSON.stringify(sup.laptop) === JSON.stringify(['playing']), `laptop suppresses only on "playing" (${JSON.stringify(sup.laptop)})`)
     assert(Object.keys(sup).length === 2, `no unexpected extra hosts in the guard (${Object.keys(sup).join(', ')})`)
 
     console.log('\n── stand-down truth table (via isVideoPlayerSuppressionActive) ──')
-    await setVideoStatus('htpc', 'playing'); await setVideoStatus('bedroom', 'stopped')
-    assert((await wm.isVideoPlayerSuppressionActive()) === true, 'htpc playing -> stands down')
+    await setVideoStatus('my-pc', 'playing'); await setVideoStatus('laptop', 'stopped')
+    assert((await wm.isVideoPlayerSuppressionActive()) === true, 'my-pc playing -> stands down')
 
-    await setVideoStatus('htpc', 'stopped'); await setVideoStatus('bedroom', 'playing')
-    assert((await wm.isVideoPlayerSuppressionActive()) === true, 'bedroom playing -> stands down (multi-host OR)')
+    await setVideoStatus('my-pc', 'stopped'); await setVideoStatus('laptop', 'playing')
+    assert((await wm.isVideoPlayerSuppressionActive()) === true, 'laptop playing -> stands down (multi-host OR)')
 
-    await setVideoStatus('htpc', 'paused'); await setVideoStatus('bedroom', 'paused')
+    await setVideoStatus('my-pc', 'paused'); await setVideoStatus('laptop', 'paused')
     assert((await wm.isVideoPlayerSuppressionActive()) === false, 'paused (not listed) -> still announces while browsing')
 
-    await setVideoStatus('htpc', 'offline'); await setVideoStatus('bedroom', 'offline')
+    await setVideoStatus('my-pc', 'offline'); await setVideoStatus('laptop', 'offline')
     assert((await wm.isVideoPlayerSuppressionActive()) === false, 'offline (not listed) -> still announces')
 
     // Backward compatibility: with the block removed entirely the guard is inert even while playing.
     const saved = wm.config.video_player_suppression
     delete wm.config.video_player_suppression
-    await setVideoStatus('htpc', 'playing'); await setVideoStatus('bedroom', 'playing')
+    await setVideoStatus('my-pc', 'playing'); await setVideoStatus('laptop', 'playing')
     assert((await wm.isVideoPlayerSuppressionActive()) === false, 'no video_player_suppression key -> never suppresses')
     wm.config.video_player_suppression = saved
 } finally {

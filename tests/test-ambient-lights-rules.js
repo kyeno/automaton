@@ -256,8 +256,8 @@ writeFileSync(TEST_CONFIG_PATH, [
     "            - hour: { gte: 'sunset' }",
     "            - hour: { lt: 'sunrise' }",
     '        - any_of:',
-    '            - presence: kyeno',
-    '            - presence: meerkat',
+    '            - presence: hostname1',
+    '            - presence: hostname2',
     '    targets:',
     "      Living_Room_Switch: { state: 'ON', brightness: { l1: 100, l2: 100 } }",
 ].join('\n'))
@@ -739,14 +739,14 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     try {
         // Empty house, powered-off host: the hand-off restores the lamps it owns, and the room
         // light stays off -- nobody is in it.
-        PRESENCE = { kyeno: false, meerkat: false }
+        PRESENCE = { hostname1: false, hostname2: false }
         let devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
         expectPayload(devices, ROOM_LIGHT_ID, null)
 
         // Someone home: the same poke re-evaluates the presence rule, and the room light comes
         // back at its OWN 100/100 -- not at the home-theater pause level.
-        PRESENCE = { kyeno: true, meerkat: false }
+        PRESENCE = { hostname1: true, hostname2: false }
         devices = await runScenario({ illuminance: 50, timeOfDay: 'night' }, { force: true })
         for (const id of AMBIENT_ON_IDS) expectPayload(devices, id, 'ON')
         expectPayload(devices, ROOM_LIGHT_ID, ROOM_LIGHT_ON)

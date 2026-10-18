@@ -1,5 +1,5 @@
 /**
- * Home Theater Automation -- Home Office (HTPC / Salon) instance.
+ * Home Theater Automation -- Home Office instance.
  * Per-room deployment of the shared home-theater pattern for the HTPC.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).

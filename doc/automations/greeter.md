@@ -17,7 +17,7 @@ Missing per-host bucket lines skip silently; a missing bundle section warns. Sil
 Windows are evaluated in YAML order; bounds accept human-readable durations or plain milliseconds, and either side may be open-ended:
 
 ```yaml
-triggers_network: [kyeno, meerkat]    # hosts to greet on return
+triggers_network: [hostname1, hostname2]    # hosts to greet on return
 use_ai: false                         # precise AI/TTS switch (default off)
 
 greeting_windows:                     # contiguous bands by design: every return is greeted
@@ -39,7 +39,7 @@ Add new buckets freely — e.g., a *"long weekend"* window with its own line. Th
 Both output paths accept the shared jingle keys, resolved once per greeting by [TTS framing profiles](../installation/tts-integration.md) (`src/lib/ttsProfiles.js`):
 
 ```yaml
-tts_profile: 'greeting'                 # shipped default -- entry of the locale tts.yaml profiles:
+tts_profile: ''                         # empty by default; optionally name a locale TTS profile
 #tts_options:                           # explicit framing, wins over the profile field by field
 #  intro: 'hello.wav'                   # wave played before the greeting
 #  outro: null                          # wave played after the greeting
@@ -56,18 +56,18 @@ Sentences live in `etc/i18n/{locale}/greeter.yaml`. Each bucket holds per-host l
 
 ```yaml
 names:
-  kyeno:   { vocative: 'Macieju', genitive: 'Macieja' }
-  meerkat: { vocative: 'Edytko',  genitive: 'Edytkę' }
+  hostname1:   { vocative: 'Janie', genitive: 'Jana' }
+  hostname2: { vocative: 'Zosiu',  genitive: 'Zosię' }
 
 reboot:
   tts:
-    kyeno: 'I bum -- komputer {% name_genitive %} właśnie się rebootował!'
+    hostname1: 'I bum -- komputer {% name_genitive %} właśnie się rebootował!'
   ai:
-    kyeno: 'Ogłoś krótko i z humorem, że komputer {% name_genitive %} właśnie się rebootował.'
+    hostname1: 'Ogłoś krótko i z humorem, że komputer {% name_genitive %} właśnie się rebootował.'
 ```
 
-- `{% name_vocative %}` → direct address ("Witaj, Macieju!")
-- `{% name_genitive %}` → possessive/genitive constructions ("komputer Macieja")
+- `{% name_vocative %}` → direct address ("Witaj, Janie!")
+- `{% name_genitive %}` → possessive/genitive constructions ("komputer Jana")
 
 The `tts.*` line is spoken verbatim on the plain-TTS path (and as the fallback when AI fails); the `ai.*` line is an *instruction* to the model — never read aloud itself. English bundles keep both slots with the same plain name since English has no cases; the structure stays identical across locales.
 

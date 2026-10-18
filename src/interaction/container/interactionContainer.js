@@ -233,7 +233,7 @@ class SInteractionContainer {
     }
 
     /** Route a physical device button action through the interaction registry.
-     * @param {string} deviceName - Device friendly name (e.g., "Kuchnia Wlacznik Jadalnia")
+     * @param {string} deviceName - Device friendly name (e.g., "Kitchen Dining Switch")
      * @param {Object} triggerData - Data passed straight through to execute(); must include at least {action}
      * @returns {boolean} true when an interaction matched and was executed (even if it threw), false otherwise */
     routeDeviceAction(deviceName, triggerData = {}) {
