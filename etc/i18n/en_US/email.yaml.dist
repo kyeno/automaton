@@ -1,0 +1,34 @@
+# Email -- English Language Bundle
+# -----------------------------------
+# Templates for the notification mails the automaton sends to the house owners.
+# One section per notification kind, named exactly like the kind the sender passes
+# (the gardener's stuck-probe watchdog sends kind 'gardener_stuck'):
+#   subject   -- subject line; the email.subject_prefix from automaton.yaml is prepended
+#   greeting  -- opening line, addressed to the owner receiving this copy
+#   signature -- closing block; the "--" line is the conventional mail signature marker
+#   footer    -- provenance line naming when and where the message was generated
+#   body      -- full body used when the sender has no announcement text of its own
+#                (only the 'test' section needs it)
+# Placeholders filled by the mail service on every send:
+#   {% owner_name %}   -- the owner's name from house_owners
+#   {% owner_email %}  -- the owner's address
+#   {% bot_name %}     -- the assistant's name (ai.name), "Automaton" when unset
+#   {% hostname %}     -- machine the automaton runs on
+#   {% date %}         -- local calendar day, "YYYY-MM-DD"
+#   {% time %}         -- local clock time, "HH:MM"
+# Kind-specific placeholders are listed in the gardener bundle (stuck_flowers, stuck_window).
+# A placeholder the sender cannot answer is removed from the mail, never left in it.
+# Template copy ships as email.yaml.dist.
+
+gardener_stuck:
+  subject: 'Soil probe stuck: {% stuck_flowers %}'
+  greeting: 'Hello, {% owner_name %},'
+  signature: "-- \n{% bot_name %}, automaton house automation"
+  footer: 'Generated on {% date %} at {% time %} by the automaton running on {% hostname %}.'
+
+test:
+  subject: 'Automaton email channel test'
+  greeting: 'Hello, {% owner_name %},'
+  body: 'This is a test of the automaton email channel. Receiving it means the SMTP relay, the sender address and the house owners list are all configured correctly -- no action needed, just delete this message.'
+  signature: "-- \n{% bot_name %}, automaton house automation"
+  footer: 'Generated on {% date %} at {% time %} by the automaton running on {% hostname %}.'

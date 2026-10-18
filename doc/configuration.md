@@ -29,8 +29,13 @@ Copy `.env.example` to `.env` and adjust values. This file is gitignored and sho
 | `AI_API_KEY` | No | AI provider API key | `sk-your-key-here` |
 | `TTS_API_URL` | No | TTS server API endpoint | `http://localhost:7423/tts` |
 | `TTS_TCP_ENDPOINT` | No | Audio playback destination (`ip:port`) | `192.168.1.x:12345` |
+| `SMTP_HOST` | No | Mail relay hostname for notification emails; **unset disables the whole email channel** | `smtp.example.com` |
+| `SMTP_PORT` | No | Mail relay port (default `465`) | `465` |
+| `SMTP_SECURE` | No | `true` (TLS) or `false` (plain); default `true` | `true` |
+| `SMTP_USER` | No | Relay login address; also the sender fallback when `email.from` is empty | `automaton@example.com` |
+| `SMTP_PASS` | No | Relay login password | `…` |
 
-> The AI and TTS services are optional — unset URLs disable those features at startup with a warning. The `--no-ai` / `--no-tts` startup flags disable them per-run without touching `.env`.
+> The AI and TTS services are optional — unset URLs disable those features at startup with a warning. The `--no-ai` / `--no-tts` / `--no-email` startup flags disable them per-run without touching `.env`. The email relay secrets live here; the behavioural email settings (`enabled`, `from`, `notify`, `cooldown_ms`) and the `house_owners` recipient list live in `etc/automaton.yaml` — see [Email Notifications](services/email.md).
 
 ### Overriding settings from the command line
 
@@ -86,7 +91,7 @@ locale:
   geo_longitude: 21.0122  # WGS84 decimal degrees; positive = east  (-180..180)
 ```
 
-- **`locale.geo_latitude`** / **`locale.geo_longitude`** -- Your site's position (decimal degrees, WGS84). Both are optional numbers; when missing/invalid the sun shorthands resolve to nothing and any gate relying on them fails closed (the rule simply never fires) rather than guessing. The values feed `sunrise-sunset-js`, which computes today's **civil** dawn/dusk instants -- the sun 6° below the horizon, when the sky is effectively day -- for the current calendar day. Geometric sunrise/sunset are computed alongside them and exposed to automations as the `sunrise`/`sunset` context fields for the rare rule that wants the disc edge itself.
+- **`locale.geo_latitude`** / **`locale.geo_longitude`** -- Your site's position (decimal degrees, WGS84). Both are optional numbers; missing/invalid coordinates leave solar gates unresolvable so they fail closed. `sunrise-sunset-js` computes civil dawn and actual sunset for these gates; raw sunrise/sunset are also available through `getSunriseSunset()`.
 
 ### TTS Configuration
 
@@ -112,6 +117,33 @@ ai:
 ```
 
 **Periodic announcements:** there is no built-in periodic AI messenger -- rule-based automations fill that role instead (see [Automations](./automations/index.md); how system-originated announcements stay out of conversation caching is covered in [AI Conversation Caching](architecture/ai-conversation-caching.md)).
+
+### Email Section
+
+The email channel mails the house owners about notifications (currently the gardener's stuck-probe warning). The relay connection and credentials are the `SMTP_*` variables in `.env`; this section holds the behavioural settings, and `house_owners:` (a top-level key, not nested under `email:`) names the recipients.
+
+```yaml
+house_owners:                     # who gets the mail
+  - name: 'Anna'
+    email: 'anna@example.com'
+
+email:
+  enabled: true                   # false disables the channel even with a relay set
+  from: ''                        # sender address; falls back to SMTP_USER when empty
+  subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
+  cooldown_ms: "60m"              # per-kind silence after one notification; 0 = mail every event
+  notify:                        # per-kind switches; a kind set to false never mails
+    gardener_stuck: true
+```
+
+- **`house_owners`** — list of `{ name, email }` (a bare address string is also accepted). Entries without a well-formed address are dropped; a missing name falls back to the local part of the address.
+- **`email.enabled`** — master switch. `false` disables the channel even when `SMTP_HOST` is set.
+- **`email.from`** — sender address; empty falls back to `SMTP_USER`.
+- **`email.subject_prefix`** — prepended to every subject; empty string drops it.
+- **`email.cooldown_ms`** — per-kind re-notification window; `0` mails every event.
+- **`email.notify`** — map of kind → boolean; a kind set to `false` is muted, a kind with no entry is allowed.
+
+The sentence templates live in `etc/i18n/<locale>/email.yaml`, one section per kind plus a `test:` section for the `/mail test` mail. The channel is independent of speech: a silent period, `stuck_speak: false` or a missing TTS output never blocks the mail. See [Email Notifications](services/email.md).
 
 ### UI Section
 
@@ -375,7 +407,7 @@ The optional `hour:` condition gates rules against the **actual local clock hour
 | `hour: { gt: 22 }` / `{ gte: 23 }` | After / at-or-after that hour |
 | `hour: { lt: 5 }` / `{ lte: 2 }` | Before / up-to-and-including that hour |
 | `hour: { gte: 'sunrise' }` / `{ lte: 'sunset' }` | At/after real first light, before/at real end of day (also `sundawn`/`sundusk`) |
-| `hour: { gte: 'predusk' }` | At/after **civil dusk minus 30 minutes** -- a dusk-anchored offset (see below) |
+| `hour: { gte: 'predusk' }` | At/after **sunset minus 30 minutes** -- a dusk-anchored offset (see below) |
 | `hour: { gte: 1230 }` / `{ lte: '12:30' }` | At/after 12:30, before/at 12:30 -- minute-precision clock bounds |
 
 Unlike `time_of_day`, it is evaluated directly from the live clock on every tick -- no period table, no season logic -- which makes it the right tool for wall-clock schedules like 'close everything after 23h' where winter dusk can arrive during calendar afternoon. It composes with other conditions as usual (all must hold), so `hour: { gte: 23 }` + `illuminance: { lte: 15 }` fires only in true darkness past 23h and stays inert at pre-dawn hours even when equally dark. Plain numeric bounds keep one-hour granularity; a bound written as a sun token (`'sunrise'`/`'sunset'`) switches that comparison to exact sub-hour precision against the computed dawn/dusk instant, so `hour: { gte: 'sunrise' }` opens right at first light rather than the next whole hour. Malformed values or an unresolvable sun token fail closed (the rule never matches) rather than passing silently.
@@ -390,16 +422,16 @@ Unlike `time_of_day`, it is evaluated directly from the live clock on every tick
 
 Values in `0..23` stay plain hours, so `hour: { gte: 23 }` keeps its existing meaning. A number that parses as a clock time is always read as a clock time: `100` is `01:00`, not 100 o'clock. Anything outside both readings (`24`, `99`, `1299`, `'abc'`) is malformed and fails closed. The static analyzer resolves these bounds to fractional hours before sweeping the clock grid, so a `lte: 1230` bound correctly stops covering the day at 13h.
 
-**Sun tokens are civil twilight.** `sundawn`/`sunrise` and `sundusk`/`sunset` resolve to the *civil* twilight boundaries -- the sun 6° below the horizon, when the sky is effectively day -- not the geometric disc edge. At 52°N that is roughly 33 minutes earlier than sunrise in the morning and 34 minutes later than sunset in the evening, and the gap widens with latitude. This is deliberate: rules gated on "daylight" that read a street illuminance sensor must not fire in pre-dawn darkness, and civil twilight is the boundary that matches what the sensor reports. The geometric instants stay available in the automation context as `sunrise`/`sunset` for rules that genuinely want the disc edge.
+**Sun tokens.** `sundawn`/`sunrise` resolve to civil dawn (sun 6° below the horizon). `sundusk`/`sunset` resolve to actual sunset, not civil dusk. The solar provider also exposes raw sunrise/sunset through `getSunriseSunset()`.
 
 **Named clock anchors (`midnight`, `noon`).** A bound may name a fixed point on the axis instead of spelling out a number: `hour: { gte: 'midnight' }` and `hour: { gte: 'noon' }` resolve to `00:00` and `12:00`. They are accepted in any bound slot, case-insensitively and with surrounding whitespace ignored; an unrecognised word fails closed like any malformed bound.
 
-**Dusk-anchored offset (`predusk`).** A bound may also name a *sun event shifted by a fixed offset*: `hour: { gte: 'predusk' }` resolves to today's civil dusk **30 minutes ahead** -- the moment lamps are worth switching on, while the sky is still dimming, rather than at the very end of twilight. It is written for rules that mean "a little before dusk" and cannot afford a hard-coded clock time, which drifts by hours across the year. Like the sun tokens it hangs on, `predusk` is resolved from the real civil instants computed from `locale.geo_latitude`/`locale.geo_longitude`, so it inherits their civil-twilight meaning and **fails closed when no location is configured**. It is accepted in `hour:` bounds and as a candidate in the merged gates below. The offset is applied on the current calendar day, so at extreme latitudes where civil dusk lands just after midnight the floor sits below the axis start and a `gte` bound is trivially satisfied.
+**Dusk-anchored offset (`predusk`).** A bound may also name a *sun event shifted by a fixed offset*: `hour: { gte: 'predusk' }` resolves to today's sunset **minus 30 minutes** -- the moment lamps are worth switching on, while the sky is still dimming, rather than at the very end of twilight. It is written for rules that mean "a little before dusk" and cannot afford a hard-coded clock time, which drifts by hours across the year. Like the sun tokens it hangs on, `predusk` is resolved from the solar instants computed from `locale.geo_latitude`/`locale.geo_longitude`, and **fails closed when no location is configured**. It is accepted in `hour:` bounds and as a candidate in the merged gates below. The offset is applied on the current calendar day, so at extreme latitudes where sunset lands just after midnight the floor sits below the axis start and a `gte` bound is trivially satisfied.
 
 **The hour axis starts at midnight and never wraps.** Bounds compare on one day's axis running `00:00 → 23:59`, so a bound pair cannot cross midnight: `hour: { gte: 22, lt: 6 }` is unsatisfiable and matches nothing, and a rule that means "the whole night" must be written as an explicit OR -- `any_of: [{ hour: { gte: sunset } }, { hour: { lt: sunrise } }]`. Two consequences are worth remembering:
 
 - **A lower bound at midnight is never needed.** `hour: { lt: sunrise }` already means *midnight → civil dawn*, because nothing on the axis lies below `00:00`. Writing `hour: { gte: 'midnight', lt: sunrise }` describes the same window with a bound that can only ever be true -- accepted, harmless, but it hides the intent, so prefer the single bound.
-- **A bare `gte: sunset` is only half a night.** On its own it covers civil dusk → `23:59` and silently drops `00:00` → civil dawn; the morning half has to be added as its own arm.
+- **A bare `gte: sunset` is only half a night.** On its own it covers sunset → `23:59` and silently drops `00:00` → civil dawn; the morning half has to be added as its own arm.
 
 The static coverage analyzer mirrors these semantics exactly and treats `hour` as reserved, so it never appears as a sensor dimension in scenario grids or gap reports; a sun-token bound is treated as satisfied there since real dawn/dusk times are not part of the static clock grid.
 
@@ -416,9 +448,9 @@ Each candidate resolves to an absolute instant on the current day:
 
 | Candidate form | Resolves to |
 |----------------|-------------|
-| `"sundusk"` / `"sunset"` | today's civil dusk (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
+| `"sundusk"` / `"sunset"` | today's sunset (`sunrise-sunset-js`, from `locale.geo_latitude`/`locale.geo_longitude`) |
 | `"sundawn"` / `"sunrise"` | today's civil dawn |
-| `"predusk"` | today's civil dusk **minus 30 minutes** (a sun event with a fixed offset; fails closed without geo) |
+| `"predusk"` | today's sunset **minus 30 minutes** (a sun event with a fixed offset; fails closed without geo) |
 | `19` or `{ hour: 19 }` | today at 19:00 local |
 | `1230` / `'12:30'` | today at 12:30 local (minute-precision clock time, same spellings as `hour:` bounds) |
 | `'morning'` / `{ 'time_of_day': 'morning' }` | the start-of-day hour of that period (e.g. morning -> 05:00) |

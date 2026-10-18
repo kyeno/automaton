@@ -1,5 +1,5 @@
 # TTS TWILIGHT -- Configuration
-# Announces civil dawn and civil dusk by voice: one announcement per event per day, fired at
+# Announces civil dawn and sunset by voice: one announcement per event per day, fired at
 # the exact local minute the event happens.
 #   * the minute-granularity tick is anchored to wall-clock minutes, so a tick lands in the
 #     minute the event falls in;
@@ -42,8 +42,8 @@ rules:                             # dawn first, dusk second -- first announceab
     #  intro: 'intro-chime.wav'    # Wave filename played before the announcement
     #  intro_spacing: -1.5         # Seconds between intro end and speech start; negative = overlap
 
-  - name: 'Civil dusk'
-    event: 'sundusk'               # civil dusk instant computed from locale.geo_* (alias: sunset)
+  - name: 'Sunset'
+    event: 'sundusk'               # sunset instant computed from locale.geo_* (alias: sunset)
     conditions: { hour: { gte: 'sundusk' } }   # gate: from dusk on, the dawn window is closed
     sentence: 'twilight.sundusk'
     once: true                     # one announcement per day (the rule engine's Redis marker)

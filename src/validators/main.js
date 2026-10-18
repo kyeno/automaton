@@ -65,6 +65,36 @@ export default {
         }
     },
 
+    //  House owners section -- the people the automaton speaks and writes to. Entries are
+    //  objects; the mail service addresses every notification mail to each address listed.
+    house_owners: {
+        type: 'array',
+        required: false,
+        items: {
+            type: 'object',
+            properties: {
+                name:  { type: 'string', required: true },
+                email: { type: 'string', required: true }
+            }
+        }
+    },
+
+    //  Email section -- SMTP notification channel. Host/port/credentials are secrets and
+    //  live in .env (SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS); only the
+    //  behavioral settings below belong here.
+    email: {
+        type: 'object',
+        required: false,
+        properties: {
+            enabled:        { type: 'boolean' },
+            from:           { type: 'string' },
+            //  Per-kind notification switches, keyed by kind name (dynamic keys, map).
+            notify:         { type: 'object' },
+            cooldown_ms:    { type: ['number', 'string'] },
+            subject_prefix: { type: 'string' }
+        }
+    },
+
     //  Alerts section -- spoken notifications for notable system events.
     alerts: {
         type: 'object',

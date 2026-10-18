@@ -49,6 +49,12 @@ Singletons watching the world outside Zigbee.
 - [Video Player](monitors/video-player.md) — VLC / MPC-HC status polling with `video_player` conditions
 - [Offline Alerts](monitors/offline-alerts.md) — spoken warnings for Zigbee devices and mission-critical hosts going offline
 
+### Services
+
+Core singletons that back the automations and UI.
+
+- [Email Notifications](services/email.md) — SMTP mail channel for the house owners: per-kind templates, cooldown, `/mail` command
+
 ### Guides & Roadmap
 
 - [Configuration Guide](configuration.md) — every config file, variable, and section explained

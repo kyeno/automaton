@@ -46,7 +46,7 @@ rules:
     reassert_state: true    # re-send even when cached state matches
     conditions:
       time_of_day: [afternoon, evening]
-      hour: { gte: predusk }   # civil dusk minus 30 min
+      hour: { gte: predusk }   # sunset minus 30 min
       illuminance: { lt: 900 }
     targets:
       Kitchen_Outlet: ON

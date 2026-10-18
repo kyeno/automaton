@@ -1,0 +1,111 @@
+# Email Notifications
+
+The **EmailService** is the outbound mail channel. It turns a notification into a plain-text email addressed to the house owners, using locale-aware templates, and delivers it over SMTP. It is the only service that talks to an external mail relay, and it is deliberately decoupled from speech: a notification can be mailed even when the speaker is muted, in a silent period, or when no TTS/AI output channel is up.
+
+The service owns four things:
+
+- **The SMTP transport**, built from the `SMTP_*` secrets in `.env`.
+- **The recipient list**, read from `house_owners:` in `etc/automaton.yaml`.
+- **The templates**, loaded from `etc/i18n/<locale>/email.yaml` in the active locale.
+- **A per-kind cooldown**, so one incident produces one round of mail, not a copy per report.
+
+## How a Notification Becomes a Mail
+
+A component never formats an email itself. It calls `EmailService.notify()` with a *kind*, the announcement *message* (the same text the speaker would have said), and optional *tokens* and *meta*:
+
+```js
+await EmailService.notify({
+    kind: 'gardener_stuck',
+    message: 'Soil probe Gerbera has not moved in 24h.',
+    tokens: { stuck_flowers: 'Gerbera (40%)' },
+    meta: { stuck_count: 1 },
+})
+```
+
+The service then:
+
+1. Checks the **per-kind switch** (`email.notify.<kind>`). A kind set to `false` never mails; a kind with no switch is allowed.
+2. Checks the **per-kind cooldown** (`email.cooldown_ms`). The marker lives in Redis (`mail:cooldown:<kind>`) so it survives a restart; a Redis outage falls back to an in-memory timestamp and fails open.
+3. Resolves the **locale template section** for the kind from `etc/i18n/<locale>/email.yaml`.
+4. Renders the **subject** (prefix + template line) and the **body** (greeting, the announcement message, signature, footer).
+5. Queues one copy per owner on a single FIFO chain and returns immediately — a slow or dead relay can never block the caller.
+
+The body is the announcement text verbatim, wrapped in the template's greeting and signature. That is what makes the mail a faithful copy of what was (or would have been) said: the announcement pipeline generates the text once and hands the same string to the speaker, the AI bridge and the mail.
+
+Unanswered `{% placeholder %}` tokens are **removed**, not passed through — a mail is read, not heard, and a leftover placeholder is a bug the owner should not have to look at.
+
+## Configuration
+
+The relay connection and its credentials are secrets and stay in `.env`; every behavioural setting lives in `etc/automaton.yaml`.
+
+### `.env` (secrets)
+
+| Variable | Description |
+|----------|-------------|
+| `SMTP_HOST` | Relay hostname. **Unset = the whole channel is disabled.** |
+| `SMTP_PORT` | Relay port (default `465`). |
+| `SMTP_SECURE` | `true` (TLS) or `false` (plain). Default `true`. |
+| `SMTP_USER` | Login address. Also the sender fallback when `email.from` is empty. |
+| `SMTP_PASS` | Login password. |
+
+### `etc/automaton.yaml` (behaviour)
+
+```yaml
+house_owners:                     # who gets the mail
+  - name: 'Anna'
+    email: 'anna@example.com'
+
+email:
+  enabled: true                   # false disables the channel even with a relay set
+  from: ''                        # sender address; falls back to SMTP_USER when empty
+  subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
+  cooldown_ms: "60m"              # per-kind silence after one notification; 0 = mail every event
+  notify:                        # per-kind switches; a kind set to false never mails
+    gardener_stuck: true
+```
+
+- **`house_owners`** — a list of `{ name, email }` (a bare address string is also accepted). Entries without a well-formed address are dropped, not mangled. A missing name falls back to the local part of the address.
+- **`email.enabled`** — the master switch. `false` disables the channel even when `SMTP_HOST` is set.
+- **`email.from`** — the sender address. When empty, `SMTP_USER` is used.
+- **`email.subject_prefix`** — prepended to every subject. Empty string drops the prefix.
+- **`email.cooldown_ms`** — the per-kind re-notification window. `0` mails every event.
+- **`email.notify`** — a map of kind → boolean. A kind set to `false` is muted; a kind with no entry is allowed.
+
+## The `/mail` Command
+
+The terminal UI exposes the channel through `/mail` (alias `/email`):
+
+| Command | Effect |
+|---------|--------|
+| `/mail status` | Relay, sender, owners, kind switches and the send counters. Secrets are never shown. |
+| `/mail test [address]` | Queue the configuration-check mail to the owner list, or to one explicit address. |
+| `/mail help` | Usage. |
+
+The test mail uses the `test:` template section and is **not** subject to the per-kind cooldown — it is a request, not a notification, so a cooldown never silences it.
+
+## Delivery Model
+
+- Sends are queued on a **single FIFO chain** and delivered one at a time (`maxConnections: 1`). A slow relay serialises delivery instead of dropping order, and it can never block an automation's `execute()`.
+- The queue is capped at **25 pending** messages; deeper queues are dropped with a warning and counted as `skipped`.
+- Every delivery updates the counters returned by `getStats()`: `sent`, `failed`, `skipped`.
+- `flush()` awaits the current queue (used at shutdown and by tests); `cleanup()` unsubscribes and closes the transport.
+
+## The `notify:email` Channel
+
+Any component can request a mail without importing the service by emitting on the shared `notify:email` EventBus channel with the same `{ kind, message, tokens, meta }` payload. The service subscribes once at init and routes the payload through `notify()`.
+
+## Component Paths
+
+| Component | Path |
+|-----------|------|
+| Service | `src/service/emailService.js` |
+| Announcement pipeline (email leg) | `src/lib/announcementPipeline.js` |
+| `/mail` command | `src/ui/commands/mailCmd.js` |
+| Config schema | `src/validators/main.js` (`email`, `house_owners`) |
+| Templates | `etc/i18n/<locale>/email.yaml` (+ `.dist`) |
+| Relay secrets | `.env` (`SMTP_*`) |
+| Tests | `tests/test-email-service.js`, `tests/test-tts-gardener.js` |
+
+---
+
+→ [Documentation Home](../index.md) · Related: [Configuration Guide](../configuration.md) · [TTS Gardener](../automations/gardener.md) · [Offline Alerts](../monitors/offline-alerts.md)

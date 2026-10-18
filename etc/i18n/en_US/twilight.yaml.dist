@@ -11,7 +11,7 @@
 #   {% minutes %}     -- event minutes, unpadded
 # English clock time reads naturally in digits, so the tts line uses digits and the ai line
 # asks for the hour in words. Announcements use household wording -- "the calendar sundawn /
-# sundusk of today", never "civil dawn" / "civil dusk".
+# sundusk of today", never "civil dawn" / "sunset".
 #
 # Template -- copy to twilight.yaml and customize the sentences. Section names must match the
 # rules[].sentence keys of etc/automation/tts-twilight.yaml.

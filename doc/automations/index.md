@@ -6,7 +6,7 @@ Automaton is at heart a **rule-engine framework**: it evaluates YAML-defined con
 
 ## Ambient Lights
 
-Manages ambient lighting across two daily windows: turns off leftover lights in the morning once natural light becomes sufficient, and switches on socket-powered lamps from `predusk` — civil dusk 30 minutes ahead. Demonstrates asymmetric per-rule target sets and daily `once:` markers that let humans keep full control after each rule fires.
+Manages ambient lighting across two daily windows: turns off leftover lights in the morning once natural light becomes sufficient, and switches on socket-powered lamps from `predusk` — sunset minus 30 minutes. Demonstrates asymmetric per-rule target sets and daily `once:` markers that let humans keep full control after each rule fires.
 
 → [Full documentation](./ambient-lights.md)
 
@@ -30,7 +30,7 @@ Watches soil-moisture flower probes and reports plant hydration by voice. Each p
 
 ## TTS Twilight
 
-Announces civil dawn and civil dusk by voice, on the exact local minute each event happens. A minute-anchored timer computes both civil-twilight instants from the locale's coordinates, a freshness window decides what is still announceable, and YAML `hour:` gates bound to the `sundawn` / `sundusk` shorthands keep the two rules mutually exclusive across the day. Each rule carries its own TTS profile, so dawn and dusk are recognizable by their jingle; the hour is interpolated from the event instant, with the localized day-period word (`rano`, `wieczorem`) on both output paths and the hour spelled in declined words by code (`szósta osiemnaście`) wherever the locale's language can generate it. `once:` reuses the rule engine's daily Redis marker, and manual runs preview the upcoming event without consuming it. Demonstrates speech-only rules (no `targets:`), sun-shorthand clock gates, per-rule TTS framing, and day-period word interpolation.
+Announces civil dawn and sunset by voice, on the exact local minute each event happens. A minute-anchored timer computes civil dawn and sunset instants from the locale's coordinates, a freshness window decides what is still announceable, and YAML `hour:` gates bound to the `sundawn` / `sundusk` shorthands keep the two rules mutually exclusive across the day. Each rule carries its own TTS profile, so dawn and dusk are recognizable by their jingle; the hour is interpolated from the event instant, with the localized day-period word (`rano`, `wieczorem`) on both output paths and the hour spelled in declined words by code (`szósta osiemnaście`) wherever the locale's language can generate it. `once:` reuses the rule engine's daily Redis marker, and manual runs preview the upcoming event without consuming it. Demonstrates speech-only rules (no `targets:`), sun-shorthand clock gates, per-rule TTS framing, and day-period word interpolation.
 
 → [Full documentation](./twilight.md)
 

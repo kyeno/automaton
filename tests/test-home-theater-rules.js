@@ -219,7 +219,7 @@ const RULES_OFFICE = [
     // owner via the rule above, so the two never fight over the same lamps.
     { name: 'Office: paused/stopped - restore ambient lighting', conditions: { 'video_player': { htpc: ['paused', 'stopped'] }, 'state_transition': { 'videoPlayer:htpc': { from: 'playing' } }, 'time_of_day': ['afternoon', 'evening', 'night'], illuminance: { lt: 900 } }, targets: { Living_Room_Plug: 'ON', Kitchen_Plug: 'ON', Salon_Ambient_Dimmer: { state: 'ON', brightness: { l1: 50, l2: 25 } } } },
     // The hallway cupboard lamp on its own terms: the same player state and illuminance gate as
-    // the restore rule, narrowed to the EVENING half of the night -- civil dusk to midnight, and
+    // the restore rule, narrowed to the EVENING half of the night -- sunset to midnight, and
     // out for the rest of the night. Both rules match on a pre-midnight pause and each
     // contributes its own targets; every matching rule acts, none is shadowed. `hour: { gte:
     // sunset }` stops at midnight on its own: the hour axis ends at 24:00, so no upper bound is
@@ -743,7 +743,7 @@ console.log('\n── Home theater (single-room instance): hallway cupboard lamp
 
 {
     // The dedicated rule owns the cupboard lamp alone: the same player state and illuminance gate
-    // as the restore rule, narrowed to civil dusk -> midnight. `sundusk` is that day's real civil
+    // as the restore rule, narrowed to sunset -> midnight. `sundusk` is that day's real civil
     // dusk, so the sun gate is exercised against a real number, any month.
     const sun = solar.getSunTimes(new Date(2026, 9, 15))
     const sundawn = sun.sundawn.getTime()
@@ -913,7 +913,7 @@ console.log('\n── Home theater (shipped configs): hallway cupboard lamp rule
 
 {
     // Both shipped configs must keep the cupboard lamp OUT of the restore rule and in a rule of
-    // its own, gated to civil dusk -> midnight, with dark mode still putting it out on playback
+    // its own, gated to sunset -> midnight, with dark mode still putting it out on playback
     // and both restore paths pinned to a transition that came FROM playing.
     const FILES = [
         { file: 'etc/automation/home-office-video.yaml', host: 'htpc', cupboard: 'Przedpokoj_Gniazdo_Szafka', lux: 700 },

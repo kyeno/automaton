@@ -316,7 +316,7 @@ console.log('')
     assert(evaluateRule({ hour: { gte: 1230 } }, { hour: 12 }) === false, 'evaluateRule: gte 1230 rejects hour 12')
     assert(evaluateRule({ hour: { lte: 1299 } }, { hour: 12 }) === false, 'evaluateRule: malformed NATO bound fails closed')
 
-    // Sun-event anchors ('predusk' = civil dusk minus 30 minutes) are sun-dependent: the static
+    // Sun-event anchors ('predusk' = sunset minus 30 minutes) are sun-dependent: the static
     // analyzer has no sun context, so it treats them as satisfied instead of comparing the swept
     // hour against a raw string (which would fail every cell closed).
     assert(evaluateRule({ hour: { gte: 'predusk' } }, { hour: 16 }) === true,

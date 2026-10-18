@@ -1271,8 +1271,8 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         return null
     }
 
-    /** Whether a value is a sun-event bound token -- a real civil instant, or one shifted by a
-     *  fixed offset ('predusk' = civil dusk 30 minutes ahead).
+    /** Whether a value is a sun-event bound token -- a solar instant, or one shifted by a
+     *  fixed offset ('predusk' = sunset minus 30 minutes).
      * @private
      * @param {*} value - Candidate bound value from an `hour:` condition object.
      * @returns {boolean} True when the value is 'sunrise'/'sundawn', 'sunset'/'sundusk' or 'predusk'. */
@@ -1283,7 +1283,7 @@ export default class RuleBasedAutomationBase extends AutomationBase {
     }
 
     /** Resolve a sun-event bound token to today's epoch-ms instant at the configured location.
-     *  'predusk' hangs 30 minutes ahead of civil dusk, so a rule can light lamps while the sky is
+     *  'predusk' hangs 30 minutes ahead of sunset, so a rule can light lamps while the sky is
      *  still dimming instead of at the very end of twilight.
      * @private
      * @param {string} token - Bound/candidate token as written in the rule.

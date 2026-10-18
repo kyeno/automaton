@@ -38,7 +38,7 @@ profiles:
   # sundawn:                      # ttsTwilight -- civil dawn announcement
   #   intro: 'dawn.wav'
   #   intro_spacing: 0
-  # sundusk:                      # ttsTwilight -- civil dusk announcement
+  # sundusk:                      # ttsTwilight -- sunset announcement
   #   intro: 'dusk.wav'
   #   intro_spacing: 0
   # report:                       # weatherman periodic reports

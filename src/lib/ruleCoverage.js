@@ -31,7 +31,7 @@ const RESERVED_CONDITION_KEYS = new Set([
 ])
 
 /** Sun-event shorthands usable as an `hour:` bound; depend on real dawn/dusk, not the static clock
- *  grid. 'predusk' is civil dusk 30 minutes ahead (see {@link lib/date SUN_OFFSET_ANCHORS}). */
+ *  grid. 'predusk' is sunset minus 30 minutes (see {@link lib/date SUN_OFFSET_ANCHORS}). */
 const SUN_HOUR_SHORTHANDS = new Set(['sunrise', 'sundawn', 'sunset', 'sundusk', 'predusk'])
 
 /** Enumerated status meaning "no usable player signal" -- absent/unreachable/offline all map here. */

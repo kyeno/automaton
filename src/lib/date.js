@@ -41,9 +41,9 @@ const SEASONS = {
 const CLOCK_WORD_HOURS = { midnight: 0, noon: 12 }
 
 //  Sun-event anchors accepted as `hour:` bounds -- a named sun instant shifted by a fixed offset.
-//  'predusk' is civil dusk 30 minutes ahead: the moment lamps are worth switching on, so a rule
+//  'predusk' is sunset minus 30 minutes: the moment lamps are worth switching on, so a rule
 //  can say "dusk, a little before" instead of hard-coding a clock time that drifts by hours
-//  across the year. Like the sun shorthands they resolve against the real civil instants from
+//  across the year. Like the sun shorthands they resolve against the solar instants from
 //  lib/sun, so an unconfigured location leaves them unresolvable and the gate fails closed.
 /** Offset in hours from the sun instant each anchor hangs on (negative = earlier).
  * @type {Record<string, number>} */
@@ -407,7 +407,7 @@ class STemporal {
         return (text !== null && CLOCK_WORD_HOURS[text] !== undefined)
     }
 
-    /** Whether a clock-bound token names a sun-event anchor ('predusk') -- a real civil instant
+    /** Whether a clock-bound token names a sun-event anchor ('predusk') -- a solar instant
      *  shifted by a fixed offset. Such tokens need the sun context to resolve, exactly like
      *  'sunrise'/'sunset', and must never be compared as raw strings.
      * @param {number|string} value - Raw clock-bound token.

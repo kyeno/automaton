@@ -32,6 +32,7 @@ import AiBridgeMonitor from './monitor/aiBridgeMonitor.js'
 
 import AiAssistant     from './ai/aiAssistant.js'
 import TtsService      from './service/ttsService.js'
+import EmailService    from './service/emailService.js'
 import Ui              from './ui/ui.js'
 
 //  UI instance reference for cleanup.
@@ -47,6 +48,7 @@ Options:
       --no-trace     Disable TRACE-level file logging
       --no-ai        Disable AI features (overrides AI_* environment settings)
       --no-tts       Disable TTS features (overrides TTS_* environment settings)
+      --no-email     Disable email notifications (overrides SMTP_* environment settings)
   -c, --config-override "key.path: value"   Override a config parameter from etc/automaton.yaml (strictly validated; repeatable)
 
   -h, --help         Show this help message
@@ -63,6 +65,11 @@ Environment variables (.env):
   AI_API_KEY                        AI provider API key (optional)
   TTS_API_URL                       TTS server API endpoint (e.g., http://host:port/tts)
   TTS_TCP_ENDPOINT                  Audio playback destination (ip:port)
+  SMTP_HOST                         SMTP relay host for notification mails (e.g., smtp.host)
+  SMTP_PORT                         SMTP relay port (default: 465)
+  SMTP_SECURE                       Use TLS on the relay connection (default: true)
+  SMTP_USER                         SMTP login user; also the default sender address
+  SMTP_PASS                         SMTP login password
 
 Behavior settings are in etc/automaton.yaml (locale.language, locale.time_format); individual values can be overridden per-run via -c/--config-override.
 
@@ -85,6 +92,7 @@ try {
             'no-trace': { type: 'boolean', default: false },
             'no-ai':    { type: 'boolean', default: false },
             'no-tts':   { type: 'boolean', default: false },
+            'no-email': { type: 'boolean', default: false },
             'config-override': { type: 'string', short: 'c', multiple: true },
 
             help:       { type: 'boolean', default: false, short: 'h' },
@@ -101,7 +109,7 @@ if (parsed.values.help) {
     printHelp(null)
 }
 
-//  --no-ai / --no-tts make each feature behave exactly as if its .env vars were.
+//  --no-ai / --no-tts / --no-email make each feature behave exactly as if its .env vars were.
 if (parsed.values['no-ai']) {
     delete process.env.AI_API_URL
     delete process.env.AI_API_KEY
@@ -110,6 +118,14 @@ if (parsed.values['no-ai']) {
 if (parsed.values['no-tts']) {
     delete process.env.TTS_API_URL
     delete process.env.TTS_TCP_ENDPOINT
+}
+
+if (parsed.values['no-email']) {
+    delete process.env.SMTP_HOST
+    delete process.env.SMTP_PORT
+    delete process.env.SMTP_SECURE
+    delete process.env.SMTP_USER
+    delete process.env.SMTP_PASS
 }
 
 //  Bootstrap -- dependency-aware initialization order.
@@ -122,6 +138,7 @@ StateService.set('cli.noUi', parsed.values['no-ui'])
 StateService.set('cli.noTrace', parsed.values['no-trace'])
 StateService.set('cli.noAi', parsed.values['no-ai'])
 StateService.set('cli.noTts', parsed.values['no-tts'])
+StateService.set('cli.noEmail', parsed.values['no-email'])
 StateService.set('cli.configOverrides', parsed.values['config-override'] ?? [])
 
 //  Phase 1 -- Configuration & Logging (must succeed before anything else).
@@ -153,6 +170,10 @@ if (parsed.values['no-ai']) {
 
 if (parsed.values['no-tts']) {
     LoggerService.info('TTS disabled via --no-tts flag', 'Main')
+}
+
+if (parsed.values['no-email']) {
+    LoggerService.info('Email disabled via --no-email flag', 'Main')
 }
 
 if ((parsed.values['config-override'] ?? []).length > 0) {
@@ -225,6 +246,12 @@ async function gracefulDeath(reason, errorLevel = 0) {
         if (initialized.has('TtsService')) {
             LoggerService.debug('Cleaning up TtsService...', 'Main')
             TtsService.cleanup()
+        }
+
+        //  Mail queue drains before the relay closes -- no notification lost on shutdown.
+        if (initialized.has('EmailService')) {
+            LoggerService.debug('Closing EmailService...', 'Main')
+            await EmailService.cleanup()
         }
 
         //  Phase 4 -- Tear down the UI so terminal-kit releases the tty.
@@ -366,12 +393,21 @@ async function bootstrap() {
         LoggerService.info('TTS service disabled at startup -- not configured', 'Main')
     }
 
+    //  Email -- optional SMTP notification channel; skipped when SMTP_HOST is unset, exactly
+    //  like the two above. Needs CacheService (cooldown markers) and I18nLoader (templates).
+    if (EmailService.isConfigured()) {
+        await initService('EmailService', () => EmailService.init(), true)
+    } else {
+        LoggerService.info('Email service disabled at startup -- SMTP relay not configured', 'Main')
+    }
+
     //  AI Bridge -- optional MQTT channel feeding external prompts (web UI / STT backends)
     await initService('AiBridgeMonitor', () => AiBridgeMonitor.init(), true)
 
     const services = []
     if (AiAssistant.isAvailable()) services.push('AI')
     if (TtsService.isEnabled())   services.push('TTS')
+    if (EmailService.isEnabled()) services.push('Email')
     const statusLabel = services.length > 0 ? `(including ${services.join(', ')})` : ''
     LoggerService.info(`All core services initialized ${statusLabel}`, 'Main')
 }

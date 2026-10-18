@@ -38,7 +38,7 @@ process.env['MQTT_PREFIX'] = process.env['MQTT_PREFIX'] || 'zigbee2mqtt'
 process.env['REDIS_URL'] = process.env['REDIS_URL'] || 'redis://192.168.1.1:6379'
 process.env['CONFIG_PATH'] = process.env['CONFIG_PATH'] || './etc/automaton.yaml'
 
-await ConfigService.init()
+await ConfigService.init(['locale.geo_latitude: 52.2307', 'locale.geo_longitude: 21.0122'])
 LoggerService.init()
 
 let passed = 0
@@ -216,18 +216,18 @@ const sunriseClock = temporal.formatClockHour(frac(astro.sunrise.getTime()))
 const sunsetClock = temporal.formatClockHour(frac(astro.sunset.getTime()))
 
 assert(dawnClock === '06:12', `sundawn is civil dawn 06:11:43 -> ${dawnClock} rounded (got ${dawnClock})`)
-assert(duskClock === '18:36', `sundusk is civil dusk 18:36 (got ${duskClock})`)
+assert(duskClock === sunsetClock, `sundusk is actual sunset ${sunsetClock} (got ${duskClock})`)
 assert(sunToday.sundawn.getTime() === astro.twilight.civilDawn.getTime(),
     'sundawn resolves to sunrise-sunset-js twilight.civilDawn')
-assert(sunToday.sundusk.getTime() === astro.twilight.civilDusk.getTime(),
-    'sundusk resolves to sunrise-sunset-js twilight.civilDusk')
+assert(sunToday.sundusk.getTime() === astro.sunset.getTime(),
+    'sundusk resolves to sunrise-sunset-js sunset')
 
 const dawnGapMin = Math.round((frac(astro.sunrise.getTime()) - frac(sunToday.sundawn.getTime())) * 60)
 assert(dawnGapMin >= 25,
     `civil dawn leads geometric sunrise (${sunriseClock}) by ${dawnGapMin} min -- the pre-dawn darkness window`)
 const duskGapMin = Math.round((frac(sunToday.sundusk.getTime()) - frac(astro.sunset.getTime())) * 60)
-assert(duskGapMin >= 25,
-    `civil dusk trails geometric sunset (${sunsetClock}) by ${duskGapMin} min`)
+assert(duskGapMin === 0,
+    `sundusk equals geometric sunset (${sunsetClock}) by ${duskGapMin} min`)
 
 // ---------------------------------------------------------------------------
 // B. The morning that used to break: pre-dawn vs. post-dawn ticks

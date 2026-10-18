@@ -36,7 +36,7 @@ class SSolar {
 
     /** Resolve the dawn/dusk instants for a moment's calendar day at the configured location.
      * @param {Date} [date=new Date()] - Moment whose calendar day to evaluate.
-     * @returns {{sundawn: Date|null, sundusk: Date|null}} Dawn and dusk instants (or nulls). */
+     * @returns {{sundawn: Date|null, sundusk: Date|null}} Civil dawn and actual sunset instants (or nulls). */
     getSunTimes(date = new Date()) {
         const entry = this.#resolveDay(date)
         return { sundawn: entry.sundawn, sundusk: entry.sundusk }
@@ -68,7 +68,7 @@ class SSolar {
             const sunset = times?.sunset ?? null
             result = {
                 sundawn: times?.twilight?.civilDawn ?? sunrise,
-                sundusk: times?.twilight?.civilDusk ?? sunset,
+                sundusk: sunset,
                 sunrise,
                 sunset,
             }

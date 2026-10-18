@@ -31,6 +31,25 @@ ai_bridge:
   topic_base: "automaton/ai"  # MQTT topic tree, outside zigbee2mqtt/*
   forward_events: true        # stream tool/device interactions over MQTT too
 
+# --- HOUSE OWNERS: the people the automaton speaks and writes to. Names fill the
+# greeting lines of the mail templates; every address below receives a copy of each
+# notification. Reference: doc/services/email.md
+house_owners:
+  - name: 'Name'
+    email: 'owner@example.com'
+
+# --- EMAIL: SMTP notifications (gardener alerts, system notices).
+# Host, port and credentials are secrets and stay in .env: SMTP_HOST, SMTP_PORT,
+# SMTP_SECURE, SMTP_USER, SMTP_PASS. Sentence templates: etc/i18n/<locale>/email.yaml.
+# Reference: doc/services/email.md
+email:
+  enabled: true
+  from: ''                      # sender address; falls back to SMTP_USER when empty
+  subject_prefix: 'Automaton'   # prepended to every subject: "Automaton: <subject>"
+  cooldown_ms: "60m"            # per-kind silence after one notification; 0 = mail every event
+  notify:                       # per-kind switches; a kind set to false never mails
+    gardener_stuck: true
+
 # --- ALERTS: spoken notifications for notable system events
 # Reference: doc/monitors/offline-alerts.md
 alerts:

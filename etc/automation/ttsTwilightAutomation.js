@@ -1,6 +1,6 @@
 /**
  * TTS Twilight Automation.
- * Announces civil dawn and civil dusk by voice -- once per day, at the exact local minute,
+ * Announces civil dawn and sunset by voice -- once per day, at the exact local minute,
  * each event through its own TTS profile so dawn and dusk get their own spoken framing.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).

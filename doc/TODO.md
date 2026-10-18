@@ -1,13 +1,6 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Add email system with simple SMTP configuration in .env + option for TTS
-  Gardener to send notification emails if sensors are stuck. Add house owners
-  array to automaton.yaml (array of emails that should be notified in such
-  cases). Create i18n-aware email templates where such notification would only
-  take over the subject and AI response's (or TTS, if AI is disabled) part of
-  the body. The template will carry some sort of "Hello, {% owner_name %},\n\n{%
-  AI response %}\n\n-- \n{% AI bot name %}, automaton house automation" or so.
 - Weatherman: Use hourly storage of temp/pressure/humidity values in each cycle,
   then when those values are available, modify the sentence to say not the
   temperature "is X", but "has risen to X", "has fallen to X" or "remains stable at
@@ -17,14 +10,6 @@
   Consider a fixing attempt and if it fails, remove the functionality altogether.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet
   (machine was rebooted soon), data should get cached immediately after read
-- CONSIDER: home-theater light restore fires on ANY not-playing status, including the
-  pre-settle window where a title is still dwelling (~60 s) and reports as `stopped` -- so
-  lamps come back mid-browse whenever it's already dark enough (parity with the old
-  delegation, but worth investigating whether restore should require a settled watch
-  session, e.g., by dropping bare `stopped` from the not-playing list). Related settle
-  semantics in src/monitor/videoPlayerMonitor.js #observe(): pausing after settling does
-  NOT reset the dwell clock (resume re-darkens immediately), while switching titles or
-  stopping clears the session entirely.
 
 ## HUGE MILESTONES
 - Add WiFi and WiFi devices support

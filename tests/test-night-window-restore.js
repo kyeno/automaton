@@ -6,7 +6,7 @@
  * local midnight, so a one-sided `gte` bound is the window [dusk .. 24:00) and CANNOT wrap
  * midnight: a pause at 04:35 (sunset 18.44 > now 4.59) silently restored nothing, and the
  * log showed only "No rules matched". The rule now expresses the full night as an explicit
- * OR -- "after civil dusk" OR "before civil dawn" -- which also covers the dark morning a
+ * OR -- "after sunset" OR "before civil dawn" -- which also covers the dark morning a
  * night owl watches into.
  *
  * Verifies against the rule as shipped in etc/automation/home-office-video.yaml, using the
@@ -122,12 +122,12 @@ assert(restoreRule !== undefined, "rule 'HTPC: paused/stopped - restore ambient 
 const gate = { ...(restoreRule?.conditions ?? {}) }
 delete gate.video_player // live monitor state, not part of the gate under test
 assert(Array.isArray(gate.any_of) && gate.any_of.length === 2, 'night window is a two-branch any_of')
-assert(gate.any_of?.some((g) => g.hour?.gte === 'sunset') === true, "window branch 'after civil dusk' (gte: sunset)")
+assert(gate.any_of?.some((g) => g.hour?.gte === 'sunset') === true, "window branch 'after sunset' (gte: sunset)")
 assert(gate.any_of?.some((g) => g.hour?.lt === 'sunrise') === true, "window branch 'before civil dawn' (lt: sunrise)")
 assert(gate.hour === undefined, 'no one-sided hour gate left to drop the pre-dawn hours')
 assert(gate.illuminance?.lt === 700, 'illuminance gate retained as the darkness authority')
 
-//  The reported failure: 2026-10-07 04:35 local (civil dusk 18:26, civil dawn 06:04).
+//  The reported failure: 2026-10-07 04:35 local (sunset 18:26, civil dawn 06:04).
 const PRE_DAWN = local(2026, 9, 7, 4, 35)
 const DARK_MORNING = local(2026, 9, 7, 5, 30)
 const AFTER_DAWN = local(2026, 9, 7, 7, 0)
@@ -150,7 +150,7 @@ console.log('')
 console.log('-- the window spans dusk -> dawn and closes in daylight --')
 console.log('')
 assert(await match(gate, sunContext(EVENING, { ...DARK, timeOfDay: 'evening' }), EVENING) === true,
-    `evening pause after civil dusk restores (${clockOf(EVENING)})`)
+    `evening pause after sunset restores (${clockOf(EVENING)})`)
 assert(await match(gate, sunContext(LATE_NIGHT, { ...DARK, timeOfDay: 'night' }), LATE_NIGHT) === true,
     `late-night pause restores (${clockOf(LATE_NIGHT)})`)
 assert(await match(gate, sunContext(DARK_MORNING, { ...DARK, timeOfDay: 'morning' }), DARK_MORNING) === true,
@@ -220,32 +220,32 @@ console.log('')
 
     //  Settled dusk: both dusk windows at the top level -- each keeps its own `once:` slot (the
     //  budget splitter reads `time_of_day` gates at any depth) -- floored on a single sun gate,
-    //  `predusk`, civil dusk 30 minutes ahead. In winter dusk lands inside `afternoon`, and the
+    //  `predusk`, sunset minus 30 minutes. In winter dusk lands inside `afternoon`, and the
     //  fixed `evening` band starts at 18:00 while summer dusk is 21:00, so the floor has to cover
     //  BOTH: a gloomy mid-afternoon BEFORE dusk must stay dark -- the periods are fixed clock
     //  bands with no sun awareness of their own.
     assert(JSON.stringify(duskRule.conditions.time_of_day) === JSON.stringify(['afternoon', 'evening']),
         'settled dusk lists both dusk windows at the top level (one once slot each)')
     assert(duskRule.conditions.hour?.gte === 'predusk',
-        'settled dusk floors every window on `predusk` (civil dusk minus 30 minutes)')
+        'settled dusk floors every window on `predusk` (sunset minus 30 minutes)')
     assert(duskRule.conditions.any_of === undefined,
         'no per-arm any_of left behind -- the single sun floor covers every window')
     assert(duskRule.conditions.illuminance?.lt === 700,
         'settled dusk keeps illuminance as the darkness authority')
     assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 1, timeOfDay: 'evening' }), EVENING) === true,
-        `settled dusk fires after civil dusk (${clockOf(EVENING)})`)
+        `settled dusk fires after sunset (${clockOf(EVENING)})`)
     assert(await match(duskRule.conditions, sunContext(DARK_MORNING, { illuminance: 1, timeOfDay: 'morning' }), DARK_MORNING) === false,
         `settled dusk is inert in the dark morning (${clockOf(DARK_MORNING)})`)
     assert(await match(duskRule.conditions, sunContext(AFTER_DAWN, { illuminance: 1, timeOfDay: 'morning' }), AFTER_DAWN) === false,
         `settled dusk is inert after civil dawn (${clockOf(AFTER_DAWN)})`)
     //  The reported incident (2026-10-10): a slightly overcast afternoon read 686 lx at 14:53,
-    //  more than three hours before that day's 18:33 civil dusk -- with no sun gate the lamps lit.
+    //  more than three hours before that day's 18:33 sunset -- with no sun gate the lamps lit.
     const GLOOMY_AFTERNOON = local(2026, 9, 10, 14, 53)
     assert(await match(duskRule.conditions, sunContext(GLOOMY_AFTERNOON, { illuminance: 686, timeOfDay: 'afternoon' }), GLOOMY_AFTERNOON) === false,
         `gloomy pre-dusk afternoon stays dark (${clockOf(GLOOMY_AFTERNOON)}) -- the reported bug`)
-    const WINTER_AFTERNOON = local(2026, 11, 8, 17, 0)   // past that day's civil dusk
+    const WINTER_AFTERNOON = local(2026, 11, 8, 17, 0)   // past that day's sunset
     const DEC8_DUSK = sunContext(WINTER_AFTERNOON).sundusk
-    //  The floor is `predusk` = civil dusk minus 30 minutes, so "before the floor" is expressed as
+    //  The floor is `predusk` = sunset minus 30 minutes, so "before the floor" is expressed as
     //  an offset from that day's computed dusk -- a fixed wall time would silently land on the
     //  wrong side of it at another latitude (15:30 here is dusk minus 22 minutes: already lit).
     const WINTER_PRE_DUSK = DEC8_DUSK - 45 * 60_000
@@ -257,7 +257,7 @@ console.log('')
     //  The floor itself: the rule opens half an hour before dusk -- 45 minutes before it stays
     //  dark, 15 minutes before it lights the lamps.
     assert(await match(duskRule.conditions, sunContext(WINTER_AFTERNOON, { illuminance: 1, timeOfDay: 'afternoon' }), DEC8_DUSK - 15 * 60_000) === true,
-        `predusk floor opens the rule 15 minutes before civil dusk (${clockOf(DEC8_DUSK - 15 * 60_000)})`)
+        `predusk floor opens the rule 15 minutes before sunset (${clockOf(DEC8_DUSK - 15 * 60_000)})`)
     assert(await match(duskRule.conditions, sunContext(WINTER_NOON, { illuminance: 1, timeOfDay: 'noon' }), WINTER_NOON) === false,
         `settled dusk stays inert at winter noon (${clockOf(WINTER_NOON)})`)
     assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 900, timeOfDay: 'evening' }), EVENING) === false,
@@ -304,7 +304,7 @@ console.log('')
     assert(await match(salonWindow, sunContext(PRE_DAWN, DARK), PRE_DAWN) === true,
         `salon window fires pre-dawn (${clockOf(PRE_DAWN)})`)
     assert(await match(salonWindow, sunContext(EVENING, DARK), EVENING) === true,
-        `salon window fires after civil dusk (${clockOf(EVENING)})`)
+        `salon window fires after sunset (${clockOf(EVENING)})`)
     assert(await match(salonWindow, sunContext(AFTER_DAWN, { illuminance: 1, timeOfDay: 'morning' }), AFTER_DAWN) === false,
         `salon window closes after civil dawn (${clockOf(AFTER_DAWN)})`)
     assert(await match(salonWindow, sunContext(NOON, { illuminance: 1, timeOfDay: 'noon' }), NOON) === false,

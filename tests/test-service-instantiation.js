@@ -91,6 +91,30 @@ assert(typeof MQTTService.onReconnect === 'function', 'has onReconnect()')
 // Without broker, isConnected should be false
 assert(MQTTService.isConnected() === false, 'isConnected() is false without broker')
 
+// -- EmailService ----------------------------------------------------------
+
+console.log('\n── EmailService ──\n')
+
+import EmailService from '../src/service/emailService.js'
+
+assert(EmailService !== null, 'EmailService exported')
+assert(typeof EmailService.init === 'function', 'has init()')
+assert(typeof EmailService.isConfigured === 'function', 'has isConfigured()')
+assert(typeof EmailService.isEnabled === 'function', 'has isEnabled()')
+assert(typeof EmailService.isReady === 'function', 'has isReady()')
+assert(typeof EmailService.notify === 'function', 'has notify()')
+assert(typeof EmailService.send === 'function', 'has send()')
+assert(typeof EmailService.test === 'function', 'has test()')
+assert(typeof EmailService.getRecipients === 'function', 'has getRecipients()')
+assert(typeof EmailService.getStats === 'function', 'has getStats()')
+assert(typeof EmailService.flush === 'function', 'has flush()')
+assert(typeof EmailService.cleanup === 'function', 'has cleanup()')
+assert(typeof EmailService.attachTransport === 'function', 'has attachTransport()')
+
+// Without SMTP_* env, the channel is not configured and not enabled
+assert(EmailService.isConfigured() === false, 'isConfigured() is false without SMTP_* env')
+assert(EmailService.isEnabled() === false, 'isEnabled() is false without SMTP_* env')
+
 // -- Summary ---------------------------------------------------------------
 
 const total = passed + failed

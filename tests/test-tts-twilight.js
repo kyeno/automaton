@@ -63,7 +63,7 @@ function assert(condition, label) {
 
 // -- Fixtures ---------------------------------------------------------------
 
-/** Civil dawn / civil dusk instants the stubbed solar provider reports (local, same day). */
+/** Civil dawn / sunset instants the stubbed solar provider reports (local, same day). */
 const DAWN_HOUR = 5
 const DAWN_MINUTE = 40
 const DUSK_HOUR = 18
@@ -227,7 +227,7 @@ function cfg(overrides = {}) {
 function framedRules() {
     return [
         { name: 'Civil dawn', event: 'sundawn', sentence: 'twilight.sundawn', tts_options: { intro: 'dawn-intro.wav', intro_spacing: -1.5 } },
-        { name: 'Civil dusk', event: 'sundusk', sentence: 'twilight.sundusk', tts_options: { intro: 'dusk-intro.wav' } }
+        { name: 'Sunset', event: 'sundusk', sentence: 'twilight.sundusk', tts_options: { intro: 'dusk-intro.wav' } }
     ]
 }
 
@@ -256,7 +256,7 @@ try {
     assert(ttsTemplate.profiles?.sundusk?.intro === 'freesound_community-cricket-chirp-101026.mp3' && ttsTemplate.profiles?.sundusk?.intro_spacing === 0, 'the dusk profile frames the announcement with the cricket intro, no gap')
     assert(Array.isArray(shippedConfig.rules) && shippedConfig.rules.length === 2, 'shipped config ships exactly two rules')
     assert(shippedConfig.use_ai === true, 'shipped config routes announcements through the model, so the hour is spoken in words')
-    assert(shippedConfig.rules[0]?.event === 'sundawn' && shippedConfig.rules[1]?.event === 'sundusk', 'shipped rules announce civil dawn then civil dusk')
+    assert(shippedConfig.rules[0]?.event === 'sundawn' && shippedConfig.rules[1]?.event === 'sundusk', 'shipped rules announce civil dawn then sunset')
     assert(shippedConfig.rules.every(r => r.once === true), 'shipped rules consume the once-per-day marker')
     assert(shippedConfig.rules.every(r => typeof r.tts_profile === 'string' && r.tts_profile.trim()), 'each shipped rule names its own TTS profile')
 

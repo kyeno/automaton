@@ -54,7 +54,7 @@ rules:
       state_transition: { 'videoPlayer:my-pc': { from: playing } }
       illuminance: { lt: 900 }
       any_of:
-        - hour: { gte: sunset }    # civil dusk -> midnight
+        - hour: { gte: sunset }    # sunset -> midnight
         - hour: { lt: sunrise }    # midnight -> civil dawn (the "dark morning")
     targets:
       Living_Room_Plug: ON
@@ -69,7 +69,7 @@ rules:
       video_player: { my-pc: [paused, stopped] }
       state_transition: { 'videoPlayer:my-pc': { from: playing } }
       illuminance: { lt: 900 }
-      hour: { gte: sunset }    # civil dusk -> midnight; the axis ceiling is midnight
+      hour: { gte: sunset }    # sunset -> midnight; the axis ceiling is midnight
     targets:
       Hallway_Cupboard_Outlet: ON
 
