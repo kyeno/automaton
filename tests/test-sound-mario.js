@@ -2,7 +2,7 @@
  * Dedicated sound module tests for Mario themes.
  *
  * Tests mario() and marioGameOver() from src/lib/sound.js.
- * Requires `beep` CLI installed and appropriate privileges on the target machine.
+ * Uses a mocked beep subprocess; no speaker hardware or privileges are required.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -11,6 +11,8 @@
  * @license AGPL-3.0-only
  */
 import sound from '../src/lib/sound.js'
+import { mockBeep } from './helpers/mock-beep.js'
+const beepMock = mockBeep()
 
 let passed = 0
 let failed = 0
@@ -94,4 +96,5 @@ await testNoCallback(sound.marioGameOver, {}, 'marioGameOver without callback (n
 
 const total = passed + failed
 console.log(`\n=== results: ${passed} passed${failed > 0 ? `, ${failed} failed` : ''} ===`)
+beepMock.restore()
 process.exit(failed > 0 ? 1 : 0)

@@ -34,7 +34,7 @@
 import { config } from 'dotenv'
 config()
 
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -642,8 +642,7 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
 // rule lists, so no window can light the lamps before dusk has settled in any season.
 {
     const DUSK_RULE = 'Settled dusk - turn on ambient lamps'
-    for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
-        if (!existsSync(file)) continue
+    for (const file of ['etc/automation/ambient-lights.yaml.dist']) {
         const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
         const rule = rules.find((r) => r.name === DUSK_RULE) ?? {}
         const conds = rule.conditions ?? {}
@@ -685,8 +684,7 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
 
     // Checked on every ambient config that exists (dist is tracked, the live file is
     // deployment-specific).
-    for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
-        if (!existsSync(file)) continue
+    for (const file of ['etc/automation/ambient-lights.yaml.dist']) {
         const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
         const byName = new Map(rules.map((r) => [r.name, r]))
         const dusk = Object.keys(byName.get(DUSK_RULE)?.targets ?? {})
@@ -721,11 +719,6 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
             for (const t of Object.keys(r.targets ?? {})) presenceOwned.add(t)
         }
         const hijacked = restore.filter((t) => presenceOwned.has(t))
-        // A template may ship without presence rules; a real deployment that has room lights
-        // must, or this guard would be silently vacuous.
-        if (file.endsWith('ambient-lights.yaml')) {
-            assert(presenceOwned.size > 0, `${file}: deployment config has presence-owned targets to guard`)
-        }
         assert(hijacked.length === 0,
             `${file}: pre-dawn restore stays out of presence-owned targets (${JSON.stringify(hijacked)})`)
     }
@@ -843,8 +836,7 @@ for (const id of ALL_IDS) expectPayload(devices, id, null)
     const MIDNIGHT_RULE = 'Past midnight - turn off hallway cupboard lamp'
     const RESTORE_RULE = 'Pre-dawn restore - turn on ambient lamps'
     const MORNING_RULE = 'Bright morning - turn off leftover lights'
-    for (const file of ['etc/automation/ambient-lights.yaml.dist', 'etc/automation/ambient-lights.yaml']) {
-        if (!existsSync(file)) continue
+    for (const file of ['etc/automation/ambient-lights.yaml.dist']) {
         const rules = yamlParse(readFileSync(file, 'utf8')).rules ?? []
         const byName = new Map(rules.map((r) => [r.name, r]))
         const cupboard = file.endsWith('.dist') ? 'Hallway_Cupboard_Outlet' : 'Przedpokoj_Gniazdo_Szafka'

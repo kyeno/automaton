@@ -31,6 +31,8 @@
   "scripts": {
     "start": "node src/main.js",
     "test": "node bin/automaton-test",
+    "check:config": "node tests/test-config-validation.js",
+    "test:sound:hardware": "node tests/hardware/test-sound.js && node tests/hardware/test-sound-mario.js",
     "lint:check": "node bin/automaton-lint-check",
     "docs": "node bin/automaton-generate-docs"
   },

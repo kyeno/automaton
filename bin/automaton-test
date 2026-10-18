@@ -9,7 +9,8 @@
  * @author Ratan M. Kyeno
  * @license AGPL-3.0-only
  */
-import { execSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { createTestWorkspace, testEnvironment, resetTestConfig } from '../tests/helpers/test-workspace.js'
 import { readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -17,19 +18,18 @@ const ROOT = resolve(import.meta.dirname, '..')
 const SRC_DIR = join(ROOT, 'src')
 const TESTS_DIR = join(ROOT, 'tests')
 
-// Isolate test runs from production keyspace: point every child test process at a
-// dedicated logical database on the same Redis host so tests never read/write real
-// automation/device markers. _debug/* scripts are unaffected (they run standalone).
-{
-    const base = process.env.REDIS_URL || 'redis://192.168.1.1:6379'
-    const idx  = process.env.TEST_REDIS_DB_INDEX || '15'
+// Run current source in a disposable checkout, with no active deployment files or .env.
+if (process.env.AUTOMATON_TEST_WORKSPACE !== '1') {
+    const workspace = createTestWorkspace(ROOT)
+    let status = 1
     try {
-        const u = new URL(base)
-        u.pathname = `/${idx}`
-        process.env.REDIS_URL = u.toString()
-    } catch (_) {
-        process.env.REDIS_URL = `${base.replace(/\/+$/, '')}/${idx}`
-    }
+        const result = spawnSync(process.execPath, [join(workspace.root, 'bin', 'automaton-test'), ...process.argv.slice(2)], {
+            cwd: workspace.root, env: testEnvironment(workspace.root), stdio: 'inherit',
+        })
+        if (result.error) throw result.error
+        status = result.status ?? 1
+    } finally { workspace.cleanup() }
+    process.exit(status)
 }
 
 
@@ -39,14 +39,17 @@ let passed = 0
 /* ------------------------------------------------------------------ */
  /* Helper                                                             */
 /* ------------------------------------------------------------------ */
-function run(cmd, label) {
+function run(args, label) {
   process.stdout.write(`  ▶ ${label} ... `)
   try {
-    execSync(cmd, { stdio: ['inherit', 'pipe', 'pipe'], cwd: ROOT })
+    execFileSync(process.execPath, args, {
+      stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT, timeout: 60_000, maxBuffer: 8 * 1024 * 1024,
+    })
     console.log('✓')
     passed++
   } catch (e) {
     console.error('✗')
+    console.error(`      ${e.message}`)
     if (e.stdout) process.stderr.write(e.stdout.toString())
     if (e.stderr) process.stderr.write(e.stderr.toString())
     failures++
@@ -87,13 +90,13 @@ for (const dir of ETC_DIRS) {
   const etcFiles = collectJs(fullDir, [], fs)
   for (const f of etcFiles) {
     if (f.endsWith('.js.dist')) continue // skip distribution templates
-    run(`node --check "${join(ROOT, f)}"`, `syntax ${f}`)
+    run(['--check', join(ROOT, f)], `syntax ${f}`)
   }
 }
 
 const files = collectJs(SRC_DIR, [], fs)
 for (const f of files) {
-  run(`node --check "${join(ROOT, f)}"`, `syntax ${f}`)
+  run(['--check', join(ROOT, f)], `syntax ${f}`)
 }
 
 /* ------------------------------------------------------------------ */
@@ -101,7 +104,8 @@ for (const f of files) {
 /* ------------------------------------------------------------------ */
 console.log('\n── Test scripts ──\n')
 
-const testScripts = [
+const defaultTestScripts = [
+  'test-test-workspace.js',
   'test-config-validation.js',
   'test-config-overrides.js',
   'test-config-cmd.js',
@@ -115,6 +119,7 @@ const testScripts = [
   'test-rule-coverage.js',
   'test-hour-condition.js',
   'test-sun-gate-condition.js',
+  'test-roller-morning-darkness.js',
   'test-night-window-restore.js',
   'test-composite-conditions.js',
   'test-legacy-condition-keys.js',
@@ -155,7 +160,6 @@ const testScripts = [
   'test-mqtt-dedupe-exempt.js',
   'test-mqtt-soil-moisture-dedupe.js',
   'test-command-reassert.js',
-  'test-dist-sync.js',
   'test-ai-intent-parsing.js',
   'test-ai-intent-execution.js',
   'test-ai-conversation-isolation.js',
@@ -186,16 +190,21 @@ const testScripts = [
   'test-weatherman-use-ai-flag.js',
 ]
 
+const requested = process.argv.slice(2)
+const testScripts = requested.length ? requested.map((name) => name.replace(/^tests\//, '')) : defaultTestScripts
 for (const script of testScripts) {
+  if (!/^test-[a-z0-9-]+\.js$/.test(script)) throw new Error(`Invalid test filename: ${script}`)
   const path = join(TESTS_DIR, script)
-  // Skip if the file doesn't exist
+  // A missing test is an error, never a silent loss of coverage.
   try {
     fs.accessSync(path)
   } catch {
-    console.log(`  ⊘ ${script} (not found, skipped)`)
+    console.error(`  ✗ ${script} (not found)`)
+    failures++
     continue
   }
-  run(`node "${path}"`, script)
+  resetTestConfig(ROOT)
+  run([path], script)
 }
 
 /* ------------------------------------------------------------------ */

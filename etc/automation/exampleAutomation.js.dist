@@ -29,10 +29,12 @@ const CONFIG_PATH = path.join(
 
 export default class ExampleBlindsAutomation extends RuleBasedAutomationBase {
 
+    /** Create the example blinds automation from its YAML configuration. */
     constructor() {
         super({ name: 'ExampleBlindsAutomation', configPath: CONFIG_PATH })
     }
 
+    /** Initialize the rule engine and its subscriptions. */
     async init() {
         await super.init()
     }
@@ -40,6 +42,10 @@ export default class ExampleBlindsAutomation extends RuleBasedAutomationBase {
     /**
      * Resolve which command to send for a given target device.
      * Delegate to blinds-specific resolve in base class.
+     * @param {object} device - Target device
+     * @param {string} targetId - Rule target key
+     * @param {object[]} matchingRules - Rules whose conditions matched
+     * @returns {object|null} Resolved command, or null
      */
     resolveCommand(device, targetId, matchingRules) {
         return this.blindsResolveCommand(device, targetId, matchingRules)

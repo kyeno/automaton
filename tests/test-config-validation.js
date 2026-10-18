@@ -55,7 +55,8 @@ console.log('\n── Config file discovery ──\n')
 
 const yamlFiles = collectYaml(ETC_DIR)
 assert(yamlFiles.length > 0, `Found ${yamlFiles.length} YAML config file(s)`)
-assert(yamlFiles.includes('etc/automaton.yaml'), 'Main config etc/automaton.yaml exists')
+assert(yamlFiles.includes('etc/automaton.yaml') || yamlFiles.includes('etc/automaton.yaml.dist'),
+    'Main configuration or distribution template exists (active files are optional)')
 
 for (const f of yamlFiles) {
     assert(yamlFiles.includes(f), `Discovered: ${f}`)

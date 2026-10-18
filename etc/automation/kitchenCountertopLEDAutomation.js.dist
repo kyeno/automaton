@@ -1,0 +1,140 @@
+/**
+ * Kitchen Countertop LED Automation.
+ * Copy this template to .js and set DEVICES to enable it.
+ * Motion-presence controller for the kitchen countertop LED outlet ("Kitchen LED Outlet")
+ * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+ */
+'use strict'
+
+import AutomationBase from '../../src/automation/base/automationBase.js'
+import DeviceCommandSource from '../../src/enum/deviceCommandSource.js'
+import DeviceContainer from '../../src/device/container/deviceContainer.js'
+import TimedAction from '../../src/lib/timedAction.js'
+
+
+/** Frozen device identity -- rename once here instead of hunting through code. */
+const DEVICES = Object.freeze({
+    motionSensor: 'Kitchen Motion Sensor',
+    outlet: 'Kitchen LED Outlet',
+})
+
+/** Occupancy state key exposed by "Kitchen Motion Sensor" (zigbee2mqtt payload field). */
+const OCCUPANCY_KEY = 'occupancy'
+
+/** Default grace countdown between occupancy checks (30 seconds). Overridable per-instance for tests. */
+const DEFAULT_COUNTDOWN_MS = 30_000
+
+
+/** Kitchen Countertop LED Automation. */
+export default class KitchenCountertopLEDAutomation extends AutomationBase {
+    /** Resolved motion sensor, or null until init() completes / devices missing. */
+    #motionSensor = null
+
+    /** Resolved outlet mechanism, or null until init() completes / devices missing. */
+    #outlet = null
+
+    /** Single-slot timed action manager for the grace countdown. */
+    #timer = new TimedAction('KitchenCountertopLED countdown')
+
+    /** Grace countdown length in milliseconds (overridable per-instance). */
+    #durationMs = DEFAULT_COUNTDOWN_MS
+
+    //  -- Constructor --------------------------------------------------------
+
+    /** Create KitchenCountertopLEDAutomation object.
+     * @param {number} [durationMs] - Grace countdown length in milliseconds */
+    constructor(durationMs = DEFAULT_COUNTDOWN_MS) {
+        super({ name: 'KitchenCountertopLEDAutomation', config: { triggers_zigbee: [DEVICES.motionSensor] } })
+        const ms = Number(durationMs)
+        if (!Number.isFinite(ms) || ms <= 0) {
+            throw new Error(`Invalid countdown duration ${JSON.stringify(durationMs)}; expected positive milliseconds`)
+        }
+        this.#durationMs = ms
+    }
+
+    //  -- Lifecycle ----------------------------------------------------------
+
+    /** Resolve referenced devices once at startup. Missing devices are logged as errors. */
+    async init() {
+        await super.init()
+        this.#motionSensor = DeviceContainer.findByName(DEVICES.motionSensor)
+        this.#outlet = DeviceContainer.findByName(DEVICES.outlet)
+        if (!this.#motionSensor || !this.#outlet) {
+            const missing = []
+            if (!this.#motionSensor) missing.push(`${DEVICES.motionSensor} (sensor)`)
+            if (!this.#outlet) missing.push(`${DEVICES.outlet} (outlet)`)
+            this.log(`Referenced device(s) not found: ${missing.join(', ')} -- automation will stay inert`, 'error')
+            return
+        }
+        this.log('Motion sensor and outlet resolved', 'info')
+    }
+
+    //  -- Public API ---------------------------------------------------------
+
+    /** React to a motion-sensor report.
+     * @param {{trigger: string}|null} [triggerData] - Trigger metadata */
+    async execute(triggerData = null) {
+        const state = this.#motionSensor?.getStateLast()
+        const occupancy = state && typeof state[OCCUPANCY_KEY] === 'boolean' ? state[OCCUPANCY_KEY] : undefined
+
+        //  Only act on a genuine occupancy:true transition; anything else is ignored.
+        if (occupancy !== true) return
+
+        this.log('Occupancy detected - turning on countertop LED + starting grace countdown', 'debug')
+        this.log('Turning on countertop LED (occupancy detected)', 'info')
+        this.#outlet.receiveCommand('ON', DeviceCommandSource.AUTOMATION)
+        this.#startCountdown()
+    }
+
+    /** Whether the grace countdown is currently running (useful for debugging / tests). */
+    get countdownActive() { return this.#timer.isActive() }
+
+    /** Clean up the timer on shutdown. */
+    cleanup() {
+        super.cleanup()
+        this.#timer.cleanup()
+    }
+
+    //  -- Private helpers ----------------------------------------------------
+
+    /** Run when the grace countdown elapses. Decides whether to keep counting.
+     * @private */
+    #onCountdownElapsed() {
+        //  Release any pending handle first. The recurrence path below wants to schedule.
+        this.#timer.stop()
+
+        const sensorState = this.#motionSensor?.getStateLast()
+        const outletState = this.#outlet?.getStateLast()?.state
+
+        //  Manual override / already-off wins over everything else -- never fight a human.
+        if (outletState === 'OFF') {
+            this.log(`Timer cycle elapsed - decision: NO_ACTION | outlet was ${outletState} | reasoning: manual OFF respected`, 'debug')
+            return
+        }
+
+        //  Still occupied -> ensure the outlet is on and extend the grace period.
+        if (sensorState?.occupancy === true) {
+            this.log('Recurrence - still occupied, keeping countertop LED on', 'info')
+            this.#outlet.receiveCommand('ON', DeviceCommandSource.AUTOMATION)
+            this.#startCountdown()
+            this.log(`Timer cycle elapsed - decision: RECURSE | occupancy=${sensorState.occupancy} | outlet was ${outletState} | reasoning: motion persists, extended countdown`, 'debug')
+            return
+        }
+
+        //  Not occupied (or occupancy lost while the light is still on) -> turn it off.
+        this.log('Occupancy cleared - turning off countertop LED', 'info')
+        this.#outlet.receiveCommand('OFF', DeviceCommandSource.AUTOMATION)
+        this.log(`Timer cycle elapsed - decision: TURN_OFF | occupancy=${sensorState.occupancy} | outlet was ${outletState} | reasoning: no one detected`, 'debug')
+    }
+
+    /** Start (or restart) the grace countdown with a bound method reference.
+     * @private */
+    #startCountdown() {
+        const onElapsed = this.#onCountdownElapsed.bind(this)
+        this.#timer.stop()
+        if (!this.#timer.start(this.#durationMs, onElapsed)) {
+            this.log('Grace countdown already running - ignoring new trigger', 'warn')
+        }
+    }
+}

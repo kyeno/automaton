@@ -75,17 +75,19 @@ const localeDir = I18nLoader.getLocale()
 /** The shipped pl_PL bundle speaks the clock in declined words; every other locale keeps
  * the digit clock (the generator gate in lib/date returns null for them). */
 const isPolish = String(localeDir).toLowerCase().startsWith('pl')
-const bundlePath = resolve(ROOT, 'etc', 'i18n', localeDir, 'twilight.yaml')
+const bundlePath = resolve(ROOT, 'etc', 'i18n', localeDir, 'twilight.yaml.dist')
 const bundle = yamlParse(fs.readFileSync(bundlePath, 'utf8'))
 console.log(`\n(using ${localeDir} twilight bundle)\n`)
 
 const shippedConfig = yamlParse(
-    fs.readFileSync(resolve(ROOT, 'etc', 'automation', 'tts-twilight.yaml'), 'utf8')
+    fs.readFileSync(resolve(ROOT, 'etc', 'automation', 'tts-twilight.yaml.dist'), 'utf8')
 )
 
-const ttsTemplate = yamlParse(
-    fs.readFileSync(resolve(ROOT, 'etc', 'i18n', localeDir, 'tts.yaml'), 'utf8')
-)
+// Named profiles are optional in the distribution. Exercise them with explicit test data.
+const profileFixture = {
+    sundawn: { intro: 'dawn-test.wav', intro_spacing: -1 },
+    sundusk: { intro: 'dusk-test.wav', intro_spacing: 0 },
+}
 
 /** Fill a bundle template's runtime placeholders from an explicit token map (test-side mirror). */
 function expectedText(section, channel, tokens) {
@@ -134,10 +136,10 @@ const ttsProto = Object.getPrototypeOf(TtsService)
 const origTtsEnabled = ttsProto.isEnabled
 ttsProto.isEnabled = () => ttsUp
 // TtsService loads its locale template in init(), which this test never runs; serve profiles
-// from the parsed tts.yaml so per-rule framing resolves exactly as it does in production.
+// from an explicit registry so optional local profiles cannot change these scenarios.
 const origGetProfile = ttsProto.getProfile
 ttsProto.getProfile = (name) => {
-    const registry = ttsTemplate.profiles
+    const registry = profileFixture
     const wanted = String(name ?? '').trim().toLowerCase()
     if (!wanted || !registry) return null
     const key = Object.keys(registry).find((entry) => entry.toLowerCase() === wanted)
@@ -245,20 +247,17 @@ try {
         assert(isPolish
             ? bundle[section].ai.includes('{% time_words %}')
             : (bundle[section].ai.includes('{% hours %}') && bundle[section].ai.includes('{% minutes %}')), `${section}.ai carries the clock in the shape its locale needs`)
-        assert(ttsTemplate.profiles?.[section] !== undefined, `active tts.yaml defines the ${section} framing profile`)
     }
     const dawnTokens = eventTokens(DAWN_HOUR, DAWN_MINUTE, DAWN_CLOCK)
     const duskTokens = eventTokens(DUSK_HOUR, DUSK_MINUTE, DUSK_CLOCK)
     assert(dawnTokens.time_of_day.trim() !== '' && duskTokens.time_of_day.trim() !== '', 'the active locale resolves a day-period word for dawn and dusk')
     assert(dawnTokens.time_of_day !== duskTokens.time_of_day, 'dawn and dusk land in different day periods')
     assert(dawnTokens.hours === '5' && duskTokens.hours === (I18nLoader.is12HourFormat() ? '6' : '18'), 'the clock parts follow the locale time format (18:20 is 6 PM in a 12-hour locale)')
-    assert(ttsTemplate.profiles?.sundawn?.intro === 'soumages-bird-sound-2-370343.mp3' && ttsTemplate.profiles?.sundawn?.intro_spacing === -1, 'the dawn profile frames the announcement with the bird intro, one second overlapped')
-    assert(ttsTemplate.profiles?.sundusk?.intro === 'freesound_community-cricket-chirp-101026.mp3' && ttsTemplate.profiles?.sundusk?.intro_spacing === 0, 'the dusk profile frames the announcement with the cricket intro, no gap')
     assert(Array.isArray(shippedConfig.rules) && shippedConfig.rules.length === 2, 'shipped config ships exactly two rules')
-    assert(shippedConfig.use_ai === true, 'shipped config routes announcements through the model, so the hour is spoken in words')
+    assert(shippedConfig.use_ai === false, 'shipped config supports direct speech without an AI service')
     assert(shippedConfig.rules[0]?.event === 'sundawn' && shippedConfig.rules[1]?.event === 'sundusk', 'shipped rules announce civil dawn then sunset')
     assert(shippedConfig.rules.every(r => r.once === true), 'shipped rules consume the once-per-day marker')
-    assert(shippedConfig.rules.every(r => typeof r.tts_profile === 'string' && r.tts_profile.trim()), 'each shipped rule names its own TTS profile')
+    assert(shippedConfig.rules.every(r => !r.tts_profile || typeof r.tts_profile === 'string'), 'shipped rules allow optional named TTS profiles')
 
 
     // -----------------------------------------------------------------------
@@ -400,15 +399,15 @@ try {
     }
 
     // -----------------------------------------------------------------------
-    console.log('\n-- shipped per-rule profiles resolve from the locale tts.yaml --')
+    console.log('\n-- explicit per-rule profiles reach the utterance --')
     {
         const restore = stubDate(DAWN_HOUR, DAWN_MINUTE)
         try {
-            twilight.config = cfg()
+            twilight.config = cfg({ rules: shippedConfig.rules.map(rule => ({ ...rule, tts_profile: rule.event })) })
             clearMarkers()
             resetSeen()
             await twilight.execute({ trigger: 'timer' })
-            const dawnProfile = ttsTemplate.profiles?.sundawn
+            const dawnProfile = profileFixture.sundawn
             assert(seen.tts.length === 1, 'the shipped dawn rule speaks through its named profile')
             assert(seen.tts[0]?.intro === dawnProfile?.intro && seen.tts[0]?.intro_spacing === dawnProfile?.intro_spacing, 'framing from the active tts.yaml profile reaches the utterance')
         } finally { restore() }

@@ -137,13 +137,13 @@ console.log('\n\u2500\u2500 debug: main config dump \u2500\u2500\n')
     assert(out.includes('validator: yes'), 'metadata reports validator presence for main')
     assert(out.includes('etc/automaton.yaml'), 'metadata shows the resolved main file path')
     assert(new RegExp('\\u251C\\u2500 locale').test(out), 'dump contains the locale block')
-    assert(/time_format: "1[24]h"/.test(out), 'nested keys visible inside collapsed records')
+    assert(/time_format[": ]+"(?:12|24)h"/.test(out), 'nested keys visible inside collapsed records')
     assert(/windows\[\d+\]/.test(out), 'container arrays expand with an element count')
     assert(out.includes('lines[2]'), 'deeply nested arrays keep explicit branch columns')
     assert(out.includes('right: []'), 'empty arrays collapse inline')
     assert(out.includes('"console_warn_levels":["warn"]'), 'scalar arrays stay on one line')
     assert(out.includes('\u2514\u2500 ui'), 'last top-level section carries the terminal branch glyph')
-    assert(/"1[24]h"/.test(out), 'scalar values visible as JSON-quoted text')
+    assert(/"(?:12|24)h"/.test(out), 'scalar values visible as JSON-quoted text')
 }
 {
     // Stray arguments are rejected with a hint instead of being treated as a section name

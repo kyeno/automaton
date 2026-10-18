@@ -29,6 +29,7 @@ process.env['AI_API_URL'] = process.env['AI_API_URL'] || 'http://localhost:11434
 import ConfigService from '../src/service/configService.js'
 import LoggerService from '../src/service/loggerService.js'
 import CacheService from '../src/service/cacheService.js'
+import { installMemoryCache } from './helpers/memory-cache.js'
 import I18nLoader from '../src/service/i18nLoader.js'
 import OpenAiProvider from '../src/ai/providers/openaiProvider.js'
 import AiAssistant from '../src/ai/aiAssistant.js'
@@ -54,7 +55,7 @@ console.log('\n── AI conversation isolation + serialization ──\n')
 
 await ConfigService.init()
 LoggerService.init()
-try { await CacheService.init() } catch { /* Redis optional for this test */ }
+const restoreCache = installMemoryCache()
 await I18nLoader.init()
 
 // Save any pre-existing conversation cache so the run does not clobber live chat state
@@ -193,4 +194,5 @@ try {
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${'═'.repeat(50)}\n  Results: ${passed}/${passed + failed} passed` + (failed ? `, ${failed} FAILED` : '') + `\n${'═'.repeat(50)}\n`)
+restoreCache()
 process.exit(failed > 0 ? 1 : 0)

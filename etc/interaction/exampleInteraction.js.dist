@@ -43,6 +43,7 @@ export default class ExampleInteraction extends InteractionBase {
 
     // -- Constructor ------------------------------------------------------
 
+    /** Create the example interaction. */
     constructor() {
         super({ name: 'ExampleInteraction' })
     }

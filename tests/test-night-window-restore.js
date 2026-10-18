@@ -112,8 +112,8 @@ function local(y, m, d, h, min = 0) { return new Date(y, m, d, h, min, 0, 0).get
 const clockOf = (ms) => new Date(ms).toLocaleTimeString('en-GB')
 
 //  The rule exactly as shipped.
-const rulesDoc = yamlParseDocument(fs.readFileSync(path.join(ROOT, 'etc/automation/home-office-video.yaml'), 'utf8')).toJS()
-const restoreRule = (rulesDoc.rules ?? []).find((r) => r.name === 'HTPC: paused/stopped - restore ambient lighting')
+const rulesDoc = yamlParseDocument(fs.readFileSync(path.join(ROOT, 'etc/automation/home-office-video.yaml.dist'), 'utf8')).toJS()
+const restoreRule = (rulesDoc.rules ?? []).find((r) => /paused\/stopped - restore ambient lighting$/.test(r.name))
 
 console.log('')
 console.log('-- shipped restore rule carries the night window --')
@@ -125,7 +125,7 @@ assert(Array.isArray(gate.any_of) && gate.any_of.length === 2, 'night window is 
 assert(gate.any_of?.some((g) => g.hour?.gte === 'sunset') === true, "window branch 'after sunset' (gte: sunset)")
 assert(gate.any_of?.some((g) => g.hour?.lt === 'sunrise') === true, "window branch 'before civil dawn' (lt: sunrise)")
 assert(gate.hour === undefined, 'no one-sided hour gate left to drop the pre-dawn hours')
-assert(gate.illuminance?.lt === 700, 'illuminance gate retained as the darkness authority')
+assert(gate.illuminance?.lt === 900, 'illuminance gate retained as the darkness authority')
 
 //  The reported failure: 2026-10-07 04:35 local (sunset 18:26, civil dawn 06:04).
 const PRE_DAWN = local(2026, 9, 7, 4, 35)
@@ -208,14 +208,13 @@ console.log('')
 console.log('-- ambient-lights rules carry the same night window --')
 console.log('')
 {
-    const ambientDoc = yamlParseDocument(fs.readFileSync(path.join(ROOT, 'etc/automation/ambient-lights.yaml'), 'utf8')).toJS()
+    const ambientDoc = yamlParseDocument(fs.readFileSync(path.join(ROOT, 'etc/automation/ambient-lights.yaml.dist'), 'utf8')).toJS()
     const byName = (n) => (ambientDoc.rules ?? []).find((r) => r.name === n)
     const duskRule = byName('Settled dusk - turn on ambient lamps')
     const preDawnRule = byName('Pre-dawn restore - turn on ambient lamps')
-    const salonRule = byName('After sunset - someone home - full salon ambient')
     const morningRule = byName('Bright morning - turn off leftover lights')
 
-    assert(duskRule !== undefined && preDawnRule !== undefined && salonRule !== undefined && morningRule !== undefined,
+    assert(duskRule !== undefined && preDawnRule !== undefined && morningRule !== undefined,
         'ambient-lights rules present in config')
 
     //  Settled dusk: both dusk windows at the top level -- each keeps its own `once:` slot (the
@@ -230,7 +229,7 @@ console.log('')
         'settled dusk floors every window on `predusk` (sunset minus 30 minutes)')
     assert(duskRule.conditions.any_of === undefined,
         'no per-arm any_of left behind -- the single sun floor covers every window')
-    assert(duskRule.conditions.illuminance?.lt === 700,
+    assert(duskRule.conditions.illuminance?.lt === 900,
         'settled dusk keeps illuminance as the darkness authority')
     assert(await match(duskRule.conditions, sunContext(EVENING, { illuminance: 1, timeOfDay: 'evening' }), EVENING) === true,
         `settled dusk fires after sunset (${clockOf(EVENING)})`)
@@ -274,7 +273,7 @@ console.log('')
         "pre-dawn restore gates on 'before civil dawn' (lt: sunrise)")
     assert(JSON.stringify(preDawnRule.conditions.time_of_day) === JSON.stringify(['night', 'morning']),
         'pre-dawn restore covers night and the dark morning')
-    assert(preDawnRule.conditions.illuminance?.lt === 700,
+    assert(preDawnRule.conditions.illuminance?.lt === 900,
         'pre-dawn restore keeps illuminance as the darkness authority')
     assert(await match(preDawnRule.conditions, sunContext(PRE_DAWN, DARK), PRE_DAWN) === true,
         `pre-dawn restore fires pre-dawn (${clockOf(PRE_DAWN)})`)
@@ -289,28 +288,6 @@ console.log('')
     const JUNE_PRE_DAWN = local(2026, 5, 22, 3, 0)
     assert(await match(preDawnRule.conditions, sunContext(JUNE_PRE_DAWN, DARK), JUNE_PRE_DAWN) === true,
         `summer: pre-dawn restore fires (${clockOf(JUNE_PRE_DAWN)})`)
-
-    //  Salon boost: two independent ORs (night window, who is home) combined with all_of.
-    //  The presence arm is live monitor state, so only the window arm is evaluated here.
-    assert(Array.isArray(salonRule.conditions.all_of) && salonRule.conditions.all_of.length === 2,
-        'salon boost combines its two ORs with all_of (one any_of per condition map)')
-    assert(salonRule.conditions.hour === undefined,
-        'salon boost drops the one-sided sunset gate')
-    assert(salonRule.conditions.all_of?.[1]?.any_of?.length === 3,
-        'salon boost keeps the presence OR over 3 subjects')
-    const salonWindow = salonRule.conditions.all_of?.[0] ?? {}
-    assert(salonWindow.any_of?.[0]?.hour?.gte === 'sunset' && salonWindow.any_of?.[1]?.hour?.lt === 'sunrise',
-        'salon window arms are dusk-forward and dawn-backward')
-    assert(await match(salonWindow, sunContext(PRE_DAWN, DARK), PRE_DAWN) === true,
-        `salon window fires pre-dawn (${clockOf(PRE_DAWN)})`)
-    assert(await match(salonWindow, sunContext(EVENING, DARK), EVENING) === true,
-        `salon window fires after sunset (${clockOf(EVENING)})`)
-    assert(await match(salonWindow, sunContext(AFTER_DAWN, { illuminance: 1, timeOfDay: 'morning' }), AFTER_DAWN) === false,
-        `salon window closes after civil dawn (${clockOf(AFTER_DAWN)})`)
-    assert(await match(salonWindow, sunContext(NOON, { illuminance: 1, timeOfDay: 'noon' }), NOON) === false,
-        `salon window stays closed at noon (${clockOf(NOON)})`)
-    assert(['afternoon', 'evening', 'night', 'morning'].every((p) => salonRule.conditions.time_of_day?.includes(p)),
-        'salon once-budget is split per window, so a pre-dawn boost never eats the evening one')
 
     //  The morning lights-off rule must stay inert in the dark, and fire with daylight.
     assert(await match(morningRule.conditions, sunContext(PRE_DAWN, { illuminance: 20, timeOfDay: 'night' }), PRE_DAWN) === false,

@@ -916,7 +916,6 @@ console.log('\n── Home theater (shipped configs): hallway cupboard lamp rule
     // its own, gated to sunset -> midnight, with dark mode still putting it out on playback
     // and both restore paths pinned to a transition that came FROM playing.
     const FILES = [
-        { file: 'etc/automation/home-office-video.yaml', host: 'htpc', cupboard: 'Przedpokoj_Gniazdo_Szafka', lux: 700 },
         { file: 'etc/automation/home-office-video.yaml.dist', host: 'my-pc', cupboard: 'Hallway_Cupboard_Outlet', lux: 900 },
     ]
     for (const { file, host, cupboard, lux } of FILES) {

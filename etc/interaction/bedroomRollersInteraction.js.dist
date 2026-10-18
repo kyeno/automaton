@@ -64,6 +64,7 @@ export default class BedroomRollersInteraction extends RollerShuttersBase {
     /** Timer reference for delayed OFF command after OPEN. @type {NodeJS.Timeout|null} */
     #offTimer = null
 
+    /** Create the bedroom shutter group and its outlet controls. */
     constructor() {
         super({ name: 'BedroomRollersInteraction', shutters: DEVICES.shutters })
     }
@@ -129,7 +130,10 @@ export default class BedroomRollersInteraction extends RollerShuttersBase {
         }
     }
 
-    /** Find a device by name and send it a command. @param {string} deviceName - Name of the target device @param {string} command - Command to send @private */
+    /** Find a device by name and send it a command.
+     * @param {string} deviceName - Name of the target device
+     * @param {string} command - Command to send
+     * @private */
     #sendCommandToDevice(deviceName, command) {
         const device = DeviceContainer.findByName(deviceName)
         if (device) {

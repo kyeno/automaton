@@ -120,7 +120,7 @@ console.log('\n── KitchenCountertopLEDAutomation ──\n')
     // -- A: occupancy:true turns the outlet ON and starts the countdown --------
     const sensor = new MockSensor(1)
     const outlet = new MockOutlet('OFF')
-    const restore = stubDeviceLookup({ 'Kuchnia Czujnik LED': sensor, 'Kuchnia Gniazdo LED': outlet })
+    const restore = stubDeviceLookup({ 'Kitchen Motion Sensor': sensor, 'Kitchen LED Outlet': outlet })
     try {
         const auto = new KitchenCountertopLEDAutomation(50)
         await auto.init()
@@ -140,7 +140,7 @@ console.log('\n── KitchenCountertopLEDAutomation ──\n')
     // -- B: recurrence while occupied AND light confirmed ON ------------------
     const sensor = new MockSensor(4)   // execute#1 + 3 recurrences stay "occupied"; read #5 -> false
     const outlet = new MockOutlet('ON')
-    const restore = stubDeviceLookup({ 'Kuchnia Czujnik LED': sensor, 'Kuchnia Gniazdo LED': outlet })
+    const restore = stubDeviceLookup({ 'Kitchen Motion Sensor': sensor, 'Kitchen LED Outlet': outlet })
     try {
         const auto = new KitchenCountertopLEDAutomation(50)
         await auto.init()
@@ -166,7 +166,7 @@ console.log('\n── KitchenCountertopLEDAutomation ──\n')
     // -- C: manual OFF during the window wins over automation intent ----------
     const sensor = new MockSensor(1)   // execute reads #1 true; callback reads #2 false
     const outlet = new MockOutlet('OFF')
-    const restore = stubDeviceLookup({ 'Kuchnia Czujnik LED': sensor, 'Kuchnia Gniazdo LED': outlet })
+    const restore = stubDeviceLookup({ 'Kitchen Motion Sensor': sensor, 'Kitchen LED Outlet': outlet })
     try {
         const auto = new KitchenCountertopLEDAutomation(50)
         await auto.init()
@@ -187,7 +187,7 @@ console.log('\n── KitchenCountertopLEDAutomation ──\n')
     // -- D: occupancy cleared turns the outlet OFF ----------------------------
     const sensor = new MockSensor(1)   // execute reads #1 true; callback reads #2 false
     const outlet = new MockOutlet('ON')
-    const restore = stubDeviceLookup({ 'Kuchnia Czujnik LED': sensor, 'Kuchnia Gniazdo LED': outlet })
+    const restore = stubDeviceLookup({ 'Kitchen Motion Sensor': sensor, 'Kitchen LED Outlet': outlet })
     try {
         const auto = new KitchenCountertopLEDAutomation(50)
         await auto.init()
@@ -211,7 +211,7 @@ console.log('\n── KitchenCountertopLEDAutomation ──\n')
     // on the "not occupied" branch so no recurrence loop can spawn extra callbacks.
     const sensor = new MockSensor(2)   // execute#1 read #1 true; execute#2 read #2 true; callback read #3 false
     const outlet = new MockOutlet('OFF')
-    const restore = stubDeviceLookup({ 'Kuchnia Czujnik LED': sensor, 'Kuchnia Gniazdo LED': outlet })
+    const restore = stubDeviceLookup({ 'Kitchen Motion Sensor': sensor, 'Kitchen LED Outlet': outlet })
     try {
         const auto = new KitchenCountertopLEDAutomation(50)
         await auto.init()

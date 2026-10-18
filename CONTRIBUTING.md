@@ -116,17 +116,37 @@ Deviations from this pattern result in files being silently ignored by the autol
 
 ## Testing
 
-Run the full test suite before submitting a PR:
+Use Node.js 22 or newer and run tests through the isolated runner:
 
 ```bash
 npm test
+npm test -- test-ambient-lights-rules.js test-night-window-restore.js
 ```
 
-The test runner performs:
-1. Syntax checks (`node --check`) on every `.js` file under `src/`
-2. Instantiation tests for services, devices, automations, and configurations
+The runner uses a disposable checkout with shipped `.dist` templates, fresh config and
+runtime state for each test, and a fixed timezone. It does not read or modify your local
+configuration or `.env`, and requires no running services or physical devices. Tests
+fail after 60 seconds. Direct `node tests/test-*.js` runs bypass this isolation.
 
-Tests currently verify that modules load without errors. Business-logic assertions are planned for future iterations. If you add new functionality, please add corresponding tests to `tests/`.
+When writing tests:
+
+- Use explicit temporary fixtures for rules, devices, presence, profiles and other optional behavior.
+- Check shipped example policies against `.dist` files, never active user configuration.
+- Keep regression coverage independent of which rules a user enables; do not skip disabled rules.
+- Mock external services and hardware. AI tests can use `tests/helpers/memory-cache.js`.
+- Add new test scripts to `defaultTestScripts` in `bin/automaton-test`. Add imported shipped
+  automation implementations to `AUTOMATIONS` in `tests/helpers/test-workspace.js`;
+  `.js.dist` scripts are activated automatically in the test workspace.
+
+Optional checks:
+
+```bash
+npm run check:config           # Syntax and formatting of installed YAML
+npm run test:sound:hardware    # Original audible tests; requires beep and a PC speaker
+```
+
+`tests/test-dist-sync.js` is an optional local template-drift diagnostic, excluded from
+`npm test` because user configuration may legitimately extend the templates.
 
 ## Commit Messages
 
@@ -157,7 +177,7 @@ docs(config): document i18n bundle structure
 Contributions in these areas are especially welcome:
 
 - **Bug fixes** — Found something broken? Fix it!
-- **Tests** — The current suite only verifies instantiation. Behavioral and integration tests would be invaluable.
+- **Tests** — Add behavioral tests with explicit fixtures and no dependencies on a local deployment.
 - **Documentation** — Improvements to README, configuration guide, or inline JSDoc.
 - **New device types** — Additional abstractions beyond mechanism/remote/sensor.
 - **i18n bundles** — Translations for new languages (see [Adding a New Language](doc/configuration.md#adding-a-new-language)).

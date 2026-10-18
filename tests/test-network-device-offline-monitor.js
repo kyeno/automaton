@@ -86,6 +86,14 @@ ttsProto.getProfile = function (name) {
 const originalGetLocale = i18nProto.getLocale
 i18nProto.getLocale = function () { return 'pl_PL' }
 
+// Per-device wording is optional in templates. Supply it explicitly for override coverage.
+const monitorProto = Object.getPrototypeOf(NetworkDeviceOfflineMonitor)
+const originalReadBundle = monitorProto.readBundle
+monitorProto.readBundle = () => ({
+    network_device_offline: { default: 'Uwaga, {device} jest offline.', 'core-server': 'Uwaga, serwer core jest offline.' },
+    network_device_online: { default: '{device} znowu działa.', 'dns-server': 'Serwer DNS znowu działa.' },
+})
+
 // NetworkPresence: the announce list is validated against getDeviceNames(), and the
 // label the monitor speaks about comes from the in-memory sweep record.
 const originalDeviceNames = presenceProto.getDeviceNames
@@ -299,6 +307,7 @@ async function main() {
         loggerProto.warn = originalWarn
         ttsProto.isEnabled = originalTtsEnabled
         ttsProto.getProfile = originalGetProfile
+        monitorProto.readBundle = originalReadBundle
         i18nProto.getLocale = originalGetLocale
         presenceProto.getDeviceNames = originalDeviceNames
         presenceProto.getLastLabel = originalLastLabel

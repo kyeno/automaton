@@ -180,7 +180,7 @@ const bridgeList = [
     soilProbe,                                   // unmapped probe -> must become a Sensor
     unmappedSwitch,                              // unmapped actuator -> stays a DummyDevice
     {
-        friendly_name: 'Sypialnia Kwiatek Bonsai',
+        friendly_name: 'Outdoor Temperature',
         ieee_address: '0x0020',
         type: 'EndDevice',
         supported: true,
@@ -226,9 +226,9 @@ try {
 
     console.log('\n\u2500\u2500 Container: config wins, definition is the safety net \u2500\u2500\n')
 
-    assert(DeviceContainer.classifyDevice('Sypialnia Kwiatek Bonsai') === 'sensor',
+    assert(DeviceContainer.classifyDevice('Outdoor Temperature') === 'sensor',
         'config mapping wins with no definition in hand')
-    assert(DeviceContainer.classifyDevice('Sypialnia Kwiatek Bonsai', unmappedSwitch) === 'sensor',
+    assert(DeviceContainer.classifyDevice('Outdoor Temperature', unmappedSwitch) === 'sensor',
         'config mapping wins even when the definition would veto it')
     assert(DeviceContainer.classifyDevice('Sypialnia Kwiatek Nowy', soilProbe) === 'sensor',
         'unmapped probe classified from the bridge definition')
@@ -246,7 +246,7 @@ try {
         'probe is not an actuator, so the UI never lists it under Mechanisms')
     assert(all['Test Unmapped Switch'] instanceof DummyDevice,
         'unmapped switch is still a DummyDevice')
-    assert(all['Sypialnia Kwiatek Bonsai'] instanceof Sensor,
+    assert(all['Outdoor Temperature'] instanceof Sensor,
         'config-mapped probe is unaffected by the new path')
 
     const late = DeviceContainer.addDevice('Test Late Probe', '0x0021', {})

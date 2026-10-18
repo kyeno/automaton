@@ -180,7 +180,7 @@ console.log('\n\u2500\u2500 reload: successful swap + negative gates \u2500\u250
 {
     // Failed validation: problems reported verbatim, live config byte-for-byte unchanged
     const snapBefore = { lang: ConfigService.get('locale.language'), mt: ConfigService.get('ai.max_tokens') }
-    fs.writeFileSync(MAIN_YAML, originalYaml.replace(/time_format:\s*"12h"/, 'time_format: "13h"'))
+    fs.writeFileSync(MAIN_YAML, originalYaml.replace(/time_format:\s*"(?:12|24)h"/, 'time_format: "13h"'))
 
     try {
         const h = createHarness()
@@ -334,7 +334,7 @@ console.log('\n\u2500\u2500 reload: full subsystem refresh after initialization 
 
         assert(out.includes('i18n switched to locale=en_US'), 'i18n bundle reloaded onto en_US')
         assertEqual(I18nLoader.getLocale(), 'en_US', 'getLocale() reflects the live switch')
-        assertEqual(I18nLoader.getTimeFormat(), '12h', 'unchanged time_format preserved through the swap')
+        assertEqual(I18nLoader.getTimeFormat(), yamlParseDocument(originalYaml).toJS().locale.time_format, 'unchanged time_format preserved through the swap')
 
         // Data-driven expectation: read whichever voice the en_US bundle currently ships so the
         // suite survives voice swaps (and trailing comments) in etc/i18n/en_US/tts.yaml without

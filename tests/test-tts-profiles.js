@@ -209,8 +209,8 @@ assert(sameOptions(wm.resolveTtsOptions({}), {}), 'empty automation config yield
 assert(sameOptions(wm.resolveTtsOptions({ tts_options: { intro: 42, outro: '', intro_spacing: 'soon' } }), {}),
     'malformed automation entries degrade to plain speech')
 assert(sameOptions(wm.resolveTtsOptions(),
-    { intro: 'mixkit-television-news-report-transition-3089.wav', outro: 'mixkit-intro-news-sound-1151.wav', intro_spacing: -2.5 }),
-    'on-disk weatherman config still resolves its jingle (smoke)')
+    {}),
+    'shipped weatherman template leaves optional audio framing unset')
 
 loggerProto.warn = originalWarn
 ttsProto.getProfile = originalGetProfile

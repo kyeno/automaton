@@ -33,7 +33,9 @@ import LoggerService from '../src/service/loggerService.js'
 import DeviceContainer from '../src/device/container/deviceContainer.js'
 import RollerShuttersBase from '../src/interaction/base/rollerShuttersBase.js'
 import BedroomRollersInteraction from '../etc/interaction/bedroomRollersInteraction.js'
-import SalonRollersInteraction from '../etc/interaction/salonRollersInteraction.js'
+class SalonRollersInteraction extends RollerShuttersBase {
+    constructor() { super({ name: 'TestLivingRoomRollers', shutters: ['Living Room Roller Left', 'Living Room Roller Right'] }) }
+}
 
 // Minimal env bootstrap so services import cleanly and LoggerService works headless.
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
@@ -67,14 +69,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // Mocks
 // ---------------------------------------------------------------------------
 
-const SALON = ['Salon Roleta Okno Lewe', 'Salon Roleta Okno Prawe']
-const BEDROOM = [
-    'Sypialnia Roleta Okno Lewe Lewa',
-    'Sypialnia Roleta Okno Lewe Prawa',
-    'Sypialnia Roleta Okno Prawe Lewa',
-    'Sypialnia Roleta Okno Prawe Prawa'
-]
-const OUTLETS = ['Sypialnia Gniazdo', 'Sypialnia Gniazdo Lustro']
+const SALON = ['Living Room Roller Left', 'Living Room Roller Right']
+const BEDROOM = ['Bedroom Roller Left', 'Bedroom Roller Right']
+const OUTLETS = ['Bedroom Outlet']
 
 /**
  * Mock roller shutter. Records every command verbatim and reports a fixed
@@ -418,7 +415,7 @@ console.log('\n── Bedroom: outlet side effects only on a real travel ──\
     const { table, shutters } = group(BEDROOM, 60)
     const outlets = OUTLETS.map(() => new MockOutlet())
     Object.assign(table, Object.fromEntries(OUTLETS.map((n, i) => [n, outlets[i]])))
-    table['Balkon Swiatlo'] = new MockSensor(400)
+    table['Outdoor Luminance'] = new MockSensor(400)
 
     const restore = stubDeviceLookup(table)
     const interaction = new BedroomRollersInteraction()
@@ -427,7 +424,7 @@ console.log('\n── Bedroom: outlet side effects only on a real travel ──\
         assert(outlets.every(o => o.commands[0] === 'ON'),
             '3_single in the dark turns both bedroom outlets ON')
         assert(cmds(shutters[0])[0] === 'CLOSE',
-            '3_single still closes all four shutters')
+            '3_single still closes every configured shutter')
     } finally {
         restore()
     }
@@ -438,7 +435,7 @@ console.log('\n── Bedroom: outlet side effects only on a real travel ──\
     const { table } = group(BEDROOM, 60)
     const outlets = OUTLETS.map(() => new MockOutlet())
     Object.assign(table, Object.fromEntries(OUTLETS.map((n, i) => [n, outlets[i]])))
-    table['Balkon Swiatlo'] = new MockSensor(400)
+    table['Outdoor Luminance'] = new MockSensor(400)
 
     const restore = stubDeviceLookup(table)
     try {
@@ -455,7 +452,7 @@ console.log('\n── Bedroom: outlet side effects only on a real travel ──\
     const { table } = group(BEDROOM, 0)
     const outlets = OUTLETS.map(() => new MockOutlet())
     Object.assign(table, Object.fromEntries(OUTLETS.map((n, i) => [n, outlets[i]])))
-    table['Balkon Swiatlo'] = new MockSensor(400)
+    table['Outdoor Luminance'] = new MockSensor(400)
 
     const restore = stubDeviceLookup(table)
     const beeps = captureBeeps()
@@ -474,7 +471,7 @@ console.log('\n── Bedroom: outlet side effects only on a real travel ──\
     const { table } = group(BEDROOM, 30)
     const outlets = OUTLETS.map(() => new MockOutlet())
     Object.assign(table, Object.fromEntries(OUTLETS.map((n, i) => [n, outlets[i]])))
-    table['Balkon Swiatlo'] = new MockSensor(4000)
+    table['Outdoor Luminance'] = new MockSensor(4000)
 
     const restore = stubDeviceLookup(table)
     const interaction = new BedroomRollersInteraction()
@@ -482,8 +479,8 @@ console.log('\n── Bedroom: outlet side effects only on a real travel ──\
         interaction.execute({ action: '1_single' })
         assert(outlets.every(o => o.commands.length === 0),
             'bright daylight does not switch outlets immediately on open')
-        assert(interaction.getShutters().length === 4,
-            'bedroom group drives four shutters')
+        assert(interaction.getShutters().length === BEDROOM.length,
+            'bedroom group uses the shipped shutter list')
 
         await sleep(5200) // OPEN_OUTLET_OFF_DELAY_MS is 5000ms
         assert(outlets.every(o => o.commands[0] === 'OFF'),
