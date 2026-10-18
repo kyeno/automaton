@@ -64,3 +64,17 @@ See [Contributing](../../CONTRIBUTING.md#testing) for fixtures, selected tests, 
 - [Sequence Entity](./sequence-entity.md)
 - [Time-of-Day Periods](./time-of-day-periods.md)
 - [Weatherman Speech Rendering](./weatherman-speech-rendering.md)
+
+## Infrastructure outages
+
+MQTT uses one pending reconnect timer with exponential backoff and a circuit
+breaker. Replacement clients restore subscriptions and notify reconnect observers
+once connected. Retired clients cannot dispatch messages or alter connection
+state, and shutdown cancels pending retries.
+
+Redis cache operations require command readiness and do not queue during an
+outage. Reads and writes retain their existing failure return values. Each
+operation has a two-second deadline, including waiting for a server reply; an
+expired operation retires the stalled connection and starts recovery without
+replaying pending writes. A write already received by Redis may have executed
+even if its reply was lost. Redis shutdown is bounded as well.

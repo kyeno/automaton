@@ -160,6 +160,8 @@ const defaultTestScripts = [
   'test-service-instantiation.js',
   'test-origin-classification.js',
   'test-mqtt-publish-hook.js',
+  'test-mqtt-reconnect.js',
+  'test-cache-outage.js',
   'test-mqtt-dedupe-exempt.js',
   'test-mqtt-soil-moisture-dedupe.js',
   'test-command-reassert.js',

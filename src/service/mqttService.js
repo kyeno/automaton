@@ -99,6 +99,8 @@ class SMQTTService {
     #reconnectCallbacks = []
     #circuitOpen = false
     #shuttingDown = false
+    /** Single pending reconnect timer, cancelled on recovery and shutdown. */
+    #reconnectTimer = null
     /** Heartbeat interval timer. */
      /** @type {NodeJS.Timeout|null} */
     #heartbeatTimer = null
@@ -122,36 +124,65 @@ class SMQTTService {
         this.#prefix = process.env['MQTT_PREFIX'] ?? 'zigbee2mqtt'
         this.#connectFn = typeof options?.connectFn === 'function' ? options.connectFn : null
 
+        this.#shuttingDown = false
         await this.#connect()
-        this.#setupEventHandlers()
-        this.#startDispatcher()
     }
 
-    /** Create a new MQTT client and wait for the `'connect'` event.
+    /** Create one client with one lifecycle handler set; ignore obsolete clients.
+     * @param {boolean} [reconnecting=false] - Whether to restore existing subscriptions
+     * @returns {Promise<void>} Resolves on connection, rejects on handshake failure
      * @private */
-    async #connect() {
+    #connect(reconnecting = false) {
         return new Promise((resolve, reject) => {
-            this.#client = (this.#connectFn || mqtt.connect)(this.#url, {
+            const client = (this.#connectFn || mqtt.connect)(this.#url, {
                 clientId: `${CLIENT_ID_PREFIX}${randomBytes(4).toString('hex')}`,
                 reconnectPeriod: 0
             })
+            this.#client = client
+            const current = () => this.#client === client && !this.#shuttingDown
+            let established = false
 
-            this.#client.on('connect', () => {
+            client.on('connect', () => {
+                if (!current() || established) return
+                established = true
+                this.#cancelReconnect()
                 this.#reconnectAttempts = 0
                 this.#circuitOpen = false
                 StateService.set('mqtt.connected', true)
-                LoggerService.info('Connected to broker', 'MqttService')
+                LoggerService.info(reconnecting ? 'MQTT reconnected successfully' : 'Connected to broker', 'MqttService')
+                this.#startDispatcher()
+                if (reconnecting) {
+                    this.#resubscribeAll()
+                    for (const callback of this.#reconnectCallbacks) {
+                        try { callback() }
+                        catch (error) { LoggerService.error(`Reconnect callback failed: ${error.message}`, 'MqttService') }
+                    }
+                }
                 this.#startHeartbeat()
                 resolve()
             })
-
-            this.#client.on('error', (error) => {
-                LoggerService.error(`Connection error: ${error.message}`, 'MqttService')
-                reject(error)
+            client.on('error', (error) => {
+                if (!current()) return
+                LoggerService.error(`MQTT error: ${error.message}`, 'MqttService')
+                if (!established) reject(error)
+                if (!client.connected) {
+                    StateService.set('mqtt.connected', false)
+                    this.#scheduleReconnect()
+                }
+            })
+            client.on('close', () => {
+                if (!current()) return
+                StateService.set('mqtt.connected', false)
+                this.#stopHeartbeat()
+                if (!established) reject(new Error('MQTT connection closed before handshake completed'))
+                this.#scheduleReconnect()
+            })
+            client.on('offline', () => {
+                if (!current()) return
+                StateService.set('mqtt.connected', false)
             })
         })
     }
-
 
     /** Start periodic heartbeat events via EventBus.
      * @private */
@@ -191,7 +222,7 @@ class SMQTTService {
     /** Schedule a reconnection with exponential backoff and circuit breaker.
      * @private */
     #scheduleReconnect() {
-        if (this.#circuitOpen) return
+        if (this.#shuttingDown || this.#circuitOpen || this.#reconnectTimer !== null) return
 
         this.#reconnectAttempts++
         const attempt = this.#reconnectAttempts
@@ -212,74 +243,38 @@ class SMQTTService {
             'MqttService'
         )
 
-        //  Notify registered callbacks so devices know a reconnect is pending.
-        this.#reconnectCallbacks.forEach(cb => cb())
-
-        setTimeout(() => {
+        this.#reconnectTimer = setTimeout(() => {
+            this.#reconnectTimer = null
             this.#doReconnect()
         }, delay)
     }
 
-    /** Perform the actual reconnect by destroying the old client and creating a new one.
-     * @private */
+    /** Cancel any scheduled retry. @private */
+    #cancelReconnect() {
+        if (this.#reconnectTimer !== null) clearTimeout(this.#reconnectTimer)
+        this.#reconnectTimer = null
+    }
+
+    /** Retire the previous client before starting exactly one replacement. @private */
     #doReconnect() {
-        if (this.#circuitOpen) return
-
-        //  Stop heartbeat before tearing down the old client.
+        if (this.#shuttingDown || this.#circuitOpen) return
+        this.#cancelReconnect()
         this.#stopHeartbeat()
-
-        //  Immediately mark as disconnected so the status bar updates right away.
         StateService.set('mqtt.connected', false)
-
-        //  Safely destroy the old client - it may be in a corrupted state.
-        if (this.#client && typeof this.#client.destroy === 'function') {
-            try {
-                this.#client.destroy(true)
-            } catch (e) {
-                LoggerService.debug(`Client cleanup during reconnect: ${e.message}`, 'MqttService')
-            }
-        }
-
-        try {
-            this.#client = (this.#connectFn || mqtt.connect)(this.#url, {
-                clientId: `${CLIENT_ID_PREFIX}${randomBytes(4).toString('hex')}`,
-                reconnectPeriod: 0
-            })
-
-            this.#client.on('connect', () => {
-                this.#reconnectAttempts = 0
-                this.#circuitOpen = false
-                StateService.set('mqtt.connected', true)
-                LoggerService.info('** MQTT RECONNECTED successfully', 'MqttService')
-                //  Restore full event handling after reconnect.
-                this.#setupEventHandlers()
-                //  Re-subscribe to all previously registered topics.
-                this.#resubscribeAll()
-                //  Restart dispatcher and heartbeat.
-                this.#startDispatcher()
-                this.#startHeartbeat()
-            })
-
-            this.#client.on('error', (error) => {
-                LoggerService.error(`!! MQTT reconnect FAILED: ${error.message}`, 'MqttService')
-                this.#scheduleReconnect()
-            })
-
-            this.#client.on('close', () => {
-                if (this.#shuttingDown) return
-                StateService.set('mqtt.connected', false)
-                LoggerService.error('*** MQTT DISCONNECTED - connection lost, scheduling reconnect...', 'MqttService')
-                this.#scheduleReconnect()
-            })
-        } catch (e) {
-            LoggerService.error(`Failed to create new MQTT client during reconnect: ${e.message}`, 'MqttService')
+        const previous = this.#client
+        this.#client = null // invalidate old callbacks before closing its socket
+        try { previous?.end(true) }
+        catch (error) { LoggerService.debug(`Client cleanup during reconnect: ${error.message}`, 'MqttService') }
+        void this.#connect(true).catch((error) => {
+            if (this.#shuttingDown) return
+            LoggerService.error(`MQTT reconnect failed: ${error.message}`, 'MqttService')
             this.#scheduleReconnect()
-        }
+        })
     }
 
     /** Reset the circuit breaker so reconnection attempts resume. */
     resetCircuit() {
-        if (!this.#circuitOpen) return
+        if (this.#shuttingDown || !this.#circuitOpen) return
 
         this.#circuitOpen = false
         this.#reconnectAttempts = 0
@@ -306,33 +301,6 @@ class SMQTTService {
         }
     }
 
-    //  -- Callbacks --------------------------------------------------------
-
-    /** Attach lifecycle event listeners to the MQTT client after initial connect.
-     * @private */
-    #setupEventHandlers() {
-        this.#client.on('close', () => {
-            if (this.#shuttingDown) return
-            StateService.set('mqtt.connected', false)
-            LoggerService.error('*** MQTT DISCONNECTED - connection lost, scheduling reconnect...', 'MqttService')
-            this.#scheduleReconnect()
-        })
-
-        this.#client.on('error', (error) => {
-            LoggerService.error(`MQTT error: ${error.message}`, 'MqttService')
-            if (!this.#client.connected) {
-                StateService.set('mqtt.connected', false)
-                this.#scheduleReconnect()
-            }
-        })
-
-        this.#client.on('offline', () => {
-            StateService.set('mqtt.connected', false)
-            LoggerService.error('** MQTT client went OFFLINE', 'MqttService')
-        })
-    }
-
-
     /** Start a single message dispatcher on the MQTT client.
      * @private */
     #startDispatcher() {
@@ -340,7 +308,9 @@ class SMQTTService {
 
         this.#client.setMaxListeners(MAX_CLIENT_LISTENERS)
 
-        this.#client.on('message', (topic, payload) => {
+        const client = this.#client
+        client.on('message', (topic, payload) => {
+            if (this.#shuttingDown || client !== this.#client) return
             const message = payload.toString()
             const now = Date.now()
 
@@ -465,7 +435,7 @@ class SMQTTService {
     // -- Public API -------------------------------------------------------
 
     /**
-     * Register a callback invoked whenever the MQTT client reconnects.
+     * Register a callback invoked after a replacement MQTT client connects.
      * Used by DeviceContainer to trigger idempotent re-subscription of device topics.
      *
      * @param {Function} callback - Reconnect handler
@@ -656,7 +626,7 @@ class SMQTTService {
      * @return {boolean} connected
      */
     isConnected() {
-        return this.#client?.connected ?? false
+        return !this.#shuttingDown && (this.#client?.connected ?? false)
     }
 
     /**
@@ -665,12 +635,14 @@ class SMQTTService {
      * @async
      */
     async disconnect() {
+        this.#shuttingDown = true
+        this.#cancelReconnect()
+        this.#stopHeartbeat()
+        this.#reconnectCallbacks = []
+        StateService.set('mqtt.connected', false)
         if (this.#client) {
             return new Promise((resolve) => {
                 try {
-                    this.#shuttingDown = true
-                    this.#reconnectCallbacks = []
-                    this.#stopHeartbeat()
                     LoggerService.warn('MQTT connection ended', 'MqttService')
                     this.#client.end(false, () => {
                         LoggerService.info('MQTT disconnected gracefully', 'MqttService')

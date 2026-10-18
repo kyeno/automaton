@@ -25,6 +25,9 @@ const REDIS_RECONNECT_BASE_DELAY_MS = 1_000
  * @type {number} */
 const REDIS_RECONNECT_MAX_DELAY_MS = 30_000
 
+/** Deadline for cache commands, including a connected but unresponsive server. */
+const COMMAND_TIMEOUT_MS = 2_000
+
 //  CacheService (module-level singleton)
 
 /** Redis connection wrapper with automatic reconnection.
@@ -32,13 +35,20 @@ const REDIS_RECONNECT_MAX_DELAY_MS = 30_000
 class SCacheService {
 
     #redis
+    /** Prevent command deadlines from reconnecting during shutdown. */
+    #shuttingDown = false
 
 
     /** Create the Redis client, attach lifecycle listeners, and connect.
+     * @param {Object} [options={}] - Optional client factory for isolated tests
+     * @param {Function} [options.createClientFn] - Factory matching redis.createClient
      * @async */
-    async init() {
-        this.#redis = createClient({
+    async init(options = {}) {
+        this.#shuttingDown = false
+        this.#redis = (options.createClientFn ?? createClient)({
             url: process.env.REDIS_URL,
+            disableOfflineQueue: true,
+            commandOptions: { timeout: COMMAND_TIMEOUT_MS },
             socket: {
                 reconnectStrategy: this.#onRedisReconnectAttempt.bind(this)
             }
@@ -63,13 +73,14 @@ class SCacheService {
     /** Callback: Redis connection established.
      * @private */
     #onRedisConnect() {
-        StateService.set('redis.connected', true)
+        StateService.set('redis.connected', false)
         LoggerService.info('Redis connected', 'CacheService')
     }
 
     /** Callback: Redis client is ready to accept commands.
      * @private */
     #onRedisReady() {
+        if (this.#shuttingDown) return
         StateService.set('redis.connected', true)
         LoggerService.info('Redis is ready', 'CacheService')
     }
@@ -117,10 +128,10 @@ class SCacheService {
 
     //  -- Public API -------------------------------------------------------
 
-    /** Check if Redis client is connected and open.
+    /** Check if Redis is ready to execute commands without waiting for reconnection.
      * @returns {boolean} */
     isConnected() {
-        return this.#redis?.isOpen ?? false
+        return !this.#shuttingDown && (this.#redis?.isReady ?? false)
     }
 
     /** Get a cached item by key (JSON-deserialized).
@@ -133,7 +144,7 @@ class SCacheService {
         }
 
         try {
-            const value = await this.#redis.get(key)
+            const value = await this.#command('get', key)
             return value ? JSON.parse(value) : undefined
         } catch (e) {
             LoggerService.error(`Redis GET error for key "${key}": ${e.message}`, 'CacheService')
@@ -155,9 +166,9 @@ class SCacheService {
         try {
             const serialized = JSON.stringify(item)
             if (ttl ?? DEFAULT_TTL_SECONDS) {
-                await this.#redis.set(key, serialized, { EX: ttl ?? DEFAULT_TTL_SECONDS })
+                await this.#command('set', key, serialized, { EX: ttl ?? DEFAULT_TTL_SECONDS })
             } else {
-                await this.#redis.set(key, serialized)
+                await this.#command('set', key, serialized)
             }
             return true
         } catch (e) {
@@ -176,7 +187,7 @@ class SCacheService {
         }
 
         try {
-            await this.#redis.del(key)
+            await this.#command('del', key)
             return true
         } catch (e) {
             LoggerService.error(`Redis DEL error for key "${key}": ${e.message}`, 'CacheService')
@@ -204,7 +215,7 @@ class SCacheService {
                 type: 'human',
                 expiresAt: Date.now() + ttlSeconds * 1000
             })
-            await this.#redis.set(`cooldown:${deviceSlug}`, payload, { EX: ttlSeconds })
+            await this.#command('set', `cooldown:${deviceSlug}`, payload, { EX: ttlSeconds })
             return true
         } catch (e) {
             LoggerService.error(
@@ -228,7 +239,7 @@ class SCacheService {
         }
 
         try {
-            const raw = await this.#redis.get(`cooldown:${deviceSlug}`)
+            const raw = await this.#command('get', `cooldown:${deviceSlug}`)
             if (!raw) return null
 
             const data = JSON.parse(raw)
@@ -245,12 +256,66 @@ class SCacheService {
         }
     }
 
+    /** Bound the entire command, including time waiting for a reply on the socket.
+     * Redis commandOptions.timeout only covers commands not yet written. On deadline,
+     * retire the socket to flush pending replies and reconnect without replaying writes.
+     * @param {string} method - Redis command method
+     * @param {...any} args - Command arguments
+     * @returns {Promise<any>} Command result, or rejection handled by the public accessor
+     * @private */
+    async #command(method, ...args) {
+        const client = this.#redis
+        const controller = new AbortController()
+        let timer
+        try {
+            return await Promise.race([
+                client.withAbortSignal(controller.signal)[method](...args),
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => {
+                        reject(new Error(`Redis command timed out after ${COMMAND_TIMEOUT_MS}ms`))
+                        controller.abort()
+                        if (this.#redis !== client || this.#shuttingDown) return
+                        StateService.set('redis.connected', false)
+                        try {
+                            if (client.isOpen) client.destroy()
+                            void client.connect().catch((error) => {
+                                if (this.#shuttingDown || this.#redis !== client) return
+                                LoggerService.error(`Redis recovery failed: ${error.message}`, 'CacheService')
+                            })
+                        } catch (error) {
+                            LoggerService.error(`Redis recovery failed: ${error.message}`, 'CacheService')
+                        }
+                    }, COMMAND_TIMEOUT_MS)
+                })
+            ])
+        } finally {
+            clearTimeout(timer)
+        }
+    }
+
     /** Gracefully disconnect from Redis.
      * @async */
     async disconnect() {
+        this.#shuttingDown = true
+        StateService.set('redis.connected', false)
         if (this.#redis?.isOpen) {
             try {
-                await this.#redis.quit()
+                if (!this.#redis.isReady) {
+                    this.#redis.destroy()
+                } else {
+                    let timer
+                    try {
+                        await Promise.race([
+                            this.#redis.quit(),
+                            new Promise((_, reject) => {
+                                timer = setTimeout(() => reject(new Error('Redis disconnect timed out')), COMMAND_TIMEOUT_MS)
+                            })
+                        ])
+                    } finally {
+                        clearTimeout(timer)
+                        if (this.#redis.isOpen) this.#redis.destroy()
+                    }
+                }
                 LoggerService.info('Redis disconnected gracefully', 'CacheService')
             } catch (e) {
                 LoggerService.error(`Redis disconnect error: ${e.message}`, 'CacheService')
