@@ -9,7 +9,7 @@
 'use strict'
 
 import LoggerService from '../../service/loggerService.js'
-import { httpGet } from './http.js'
+import { httpGet, playerTimeout } from './http.js'
 
 
 /** Supported MPC-HC major.minor range -- the parsing contract is only
@@ -35,14 +35,14 @@ export default class MpcProvider {
      * @param {string} config.path - Path to the variables page
      * @param {string} [config.username] - Optional basic-auth username
      * @param {string} [config.password] - Optional basic-auth password
-     * @param {number} [config.timeout_ms] - Per-player HTTP timeout override
+     * @param {number|string} [config.timeout] - Per-player HTTP timeout override
      * @returns {Promise<string>} Raw response body */
     async fetch(config) {
         const url = `http://${config.host}:${config.port}${config.path}`
         return await httpGet(url, {
             username: config.username,
             password: config.password,
-            timeoutMs: config.timeout_ms
+            timeoutMs: playerTimeout(config)
         })
     }
 

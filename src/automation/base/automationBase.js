@@ -142,29 +142,15 @@ export default class AutomationBase {
     /** Return the interval in milliseconds for the periodic timer.
      * @return {number|null} Interval in milliseconds, or null/0 to disable */
     getTimerIntervalMs() {
-        const human = this.config?.timer_interval
-        if (typeof human === 'string') {
-            const ms = temporal.humanToMs(human)
-            if (ms == null || ms > MAX_SETTABLE_INTERVAL_MS) {
-                LoggerService.warn(
-                    `Invalid timer_interval "${human}" (expected e.g. "90s", "3m 45s" or "1h"). Timer disabled.`,
-                    `Auto:${this.name}`
-                )
-                return DEFAULT_TIMER_INTERVAL_MS
-            }
-            return ms
-        }
-
-        const legacy = this.config?.timer_interval_ms
-        if (typeof legacy !== 'number') return DEFAULT_TIMER_INTERVAL_MS
-        if (legacy > MAX_SETTABLE_INTERVAL_MS) {
-            LoggerService.warn(
-                `timer_interval_ms ${legacy} exceeds maximum (${MAX_SETTABLE_INTERVAL_MS}). Timer disabled.`,
-                `Auto:${this.name}`
-            )
+        const raw = this.config?.timer_interval !== undefined ? this.config.timer_interval : this.config?.timer_interval_ms
+        if (raw === undefined) return DEFAULT_TIMER_INTERVAL_MS
+        const ms = temporal.parseDurationMs(raw)
+        if (ms === null || ms > MAX_SETTABLE_INTERVAL_MS) {
+            LoggerService.warn(`Invalid timer_interval ${JSON.stringify(raw)} (duration or milliseconds, maximum ${MAX_SETTABLE_INTERVAL_MS}ms). Timer disabled.`, `Auto:${this.name}`)
             return DEFAULT_TIMER_INTERVAL_MS
         }
-        return legacy
+        return ms
+
     }
 
     /** This automation's most recent rule matches, newest first.
@@ -289,12 +275,12 @@ export default class AutomationBase {
     /** Return the human-interaction cooldown in milliseconds.
      * @returns {number} Cooldown in milliseconds (>= 0) */
     getHumanInteractionCooldownMs() {
-        const raw = ConfigService.get('automation.human_interaction_cooldown_ms')
+        const raw = ConfigService.get('automation.human_interaction_cooldown')
         if (raw == null) return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS
         const ms = temporal.parseDurationMs(raw)
         if (ms == null || ms < 0) {
             LoggerService.warn(
-                `Invalid automation.human_interaction_cooldown_ms ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS)})`,
+                `Invalid automation.human_interaction_cooldown ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS)})`,
                 `Auto:${this.name}`
             )
             return DEFAULT_HUMAN_INTERACTION_COOLDOWN_MS

@@ -8,12 +8,23 @@
  */
 'use strict'
 
+import temporal from '../../lib/date.js'
+
 /** Default per-request timeout in milliseconds. Players are LAN-local and should
  * answer well under this; a stalled web thread (e.g. MPC-HC blocking for ~1 s while
  * seeking or skipping) must not be misread as an offline player. Per-player overrides
- * are accepted via the optional `timeout_ms` key in etc/device/network.yaml.
+ * are accepted via the optional `timeout` key in etc/device/network.yaml.
  * @type {number} */
 const DEFAULT_TIMEOUT_MS = 1200
+
+/** Resolve a configured player timeout to milliseconds, accepting the former key for direct callers.
+ * @param {object} config - Player endpoint configuration.
+ * @returns {number} Positive timeout in milliseconds. */
+export function playerTimeout(config) {
+    const raw = config.timeout !== undefined ? config.timeout : config.timeout_ms
+    const ms = temporal.parseDurationMs(raw)
+    return ms !== null && ms > 0 ? ms : DEFAULT_TIMEOUT_MS
+}
 
 /** Perform an HTTP GET request with a timeout and optional basic auth.
  * @param {string} url - Absolute URL to request (e.g., http://host:port/path)

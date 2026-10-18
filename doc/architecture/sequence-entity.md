@@ -11,19 +11,19 @@ Use either `devices` for derived ON/OFF commands or `on` / `off` for explicit pa
 ```yaml
 sequences:
   - name: 'Ambient Lights'
-    delay_ms: '500ms'
+    delay: '500ms'
     devices:
       - 'Living Room Outlet'
       - device: 'Kitchen LED Strip'
         command: 'ON'
-        delay_ms: '800ms'
+        delay: '800ms'
 
   - name: 'Hazard Light'
     loop:
       enabled: true
       cycle: continuous
-      off_delay_ms: '2s'
-      on_delay_ms: '2s'
+      off_delay: '2s'
+      on_delay: '2s'
     on:
       - device: 'Living Room Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }
@@ -35,13 +35,13 @@ sequences:
 | Key | Behavior |
 |-----|----------|
 | `name` | Required; unique slug derived from the friendly name |
-| `delay_ms` | Delay between steps; omitted means no delay; accepts durations or milliseconds |
-| `devices` | Ordered names or `{device, command?, delay_ms?}` entries; `command` overrides ON only |
-| `on` / `off` | Ordered `{device, payload?, delay_ms?}` entries; payloads pass through verbatim |
+| `delay` | Delay between steps; omitted means no delay; accepts durations or milliseconds |
+| `devices` | Ordered names or `{device, command?, delay?}` entries; `command` overrides ON only |
+| `on` / `off` | Ordered `{device, payload?, delay?}` entries; payloads pass through verbatim |
 | `loop.enabled` | Enable the loop API |
 | `loop.cycle` | `once` or `continuous`; default `once` |
-| `loop.off_delay_ms` | Gap after ON and before OFF; `auto` starts immediately |
-| `loop.on_delay_ms` | Gap after OFF and before the next ON in continuous mode |
+| `loop.off_delay` | Gap after ON and before OFF; `auto` starts immediately |
+| `loop.on_delay` | Gap after OFF and before the next ON in continuous mode |
 
 Exactly one of `devices` or `on` is required. Missing `off` sends OFF to the ON devices.
 Invalid durations warn and use defaults. Missing devices warn and their steps are skipped.

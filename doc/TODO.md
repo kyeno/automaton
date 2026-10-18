@@ -13,9 +13,6 @@
 - Integrate automated IR remote
 
 ## Architecture
-- Move ai_bridge: config key to ai: bridge:
-- BUG: Many config entries have something_timeout or something_cooldown _ms, while they
-  take human readable time format (not ms). It would make sense to unify that.
 - Add option to set human interaction threshold as parameter to the function,
   then add it as an option to tool calling for AI - so it could open the rollers
   for certain amount of time.

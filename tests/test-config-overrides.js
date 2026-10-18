@@ -82,7 +82,7 @@ console.log('\n\u2500\u2500 parseConfigOverride unit tests \u2500\u2500\n')
     assert(r.value === true, 'boolean value typed correctly')
 }
 {
-    const r = ConfigService.parseConfigOverride('automation.human_interaction_cooldown_ms: "90s"')
+    const r = ConfigService.parseConfigOverride('automation.human_interaction_cooldown: "90s"')
     assert(r.value === '90s', 'quoted duration stays a string')
 }
 {

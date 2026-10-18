@@ -34,7 +34,7 @@ appliances:
 # entry, or from an optional "host" key.
 #   parser     -- response parser: vlc (VLC HTTP API, /requests/status.json)
 #                or mpc (MPC-HC web interface, /variables.html)
-#   timeout_ms -- optional per-player fetch timeout (default 1200 ms)
+#   timeout -- optional per-player fetch timeout (default 1200 ms)
 # MPC-HC: enable the web interface under View -> Options -> Player -> Web Interface
 # ("Listen on port" on, "Allow access from localhost only" off).
 videoPlayers:

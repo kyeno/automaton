@@ -25,7 +25,7 @@ await EmailService.notify({
 The service then:
 
 1. Checks the **per-kind switch** (`email.notify.<kind>`). A kind set to `false` never mails; a kind with no switch is allowed.
-2. Checks the **per-kind cooldown** (`email.cooldown_ms`). The marker lives in Redis (`mail:cooldown:<kind>`) so it survives a restart; a Redis outage falls back to an in-memory timestamp and fails open.
+2. Checks the **per-kind cooldown** (`email.cooldown`). The marker lives in Redis (`mail:cooldown:<kind>`) so it survives a restart; a Redis outage falls back to an in-memory timestamp and fails open.
 3. Resolves the **locale template section** for the kind from `etc/i18n/<locale>/email.yaml`.
 4. Renders the **subject** (prefix + template line) and the **body** (greeting, the announcement message, signature, footer).
 5. Queues one copy per owner on a single FIFO chain and returns immediately — a slow or dead relay can never block the caller.
@@ -59,7 +59,7 @@ email:
   enabled: true                   # false disables the channel even with a relay set
   from: ''                        # sender address; falls back to SMTP_USER when empty
   subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
-  cooldown_ms: "60m"              # per-kind silence after one notification; 0 = mail every event
+  cooldown: "60m"              # per-kind silence after one notification; 0 = mail every event
   notify:                        # per-kind switches; a kind set to false never mails
     sensor_frozen: true
 ```
@@ -68,7 +68,7 @@ email:
 - **`email.enabled`** — the master switch. `false` disables the channel even when `SMTP_HOST` is set.
 - **`email.from`** — the sender address. When empty, `SMTP_USER` is used.
 - **`email.subject_prefix`** — prepended to every subject. Empty string drops the prefix.
-- **`email.cooldown_ms`** — the per-kind re-notification window. `0` mails every event.
+- **`email.cooldown`** — the per-kind re-notification window. `0` mails every event.
 - **`email.notify`** — a map of kind → boolean. A kind set to `false` is muted; a kind with no entry is allowed.
 
 ## The `/mail` Command

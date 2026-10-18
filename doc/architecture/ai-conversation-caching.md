@@ -9,17 +9,17 @@ In `etc/automaton.yaml`:
 
 ```yaml
 ai:
-  conversation_ttl_sec: "15m"
+  conversation_ttl: "15m"
   max_conversation_turns: 20
-  fetch_timeout_ms: "5m"
+  fetch_timeout: "5m"
   include_chat_history_in_system_calls: false
 ```
 
 | Key | Effect |
 |-----|--------|
-| `conversation_ttl_sec` | Cache expiry; duration string or seconds |
+| `conversation_ttl` | Cache expiry; duration string or milliseconds (converted to Redis seconds) |
 | `max_conversation_turns` | Maximum retained non-system messages; oldest dropped first |
-| `fetch_timeout_ms` | HTTP request deadline; duration string or milliseconds; timeout is not retried |
+| `fetch_timeout` | HTTP request deadline; duration string or milliseconds; timeout is not retried |
 | `include_chat_history_in_system_calls` | Give announcements prior chat context; default `false` |
 
 Each successful user exchange refreshes the cache TTL after tool calls finish.

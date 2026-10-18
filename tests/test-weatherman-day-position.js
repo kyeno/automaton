@@ -146,6 +146,7 @@ console.log('\n── getTimerIntervalMs() ──\n')
     let n = 0
     const mk = (cfg) => new ConcreteAutomation({ name: `timer-test-${++n}`, config: cfg })
 
+    assert(mk({ timer_interval: 90000 }).getTimerIntervalMs() === 90000, 'canonical numeric timer values use milliseconds')
     assert(mk({ timer_interval: '3m 45s' }).getTimerIntervalMs() === 225_000, 'human "3m 45s" parsed')
     assert(mk({ timer_interval: '90s', timer_interval_ms: 1 }).getTimerIntervalMs() === 90_000, 'new key wins over legacy')
     assert(mk({ timer_interval_ms: 75_000 }).getTimerIntervalMs() === 75_000, 'legacy numeric still works')

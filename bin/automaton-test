@@ -107,6 +107,7 @@ console.log('\n── Test scripts ──\n')
 const defaultTestScripts = [
   'test-test-workspace.js',
   'test-config-validation.js',
+  'test-config-migration.js',
   'test-config-overrides.js',
   'test-config-cmd.js',
   'test-config-reload.js',

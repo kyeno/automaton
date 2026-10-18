@@ -4,7 +4,7 @@
  * Covers the approved design (doc/architecture/sequence-entity.md section 8) by driving
  * instances directly against mock devices registered through a stubbed findByName lookup:
  *   - A: simple-form ON run walks the ordered list with inter-step pacing respected;
- *   - B: endpoint mode (no delay_ms) fires all steps back-to-back; OFF sends plain 'OFF';
+ *   - B: endpoint mode (no delay) fires all steps back-to-back; OFF sends plain 'OFF';
  *   - C: rich form passes explicit on/off payloads verbatim (hazard-light shape); missing
  *     off: defaults to plain OFF over the on devices;
  *   - D: blocking mutex rejects concurrent runs and loop starts while an instance is busy;
@@ -15,7 +15,7 @@
  *   - G: missing referenced devices are inert steps -- remaining steps still execute;
  *   - H: container smoke test -- init resolves entries from a config file without crashing and
  *     unknown slugs warn gracefully;
- *   - I: continuous loops honor BOTH inter-phase gaps (off_delay_ms before OFF runs, on_delay_ms
+ *   - I: continuous loops honor BOTH inter-phase gaps (off_delay before OFF runs, on_delay
  *     before ON runs) and still halt cleanly; stopping during/after an OFF phase cancels the
  *     pre-ON wait so no next ON is ever issued.
  *   - J: /config reload path -- reloadSequences() rebuilds the live registry from edited disk state:
@@ -107,7 +107,7 @@ function stubDeviceLookup(table) {
     const restore = stubDeviceLookup({ 'Alpha': alpha, 'Beta': beta, 'Gamma': gamma })
     try {
         const seq = new SequenceBase('Paced Lights', {
-            delay_ms: '40ms',
+            delay: '40ms',
             devices: ['Alpha', 'Beta', 'Gamma']
         })
         await seq.init()
@@ -128,7 +128,7 @@ function stubDeviceLookup(table) {
 }
 
 {
-    // -- B: endpoint mode (no delay_ms) fires back-to-back; OFF sends plain OFF --
+    // -- B: endpoint mode (no delay) fires back-to-back; OFF sends plain OFF --
     const alpha = new MockDevice('Alpha')
     const beta = new MockDevice('Beta')
     const gamma = new MockDevice('Gamma')
@@ -140,7 +140,7 @@ function stubDeviceLookup(table) {
         const okOn = await seq.run('ON')
         const onElapsed = Date.now() - t0
         assert(okOn === true && onElapsed < 100,
-            `B: no delay_ms => all steps fired without waiting (${onElapsed}ms)`)
+            `B: no delay => all steps fired without waiting (${onElapsed}ms)`)
         assert(alpha.commands.length === 1 && alpha.commands[0].cmd === 'ON'
             && beta.commands.length === 1 && gamma.commands.length === 1,
             'B: every device received ON exactly once')
@@ -162,7 +162,7 @@ function stubDeviceLookup(table) {
     const restore = stubDeviceLookup({ 'Salon Dimmer': dimmer })
     try {
         const hazard = new SequenceBase('Hazard Light', {
-            loop: { enabled: true, cycle: 'continuous', off_delay_ms: 'auto' },
+            loop: { enabled: true, cycle: 'continuous', off_delay: 'auto' },
             on: [{ device: 'Salon Dimmer', payload: { state: 'ON', brightness: { l1: 1, l2: 25 } } }],
             off: [{ device: 'Salon Dimmer', payload: { state: 'ON', brightness: { l1: 100, l2: 75 } } }]
         })
@@ -198,8 +198,8 @@ function stubDeviceLookup(table) {
     const restore = stubDeviceLookup({ 'Alpha': alpha, 'Beta': beta })
     try {
         const seq = new SequenceBase('Busy Loop Seq', {
-            loop: { enabled: true, cycle: 'once', off_delay_ms: 'auto' },
-            devices: [{ device: 'Alpha', delay_ms: '80ms' }, { device: 'Beta' }]
+            loop: { enabled: true, cycle: 'once', off_delay: 'auto' },
+            devices: [{ device: 'Alpha', delay: '80ms' }, { device: 'Beta' }]
         })
         await seq.init()
         const firstRun = seq.run('ON')   // in flight for >= 80ms; #busy set synchronously
@@ -226,8 +226,8 @@ function stubDeviceLookup(table) {
     try {
         const slug = 'loop_once_seq'
         const seq = new SequenceBase('Loop Once Seq', {
-            loop: { enabled: true, cycle: 'once', off_delay_ms: '60ms' },
-            devices: [{ device: 'Alpha', delay_ms: '60ms' }, { device: 'Beta' }]
+            loop: { enabled: true, cycle: 'once', off_delay: '60ms' },
+            devices: [{ device: 'Alpha', delay: '60ms' }, { device: 'Beta' }]
         })
         await seq.init()
         assert(seq.getSlug() === slug, 'E1: slug derived with slugify()')
@@ -267,8 +267,8 @@ function stubDeviceLookup(table) {
     try {
         const slug = 'stop_during_wait_seq'
         const seq = new SequenceBase('Stop During Wait Seq', {
-            loop: { enabled: true, cycle: 'once', off_delay_ms: '400ms' },
-            devices: [{ device: 'Alpha', delay_ms: '60ms' }, { device: 'Beta' }]
+            loop: { enabled: true, cycle: 'once', off_delay: '400ms' },
+            devices: [{ device: 'Alpha', delay: '60ms' }, { device: 'Beta' }]
         })
         await seq.init()
         await seq.startLoop()
@@ -294,7 +294,7 @@ function stubDeviceLookup(table) {
     const restore = stubDeviceLookup({ 'Omega': omega })
     try {
         const seq = new SequenceBase('Continuous Oscillator', {
-            loop: { enabled: true, cycle: 'continuous', off_delay_ms: 'auto' },
+            loop: { enabled: true, cycle: 'continuous', off_delay: 'auto' },
             devices: ['Omega']
         })
         await seq.init()
@@ -356,7 +356,7 @@ function stubDeviceLookup(table) {
         '    loop:',
         '      enabled: true',
         '      cycle: once',
-        '      off_delay_ms: auto',
+        '      off_delay: auto',
         '    on:',
         "      - device: 'Smoke B'",
         '        payload: { state: ON, brightness: { l1: 50 } }',
@@ -412,7 +412,7 @@ function stubDeviceLookup(table) {
         fs.writeFileSync(seqFile, [
             'sequences:',
             "  - name: 'Reload Alpha'",
-            "    delay_ms: '30ms'",
+            "    delay: '30ms'",
             '    devices:',
             "      - 'JAlpha'",
             "      - 'JBeta'",
@@ -420,8 +420,8 @@ function stubDeviceLookup(table) {
             '    loop:',
             '      enabled: true',
             '      cycle: continuous',
-            '      off_delay_ms: auto',
-            '      on_delay_ms: auto',
+            '      off_delay: auto',
+            '      on_delay: auto',
             '    devices:',
             "      - 'JLoopDev'",
             ''
@@ -456,7 +456,7 @@ function stubDeviceLookup(table) {
         fs.writeFileSync(seqFile, [
             'sequences:',
             "  - name: 'Reload Alpha'",
-            "    delay_ms: '80ms'",
+            "    delay: '80ms'",
             '    devices:',
             "      - 'JBeta'",     // order flipped vs v1 -- must be visible in command order after reload
             "      - 'JAlpha'",
@@ -512,7 +512,7 @@ function stubDeviceLookup(table) {
     const restore = stubDeviceLookup({ 'Omega': omega })
     try {
         const seq = new SequenceBase('Dual Gap Oscillator', {
-            loop: { enabled: true, cycle: 'continuous', off_delay_ms: '120ms', on_delay_ms: '120ms' },
+            loop: { enabled: true, cycle: 'continuous', off_delay: '120ms', on_delay: '120ms' },
             devices: ['Omega']
         })
         await seq.init()
@@ -549,8 +549,8 @@ function stubDeviceLookup(table) {
     try {
         const slug = 'stop_during_on_wait_seq'
         const seq = new SequenceBase('Stop During On Wait Seq', {
-            loop: { enabled: true, cycle: 'continuous', off_delay_ms: 'auto', on_delay_ms: '400ms' },
-            devices: [{ device: 'Alpha', delay_ms: '60ms' }, { device: 'Beta' }]
+            loop: { enabled: true, cycle: 'continuous', off_delay: 'auto', on_delay: '400ms' },
+            devices: [{ device: 'Alpha', delay: '60ms' }, { device: 'Beta' }]
         })
         await seq.init()
         await seq.startLoop()

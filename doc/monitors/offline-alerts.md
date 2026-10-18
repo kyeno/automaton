@@ -16,7 +16,7 @@ Every value is read **per event**, so `/config reload` applies changes without a
 | Key | Zigbee family | Network family | Default |
 |-----|---------------|----------------|---------|
 | Master switch | `alerts.zigbee_offline_tts` | `alerts.network_offline_tts` | `true` (only an explicit `false` silences) |
-| Re-warning window | `alerts.zigbee_offline_cooldown_ms` | `alerts.network_offline_cooldown_ms` | `"30m"` |
+| Re-warning window | `alerts.zigbee_offline_cooldown` | `alerts.network_offline_cooldown` | `"30m"` |
 | Never announce | `alerts.zigbee_offline_ignore` | `alerts.network_offline_ignore` | `[]` |
 | Framing profile | `alerts.zigbee_offline_tts_profile` | `alerts.network_offline_tts_profile` | `''` (no jingle) |
 | Explicit framing | `alerts.zigbee_offline_tts_options` | `alerts.network_offline_tts_options` | unset |
@@ -27,26 +27,26 @@ Every value is read **per event**, so `/config reload` applies changes without a
 ```yaml
 alerts:
   zigbee_offline_tts: true
-  zigbee_offline_cooldown_ms: "30m"     # "90s"/"15m"/plain ms; 0 = warn on every event
+  zigbee_offline_cooldown: "30m"     # "90s"/"15m"/plain ms; 0 = warn on every event
   zigbee_offline_ignore: []
   zigbee_offline_tts_profile: ''
 
   network_offline_tts: true
-  network_offline_cooldown_ms: "30m"
+  network_offline_cooldown: "30m"
   network_offline_announce_boot: true
   network_offline_announce_recovery: false
   network_offline_devices:              # names from etc/device/network.yaml -- IPs live there
     core-server:                        # null = family defaults
     dns-server:                         # null = family defaults
     wifi-router:
-      cooldown_ms: "5m"                 # per-host override
+      cooldown: "5m"                 # per-host override
       tts_profile: 'alarm'              # per-host framing
       tts_options: { intro: 'router.wav' }
 ```
 
 Only listed `network_offline_devices` are announced. Names absent from `network.yaml` warn at startup.
 
-**Per-host overrides** (`cooldown_ms`, `tts_profile`, `tts_options`) win over the family keys for that host; a `null` entry means plain defaults.
+**Per-host overrides** (`cooldown`, `tts_profile`, `tts_options`) win over the family keys for that host; a `null` entry means plain defaults.
 
 ## Sentences (`etc/i18n/<locale>/alerts.yaml`)
 
@@ -80,7 +80,7 @@ Resolution order: bundle key (per-device entry → `default`) → the monitor's 
 |---------|-------|
 | Nothing is spoken | `alerts.<family>_tts` is not `false`, TTS is enabled (`TTS_API_URL` / `TTS_TCP_ENDPOINT`), and the device is not in `..._ignore` |
 | Host never announced | Its name is under `alerts.network_offline_devices` **and** in `etc/device/network.yaml` (startup warning names the offenders) |
-| Same host announced repeatedly | `..._cooldown_ms` of that host (per-host override beats the family value) |
+| Same host announced repeatedly | `..._cooldown` of that host (per-host override beats the family value) |
 | Sentence is the bare device name | The locale's `alerts.yaml` lacks the key and its `default` entry |
 | No jingle on alerts | `..._tts_profile` names a `profiles:` entry of the **active locale's** `tts.yaml`, and the wave file exists on the TTS server |
 

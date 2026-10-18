@@ -385,12 +385,12 @@ class SEmailService {
      * @returns {number} Cooldown window in milliseconds (>= 0)
      * @private */
     #readCooldownMs() {
-        const raw = ConfigService.get('email.cooldown_ms')
+        const raw = ConfigService.get('email.cooldown')
         if (raw === null || raw === undefined || raw === '') return DEFAULT_COOLDOWN_MS
         const ms = temporal.parseDurationMs(raw)
         if (ms === null || ms < 0) {
             LoggerService.warn(
-                `Email: invalid email.cooldown_ms ${JSON.stringify(raw)} (expected e.g. "12h" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_COOLDOWN_MS)})`,
+                `Email: invalid email.cooldown ${JSON.stringify(raw)} (expected e.g. "12h" or plain milliseconds); using default (${temporal.millisecondsToHumanReadable(DEFAULT_COOLDOWN_MS)})`,
                 'EmailService'
             )
             return DEFAULT_COOLDOWN_MS

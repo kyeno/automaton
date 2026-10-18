@@ -29,8 +29,8 @@ ai:
   model: "gemma-4-e2b-it"
   temperature: 0.7
   max_tokens: 2048
-  fetch_timeout_ms: "5m"
-  conversation_ttl_sec: "15m"
+  fetch_timeout: "5m"
+  conversation_ttl: "15m"
 ```
 
 See [Configuration Guide](../configuration.md#ai-section) for every option explained.

@@ -64,7 +64,7 @@ videoPlayers:
     parser: vlc
     username: ''                # optional basic-auth (VLC)
     password: 'your-vlc-password'
-    timeout_ms: 500            # optional per-player HTTP timeout
+    timeout: "1200ms"            # optional per-player HTTP timeout
 ```
 
 | Key | Required | Description |
@@ -74,7 +74,7 @@ videoPlayers:
 | `path` | Yes | Status endpoint path (must start with `/`) |
 | `parser` | Yes | Response parser: `vlc` or `mpc` |
 | `username` / `password` | No | Basic-auth credentials (VLC's HTTP interface) |
-| `timeout_ms` | No | Per-player HTTP timeout; default 500 ms (LAN-local players answer in single-digit ms) |
+| `timeout` | No | Per-player HTTP timeout; default 500 ms (LAN-local players answer in single-digit ms) |
 
 | `parser` | Player | Endpoint |
 |----------|--------|----------|

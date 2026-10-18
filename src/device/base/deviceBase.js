@@ -740,37 +740,37 @@ export default class DeviceBase {
     /** Echo window for instant commands (ON/OFF/TOGGLE), read live from main config
      * @returns {number} Window in milliseconds (> 0) */
     getInstantEchoWindowMs() {
-        return this.#durationFromConfig('automation.echo_window_instant_ms', INSTANT_ECHO_WINDOW_DEFAULT_MS)
+        return this.#durationFromConfig('automation.echo_window_instant', INSTANT_ECHO_WINDOW_DEFAULT_MS)
     }
 
     /** Echo window for travel commands (OPEN/CLOSE/POS:N/STOP); see
      * @returns {number} Window in milliseconds (> 0) */
     getTravelEchoWindowMs() {
-        return this.#durationFromConfig('automation.echo_window_travel_ms', TRAVEL_ECHO_WINDOW_DEFAULT_MS)
+        return this.#durationFromConfig('automation.echo_window_travel', TRAVEL_ECHO_WINDOW_DEFAULT_MS)
     }
 
     /** Motion-stall watchdog timeout; see {@link getInstantEchoWindowMs} for
      * @returns {number} Timeout in milliseconds (> 0) */
     getMotionStallTimeoutMs() {
-        return this.#durationFromConfig('automation.motion_stall_timeout_ms', MOTION_STALL_TIMEOUT_DEFAULT_MS)
+        return this.#durationFromConfig('automation.motion_stall_timeout', MOTION_STALL_TIMEOUT_DEFAULT_MS)
     }
 
     /** Settle-absorption window (ms): how long follow-up reports of a just-confirmed travel
      * @returns {number} Window in milliseconds */
     getSettleAbsorbWindowMs() {
-        return this.#durationFromConfig('automation.settle_absorb_window_ms', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
+        return this.#durationFromConfig('automation.settle_absorb_window', SETTLE_ABSORB_WINDOW_DEFAULT_MS)
     }
 
     /** Pre-motion grace during which near-target travel reports cannot confirm completion;
      * @returns {number} Grace window in milliseconds (> 0) */
     getTravelEchoGraceMs() {
-        return this.#durationFromConfig('automation.travel_echo_grace_ms', TRAVEL_ECHO_GRACE_DEFAULT_MS)
+        return this.#durationFromConfig('automation.travel_echo_grace', TRAVEL_ECHO_GRACE_DEFAULT_MS)
     }
 
     /** Backoff (ms) before re-dispatching an automated command that produced no observable
      * @returns {number} Backoff in milliseconds */
     getFailedCommandBackoffMs() {
-        return this.#durationFromConfig('automation.failed_command_backoff_ms', FAILED_COMMAND_BACKOFF_DEFAULT_MS)
+        return this.#durationFromConfig('automation.failed_command_backoff', FAILED_COMMAND_BACKOFF_DEFAULT_MS)
     }
 
     /** Shared duration-config reader: accepts plain milliseconds or a human-readable.
@@ -812,12 +812,12 @@ export default class DeviceBase {
      * @private
      * @returns {number} Cooldown in whole seconds (>= 0) */
     #humanCooldownSeconds() {
-        const raw = ConfigService.get('automation.human_interaction_cooldown_ms')
+        const raw = ConfigService.get('automation.human_interaction_cooldown')
         if (raw == null) return HUMAN_INTERACTION_COOLDOWN_SECONDS
         const ms = temporal.parseDurationMs(raw)
         if (ms == null || ms < 0) {
             LoggerService.warn(
-                `Invalid human_interaction_cooldown_ms ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default ${HUMAN_INTERACTION_COOLDOWN_SECONDS}s`,
+                `Invalid human_interaction_cooldown ${JSON.stringify(raw)} (expected e.g. "25m" or plain milliseconds); using default ${HUMAN_INTERACTION_COOLDOWN_SECONDS}s`,
                 `${this.getLogPrefix()}:${this.#name}`
             )
             return HUMAN_INTERACTION_COOLDOWN_SECONDS

@@ -14,13 +14,13 @@ export default {
         type: 'object',
         required: false,
         properties: {
-            human_interaction_cooldown_ms: { type: ['number', 'string'] },
-            echo_window_instant_ms:      { type: ['number', 'string'] },
-            echo_window_travel_ms:       { type: ['number', 'string'] },
-            motion_stall_timeout_ms:     { type: ['number', 'string'] },
-            settle_absorb_window_ms:     { type: ['number', 'string'] },
-            travel_echo_grace_ms:        { type: ['number', 'string'] },
-            failed_command_backoff_ms:   { type: ['number', 'string'] }
+            human_interaction_cooldown: { type: ['number', 'string'] },
+            echo_window_instant:        { type: ['number', 'string'] },
+            echo_window_travel:         { type: ['number', 'string'] },
+            motion_stall_timeout:       { type: ['number', 'string'] },
+            settle_absorb_window:       { type: ['number', 'string'] },
+            travel_echo_grace:          { type: ['number', 'string'] },
+            failed_command_backoff:     { type: ['number', 'string'] }
         }
     },
 
@@ -55,22 +55,20 @@ export default {
             name:                  { type: 'string', required: false },
             max_tokens:            { type: 'number', required: true },
             temperature:           { type: 'number', required: true },
-            fetch_timeout_ms:      { type: ['number', 'string'], required: false },
-            conversation_ttl_sec:  { type: ['number', 'string'], required: false },
+            fetch_timeout:      { type: ['number', 'string'], required: false },
+            conversation_ttl:  { type: ['number', 'string'], required: false },
             max_conversation_turns:{ type: 'number', required: false },
             strip_ai_formatting:   { type: 'boolean', required: false },
-            include_chat_history_in_system_calls: { type: 'boolean', required: false }
-        }
-    },
-
-    //  AI bridge section -- dedicated MQTT channel feeding external prompts into the AI engine.
-    ai_bridge: {
-        type: 'object',
-        required: false,
-        properties: {
-            enabled:        { type: 'boolean' },
-            topic_base:     { type: 'string' },
-            forward_events: { type: 'boolean' }
+            include_chat_history_in_system_calls: { type: 'boolean', required: false },
+            bridge: {
+                type: 'object',
+                required: false,
+                properties: {
+                    enabled:        { type: 'boolean' },
+                    topic_base:     { type: 'string' },
+                    forward_events: { type: 'boolean' }
+                }
+            }
         }
     },
 
@@ -99,7 +97,7 @@ export default {
             from:           { type: 'string' },
             //  Per-kind notification switches, keyed by kind name (dynamic keys, map).
             notify:         { type: 'object' },
-            cooldown_ms:    { type: ['number', 'string'] },
+            cooldown:    { type: ['number', 'string'] },
             subject_prefix: { type: 'string' }
         }
     },
@@ -125,16 +123,16 @@ export default {
             },
             //  Zigbee devices leaving the mesh.
             device_offline_tts:         { type: 'boolean' },
-            device_offline_cooldown_ms: { type: ['number', 'string'] },
+            device_offline_cooldown: { type: ['number', 'string'] },
             device_offline_ignore:      { type: 'array' },
             zigbee_offline_tts:         { type: 'boolean' },
-            zigbee_offline_cooldown_ms: { type: ['number', 'string'] },
+            zigbee_offline_cooldown: { type: ['number', 'string'] },
             zigbee_offline_ignore:      { type: 'array' },
             zigbee_offline_tts_profile: { type: 'string' },
             zigbee_offline_tts_options: { type: 'object' },
             //  Mission-critical network hosts going offline.
             network_offline_tts:              { type: 'boolean' },
-            network_offline_cooldown_ms:      { type: ['number', 'string'] },
+            network_offline_cooldown:      { type: ['number', 'string'] },
             network_offline_ignore:           { type: 'array' },
             network_offline_tts_profile:      { type: 'string' },
             network_offline_tts_options:      { type: 'object' },

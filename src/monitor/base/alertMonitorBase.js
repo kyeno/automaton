@@ -63,7 +63,7 @@ export default class AlertMonitorBase {
     //  -- Config gates ---------------------------------------------------------
 
     /** Read one `alerts:` value of this monitor's key family.
-     * @param {string} suffix - Key suffix within the family, e.g. 'cooldown_ms'
+     * @param {string} suffix - Key suffix within the family, e.g. 'cooldown'
      * @returns {unknown} Configured value, or null when neither family carries it */
     configValue(suffix) {
         const key = `alerts.${this.keyPrefix}_${suffix}`
@@ -103,7 +103,7 @@ export default class AlertMonitorBase {
      * @param {unknown} raw - Configured cooldown value; null falls back to the default
      * @returns {number} Cooldown in milliseconds (>= 0) */
     cooldownMs(raw = null) {
-        const value = raw === null || raw === undefined ? this.configValue('cooldown_ms') : raw
+        const value = raw === null || raw === undefined ? this.configValue('cooldown') : raw
         if (value === null || value === undefined) return DEFAULT_COOLDOWN_MS
         const parsed = temporal.parseDurationMs(value)
         return typeof parsed === 'number' && Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_COOLDOWN_MS

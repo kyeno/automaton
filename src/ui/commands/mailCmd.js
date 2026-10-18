@@ -82,7 +82,7 @@ class MailCmd extends CommandBase {
             `  relay:     ${relay}`,
             `  sender:    ${email.from || process.env.SMTP_USER || '(unset)'}`,
             `  prefix:    ${email.subject_prefix ?? 'Automaton'}`,
-            `  cooldown:  ${email.cooldown_ms ?? '60m'} per kind`,
+            `  cooldown:  ${email.cooldown ?? '60m'} per kind`,
             `  kinds:     ${this.#formatKinds(email.notify)}`,
             `  owners:    ${owners.length > 0 ? owners.map((o) => (o.name ? `${o.name} <${o.email}>` : o.email)).join(', ') : '(none -- set house_owners)'}`,
             `  sent:      ${stats.sent} ok, ${stats.failed} failed, ${stats.skipped} skipped`,

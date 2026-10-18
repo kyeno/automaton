@@ -72,7 +72,7 @@ A backward clock jump resets a future-dated baseline on the next valid reading.
   after restart. Pending incidents are grouped into one retry. Accepted mail is not
   re-requested for that incident. Recovery cancels pending mail for that sensor.
 
-Email uses `email.notify.sensor_frozen`, `email.cooldown_ms`, SMTP settings and
+Email uses `email.notify.sensor_frozen`, `email.cooldown`, SMTP settings and
 `house_owners`. The email channel's cooldown can delay a later group's delivery;
 its initial notification remains pending. Acceptance means EmailService accepted
 the request; see [Email](../services/email.md) for SMTP delivery behavior.

@@ -13,6 +13,7 @@ import path from 'node:path'
 import { parseDocument as yamlParseDocument } from 'yaml'
 
 import { PROJECT_ROOT } from '../../lib/projectRoot.js'
+import { normalizeConfig } from '../../lib/configMigration.js'
 
 //  Type definitions.
 
@@ -80,7 +81,7 @@ class ConfigBase {
         try {
             const content = fs.readFileSync(absolutePath, 'utf8')
             const doc = yamlParseDocument(content)
-            this.#data = /** @type {Record<string, unknown>} */ (doc.toJS()) || {}
+            this.#data = /** @type {Record<string, unknown>} */ (normalizeConfig(doc.toJS(), this.#sectionName)) || {}
         } catch (error) {
             throw new Error(
                 `Failed to parse config "${this.#filePath}": ${error.message}`

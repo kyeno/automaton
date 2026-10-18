@@ -50,14 +50,14 @@ class SAiBridgeMonitor {
     /** Start listening on the request topic and (optionally) forward device-interaction
      * @async */
     async init() {
-        if (ConfigService.get('ai_bridge.enabled') === false) {
-            LoggerService.info('AI bridge disabled via ai_bridge.enabled=false', 'AiBridgeMonitor')
+        if (ConfigService.get('ai.bridge.enabled') === false) {
+            LoggerService.info('AI bridge disabled via ai.bridge.enabled=false', 'AiBridgeMonitor')
             return
         }
 
-        const base = String(ConfigService.get('ai_bridge.topic_base') || DEFAULT_TOPIC_BASE).replace(/\/+$/, '')
+        const base = String(ConfigService.get('ai.bridge.topic_base') || DEFAULT_TOPIC_BASE).replace(/\/+$/, '')
         this.#topicBase = base
-        this.#forwardEvents = ConfigService.get('ai_bridge.forward_events') !== false
+        this.#forwardEvents = ConfigService.get('ai.bridge.forward_events') !== false
 
         //  Chat input is non-idempotent: opt out of the 300ms semantic-dedup window.
         this.#unsubRequest = MqttService.subscribe(
@@ -114,7 +114,7 @@ class SAiBridgeMonitor {
     publishAnnouncement(text) {
         const content = String(text ?? '').trim()
         if (!content) return false
-        if (ConfigService.get('ai_bridge.enabled') === false) return false
+        if (ConfigService.get('ai.bridge.enabled') === false) return false
         if (!MqttService.isConnected()) return false
 
         this.#publishMessageFrame({ role: 'assistant', content, source: AUTOMATION_SOURCE })

@@ -17,7 +17,7 @@ export default {
         items: {
             properties: {
                 name:     { type: 'string', required: true },
-                delay_ms: { type: ['number', 'string'] },
+                delay: { type: ['number', 'string'] },
                 devices:  { type: 'array' },
                 on:       { type: 'array' },
                 off:      { type: 'array' },
@@ -26,8 +26,8 @@ export default {
                     properties: {
                         enabled:      { type: 'boolean' },
                         cycle:        { enum: ['once', 'continuous'] },
-                        off_delay_ms: { type: ['number', 'string'] },
-                        on_delay_ms:  { type: ['number', 'string'] }
+                        off_delay: { type: ['number', 'string'] },
+                        on_delay:  { type: ['number', 'string'] }
                     }
                 }
             }

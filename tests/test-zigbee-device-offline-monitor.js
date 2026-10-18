@@ -116,7 +116,7 @@ async function main() {
         console.log('-- A) devices:removed speaks a localized warning --')
         setOverride('alerts.zigbee_offline_tts', true)
         clearOverride('alerts.zigbee_offline_ignore')
-        setOverride('alerts.zigbee_offline_cooldown_ms', 0)
+        setOverride('alerts.zigbee_offline_cooldown', 0)
         await sleep(20)
         EventBus.emit('devices:removed', 'Balkon Swiatlo')
         await sleep(50)
@@ -127,7 +127,7 @@ async function main() {
         // B) cooldown suppresses rapid re-warnings; distinct devices independent --------
         console.log('-- B) per-device cooldown + independence --')
         spoken.length = 0
-        setOverride('alerts.zigbee_offline_cooldown_ms', '30m')
+        setOverride('alerts.zigbee_offline_cooldown', '30m')
         EventBus.emit('devices:removed', 'Kitchen Outlet')
         await sleep(50)
         EventBus.emit('devices:removed', 'Kitchen Outlet')   // same device again -> suppressed
@@ -149,7 +149,7 @@ async function main() {
         // D) ignore list -------------------------------------------------------------------
         console.log('-- D) ignored devices are never announced --')
         spoken.length = 0
-        setOverride('alerts.zigbee_offline_cooldown_ms', 0)
+        setOverride('alerts.zigbee_offline_cooldown', 0)
         setOverride('alerts.zigbee_offline_ignore', ['Przedpokoj Wlacznik'])
         EventBus.emit('devices:removed', 'Przedpokoj Wlacznik')
         await sleep(50)
@@ -174,7 +174,7 @@ async function main() {
         // F) cooldown 0 disables cooling -----------------------------------------------------
         console.log('-- F) cooldown of 0 re-warns on every leave event --')
         spoken.length = 0
-        setOverride('alerts.zigbee_offline_cooldown_ms', 0)
+        setOverride('alerts.zigbee_offline_cooldown', 0)
         EventBus.emit('devices:removed', 'Kitchen Sink Switch')
         await sleep(30)
         EventBus.emit('devices:removed', 'Kitchen Sink Switch')
@@ -192,13 +192,13 @@ async function main() {
         }
         // Hide the new family so the base must fall through to the legacy keys.
         setOverride('alerts.zigbee_offline_tts', null)
-        setOverride('alerts.zigbee_offline_cooldown_ms', null)
+        setOverride('alerts.zigbee_offline_cooldown', null)
         setOverride('alerts.device_offline_tts', false)
         EventBus.emit('devices:removed', 'Kitchen Motion Sensor')
         await sleep(50)
         assert(spoken.length === 0, 'legacy master switch off silences the monitor')
         setOverride('alerts.device_offline_tts', true)
-        setOverride('alerts.device_offline_cooldown_ms', 0)
+        setOverride('alerts.device_offline_cooldown', 0)
         EventBus.emit('devices:removed', 'Kitchen Motion Sensor')
         await sleep(50)
         EventBus.emit('devices:removed', 'Salon Czujnik Ruchu')
@@ -210,9 +210,9 @@ async function main() {
             `deprecation notice names both families: "${deprecationNotices[0]}"`)
         loggerProto.warn = originalWarn
         clearOverride('alerts.device_offline_tts')
-        clearOverride('alerts.device_offline_cooldown_ms')
+        clearOverride('alerts.device_offline_cooldown')
         clearOverride('alerts.zigbee_offline_tts')
-        clearOverride('alerts.zigbee_offline_cooldown_ms')
+        clearOverride('alerts.zigbee_offline_cooldown')
 
         // H) alerts bundle shapes -------------------------------------------------------
         console.log('-- H) sentence resolution (plain template, per-device map, default, fallbacks) --')
@@ -238,7 +238,7 @@ async function main() {
         console.log('-- I) tts_profile / tts_options framing reaches the tts:speak payload --')
         spoken.length = 0
         payloads.length = 0
-        setOverride('alerts.zigbee_offline_cooldown_ms', 0)
+        setOverride('alerts.zigbee_offline_cooldown', 0)
         setOverride('alerts.zigbee_offline_tts_profile', 'alarm')
         EventBus.emit('devices:removed', 'Bedroom Sensor')
         await sleep(50)

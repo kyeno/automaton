@@ -25,17 +25,17 @@ ai:
   name: Automaton           # the assistant's own name: fills {% name %} in the system prompt
   max_tokens: -1            # -1 = omit from request, let the provider default apply
   temperature: 1.0          # sampling 0.0-1.0 (lower=deterministic, higher=creative)
-  fetch_timeout_ms: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models
-  conversation_ttl_sec: "15m"   # how long idle conversations linger in Redis before purge
+  fetch_timeout: "5m"    # LLM request timeout ("45s","5m","1h") or plain ms; keep generous for local models
+  conversation_ttl: "15m"   # how long idle conversations linger in Redis before purge
   max_conversation_turns: 10    # message turns retained in context window
   strip_ai_formatting: true     # strip markdown/emoji before UI/TTS
   include_chat_history_in_system_calls: false  # give system-origin announcements prior chat context
+  # MQTT channel for external AI clients (web UI / STT backends).
+  bridge:
+    enabled: true               # master switch
+    topic_base: "automaton/ai"  # MQTT topic tree, outside zigbee2mqtt/*
+    forward_events: true        # stream tool/device interactions over MQTT too
 
-# --- AI BRIDGE: MQTT channel for external clients (web UI / STT backends) to use the AI conversation
-ai_bridge:
-  enabled: true               # master switch
-  topic_base: "automaton/ai"  # MQTT topic tree, outside zigbee2mqtt/*
-  forward_events: true        # stream tool/device interactions over MQTT too
 
 # --- HOUSE OWNERS: the people the automaton speaks and writes to. Names fill the
 # greeting lines of the mail templates; every address below receives a copy of each
@@ -52,7 +52,7 @@ email:
   enabled: true
   from: ''                      # sender address; falls back to SMTP_USER when empty
   subject_prefix: 'Automaton'   # prepended to every subject: "Automaton: <subject>"
-  cooldown_ms: "60m"            # per-kind silence after one notification; 0 = mail every event
+  cooldown: "60m"            # per-kind silence after one notification; 0 = mail every event
   notify:                       # per-kind switches; a kind set to false never mails
     sensor_frozen: true
 
@@ -76,7 +76,7 @@ alerts:
   # --- Zigbee devices leaving the mesh: spoken warning
   zigbee_offline_tts: true
   # Per-device re-warning cooldown ("90s","15m", or ms); 0 = warn on every leave event
-  zigbee_offline_cooldown_ms: "30m"
+  zigbee_offline_cooldown: "30m"
   # Device names never announced (e.g., intentionally removed sensors)
   zigbee_offline_ignore: []
   # Jingle profile from the locale tts.yaml `profiles:` (empty = none); explicit
@@ -90,7 +90,7 @@ alerts:
   # --- Mission-critical network hosts going offline. Names must exist in
   # etc/device/network.yaml (IPs live there).
   network_offline_tts: true
-  network_offline_cooldown_ms: "30m"
+  network_offline_cooldown: "30m"
   network_offline_ignore: []
   network_offline_tts_profile: ''
   # Announce hosts NetworkPresence already found down at startup
@@ -98,11 +98,11 @@ alerts:
   # Speak the recovery sentence when a watched host comes back
   network_offline_announce_recovery: false
   # Watched hosts; per-host overrides optional (null = defaults), accepting
-  # cooldown_ms, tts_profile and a tts_options block:
+  # cooldown, tts_profile and a tts_options block:
   # network_offline_devices:
   #   core-server:
   #   dns-server:
-  #     cooldown_ms: "5m"
+  #     cooldown: "5m"
   #   wifi-router:
   #     tts_profile: 'alarm'
 
@@ -133,14 +133,14 @@ logger:
 # --- AUTOMATION: global device/interaction behavior
 automation:
   # Skip a device this long after a human changes it manually ("90s","15m", or ms; 0 = off)
-  human_interaction_cooldown_ms: "25m"
+  human_interaction_cooldown: "25m"
   # Optional origin-classification tuning (uncomment to override built-in defaults):
-  # echo_window_instant_ms: "15s"    # token TTL for ON/OFF/TOGGLE commands
-  # echo_window_travel_ms: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
-  # motion_stall_timeout_ms: "20s"   # no-progress window before assuming external stop
-  # settle_absorb_window_ms: "10s"   # post-completion motor-status churn absorption
-  # travel_echo_grace_ms: "2s"       # pre-motion near-target grace window
-  # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
+  # echo_window_instant: "15s"    # token TTL for ON/OFF/TOGGLE commands
+  # echo_window_travel: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
+  # motion_stall_timeout: "20s"   # no-progress window before assuming external stop
+  # settle_absorb_window: "10s"   # post-completion motor-status churn absorption
+  # travel_echo_grace: "2s"       # pre-motion near-target grace window
+  # failed_command_backoff: "10m" # retry backoff after an unresponsive command
 
 # --- UI: terminal interface. See doc/ui/index.md for widget/channel reference.
 ui:

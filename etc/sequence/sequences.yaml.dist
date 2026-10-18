@@ -4,25 +4,25 @@
 #
 # Entry fields:
 #   name      friendly name; slugified internally ('Living Room Hazard Light' -> living_room_hazard_light)
-#   delay_ms  optional inter-step pause ("500ms", "2s", ms); absent = steps fire back-to-back
-#   devices   simple form: ordered names (or {device, command, delay_ms}); ON/OFF drives each device
-#   on/off    rich form: explicit step lists of {device, payload?, delay_ms?}; payload goes to
+#   delay  optional inter-step pause ("500ms", "2s", ms); absent = steps fire back-to-back
+#   devices   simple form: ordered names (or {device, command, delay}); ON/OFF drives each device
+#   on/off    rich form: explicit step lists of {device, payload?, delay?}; payload goes to
 #             DeviceBase.receiveCommand() verbatim; 'off' defaults to OFF over the 'on' devices
 #   loop      optional looping block:
 #             enabled: true
 #             cycle: once | continuous        # once = single ON->OFF pass; continuous = repeat
-#             off_delay_ms: auto | duration   # gap between the ON run and the OFF run
-#             on_delay_ms: auto | duration    # gap between the OFF run and the next ON run
+#             off_delay: auto | duration   # gap between the ON run and the OFF run
+#             on_delay: auto | duration    # gap between the OFF run and the next ON run
 sequences:
   # Simple form + pacing: ambient lights come up one after another.
   - name: 'Ambient Lights'
-    delay_ms: '500ms'
+    delay: '500ms'
     devices:
       - 'Living Room Ambient Left'
       - 'Bedroom Ambient'
       - device: 'Kitchen LED Strip'   # object entries allow per-step overrides
         command: 'ON'
-        delay_ms: '800ms'
+        delay: '800ms'
 
   # Rich form: Living Room dual-dimmer hazard light oscillation. Brightness values create the
   # transition on the wire -- no extra "transition" field needed.
@@ -30,8 +30,8 @@ sequences:
     loop:
       enabled: true
       cycle: continuous
-      off_delay_ms: '2s'   # dwell before the OFF swing
-      on_delay_ms: '2s'    # dwell before the next ON swing
+      off_delay: '2s'   # dwell before the OFF swing
+      on_delay: '2s'    # dwell before the next ON swing
     on:                               # phase A -- low values
       - device: 'Living Room Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }

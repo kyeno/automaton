@@ -104,7 +104,7 @@ async function useWorkingChannel(extra = {}) {
         'email.enabled': true,
         'email.from': 'automaton@test.local',
         'email.subject_prefix': 'Automaton',
-        'email.cooldown_ms': '60m',
+        'email.cooldown': '60m',
         'email.notify': { sensor_frozen: true },
         'house_owners': [
             { name: 'Anna', email: 'anna@test.local' },
@@ -218,13 +218,13 @@ try {
     assert(mail.text.includes(os.hostname()), 'the footer names the machine that generated the mail')
     assert(!mail.text.includes('{%'), 'no unanswered placeholder survives in a mail')
 
-    await useWorkingChannel({ 'email.subject_prefix': '', 'email.cooldown_ms': 0 })
+    await useWorkingChannel({ 'email.subject_prefix': '', 'email.cooldown': 0 })
     resetSends()
     await EmailService.notify({ kind: 'sensor_frozen', tokens: STUCK_TOKENS, message: STUCK_MESSAGE })
     await EmailService.flush()
     assert(sent[0].subject === expectedSubject, 'an empty email.subject_prefix drops the prefix from the subject')
 
-    await useWorkingChannel({ 'email.cooldown_ms': 0 })
+    await useWorkingChannel({ 'email.cooldown': 0 })
     resetSends()
     await EmailService.notify({ kind: 'boiler_fault', message: 'Boiler fault.' })
     await EmailService.flush()
@@ -236,7 +236,7 @@ try {
     //  Fresh kinds (cool_a/b/c) are used so the in-memory cooldown map, which
     //  persists across the re-inits this test performs, cannot leak state in.
     console.log('\n-- per-kind cooldown --')
-    await useWorkingChannel({ 'email.cooldown_ms': '60m' })
+    await useWorkingChannel({ 'email.cooldown': '60m' })
     resetSends()
     assert(await EmailService.notify({ kind: 'cool_a', tokens: STUCK_TOKENS, message: STUCK_MESSAGE }) === true,
         'the first notification of a kind mails')
@@ -254,12 +254,12 @@ try {
         'a Redis outage falls back to the in-memory cooldown marker')
     cacheDown = false
 
-    await useWorkingChannel({ 'email.cooldown_ms': 0 })
+    await useWorkingChannel({ 'email.cooldown': 0 })
     resetSends()
     await EmailService.notify({ kind: 'cool_c', tokens: STUCK_TOKENS, message: STUCK_MESSAGE })
     assert(await EmailService.notify({ kind: 'cool_c', tokens: STUCK_TOKENS, message: STUCK_MESSAGE }) === true,
-        'cooldown_ms 0 mails every event')
-    assert(!markerStore.has('mail:cooldown:cool_c'), 'cooldown_ms 0 stores no marker')
+        'cooldown 0 mails every event')
+    assert(!markerStore.has('mail:cooldown:cool_c'), 'cooldown 0 stores no marker')
 
     // -----------------------------------------------------------------------
     console.log('\n-- configuration-check mail --')
@@ -286,7 +286,7 @@ try {
 
     // -----------------------------------------------------------------------
     console.log('\n-- queue, counters and failures --')
-    await useWorkingChannel({ 'email.cooldown_ms': 0 })
+    await useWorkingChannel({ 'email.cooldown': 0 })
     resetSends()
     const before = EmailService.getStats()
     for (let i = 0; i < 30; i++) EmailService.send({ to: 'anna@test.local', subject: 'x', text: `body ${i}` })
@@ -313,7 +313,7 @@ try {
 
     // -----------------------------------------------------------------------
     console.log('\n-- shared notify:email channel --')
-    await useWorkingChannel({ 'email.cooldown_ms': 0 })
+    await useWorkingChannel({ 'email.cooldown': 0 })
     resetSends()
     EventBus.emit('notify:email', { kind: 'cool_e', message: STUCK_MESSAGE, tokens: STUCK_TOKENS })
     //  The subscription calls notify() fire-and-forget; let those async calls reach

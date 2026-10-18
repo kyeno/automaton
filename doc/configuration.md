@@ -58,14 +58,14 @@ This is the central configuration file. All behavioral settings live here.
 # Accepts a duration ("90s", "25m", "1h") or legacy plain ms; default 15 min when omitted.
 # Set to 0 to disable the cooldown entirely.
 automation:
-  human_interaction_cooldown_ms: "25m"
+  human_interaction_cooldown: "25m"
   # Optional origin-classification tuning (durations). Uncomment to override built-in defaults:
-  # echo_window_instant_ms: "15s"    # token TTL for ON/OFF/TOGGLE commands
-  # echo_window_travel_ms: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
-  # motion_stall_timeout_ms: "20s"   # no-progress window before assuming external stop
-  # settle_absorb_window_ms: "10s"   # post-completion motor-status churn absorption
-  # travel_echo_grace_ms: "2s"       # pre-motion near-target grace window
-  # failed_command_backoff_ms: "10m" # retry backoff after an unresponsive command
+  # echo_window_instant: "15s"    # token TTL for ON/OFF/TOGGLE commands
+  # echo_window_travel: "90s"     # token TTL for OPEN/CLOSE/POS:N/STOP travel
+  # motion_stall_timeout: "20s"   # no-progress window before assuming external stop
+  # settle_absorb_window: "10s"   # post-completion motor-status churn absorption
+  # travel_echo_grace: "2s"       # pre-motion near-target grace window
+  # failed_command_backoff: "10m" # retry backoff after an unresponsive command
 ```
 
 During the cooldown, automations skip manually changed devices. Numbers are milliseconds; duration strings accept `d`, `h`, `m`, and `s`. See [origin classification](architecture/automation-human-differentiation.md) for the tuning keys.
@@ -109,8 +109,8 @@ ai:
   name: Automaton             # Assistant's own name: fills {% name %} in the system prompt, signs the AI window; blank = "AI"
   max_tokens: -1              # -1 = unlimited (provider default)
   temperature: 1.0            # 0.0 (deterministic) to 1.0 (creative)
-  fetch_timeout_ms: "5m"      # Per-request LLM HTTP timeout ("45s"/"5m"/... or plain ms); final, not retried
-  conversation_ttl_sec: "15m" # Conversation history TTL in Redis ("45s"/"15m"/... or legacy seconds)
+  fetch_timeout: "5m"      # Per-request LLM HTTP timeout ("45s"/"5m"/... or plain ms); final, not retried
+  conversation_ttl: "15m" # Conversation history TTL; bare numbers are milliseconds
   max_conversation_turns: 15  # Max message turns retained in context (prevents token explosion)
   strip_ai_formatting: false  # Strip markdown/emoji from responses before UI/TTS
   include_chat_history_in_system_calls: false  # System-origin turns (announcements) receive prior chat history; false = standalone [default]
@@ -131,7 +131,7 @@ email:
   enabled: true                   # false disables the channel even with a relay set
   from: ''                        # sender address; falls back to SMTP_USER when empty
   subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
-  cooldown_ms: "60m"              # per-kind silence after one notification; 0 = mail every event
+  cooldown: "60m"              # per-kind silence after one notification; 0 = mail every event
   notify:                        # per-kind switches; a kind set to false never mails
     sensor_frozen: true
 ```
@@ -140,7 +140,7 @@ email:
 - **`email.enabled`** — master switch. `false` disables the channel even when `SMTP_HOST` is set.
 - **`email.from`** — sender address; empty falls back to `SMTP_USER`.
 - **`email.subject_prefix`** — prepended to every subject; empty string drops it.
-- **`email.cooldown_ms`** — per-kind re-notification window; `0` mails every event.
+- **`email.cooldown`** — per-kind re-notification window; `0` mails every event.
 - **`email.notify`** — map of kind → boolean; a kind set to `false` is muted, a kind with no entry is allowed.
 
 Templates live in `etc/i18n/<locale>/email.yaml`. Email is independent of TTS availability and speech silence. See [Email Notifications](services/email.md).
@@ -220,6 +220,56 @@ ui:
 
 `ui.tts_profile` selects a locale TTS framing profile for typed speech; empty means no jingle.
 
+### AI MQTT Bridge
+
+The MQTT bridge belongs to the AI settings:
+
+```yaml
+ai:
+  bridge:
+    enabled: true
+    topic_base: "automaton/ai"
+    forward_events: true
+```
+
+### Duration Names and Migration
+
+Application duration keys use unit-free names. Values accept strings such as `"90s"`,
+`"3m 45s"` and `"1h"`, or numbers measured in **milliseconds**, including
+`ai.conversation_ttl`. Redis's seconds-only TTL API is handled internally (rounded
+up to a whole second). Existing per-setting zero/disabled/default behavior still
+applies. Low-level numeric JavaScript APIs and database timestamp columns retain
+explicit units; TTS server framing fields retain their documented protocol units.
+
+| Former file key | Canonical key |
+|-----------------|---------------|
+| `ai_bridge.*` | `ai.bridge.*` |
+| `ai.fetch_timeout_ms` | `ai.fetch_timeout` |
+| `ai.conversation_ttl_sec` | `ai.conversation_ttl` |
+| `automation.human_interaction_cooldown_ms` | `automation.human_interaction_cooldown` |
+| `automation.echo_window_instant_ms` / `echo_window_travel_ms` | Same names without `_ms` |
+| `automation.motion_stall_timeout_ms` / `settle_absorb_window_ms` | Same names without `_ms` |
+| `automation.travel_echo_grace_ms` / `failed_command_backoff_ms` | Same names without `_ms` |
+| `email.cooldown_ms` | `email.cooldown` |
+| `alerts.zigbee_offline_cooldown_ms` / `network_offline_cooldown_ms` | Same names without `_ms` |
+| `alerts.network_offline_devices.<host>.cooldown_ms` | `...cooldown` |
+| Player `timeout_ms` | `timeout` (also accepts duration strings) |
+| Sequence/step `delay_ms` | `delay` |
+| Sequence loop `off_delay_ms` / `on_delay_ms` | `off_delay` / `on_delay` |
+| Automation `timer_interval_ms` | `timer_interval` (also accepts numeric milliseconds) |
+
+Known former names are normalized **when YAML files load**, including reloads.
+If both names exist, the canonical value wins, including zero and false values.
+The old bridge block can supply fields missing from a partial `ai.bridge` block.
+Unknown user data and raw device command payloads are never renamed.
+
+Numeric values under the former `conversation_ttl_sec` key retain their old
+seconds meaning: `900` becomes canonical `900000` milliseconds. Duration strings
+such as `"15m"` retain their meaning. Prefer explicit duration strings when editing
+files. Public schemas, `/config` commands and CLI override paths use the canonical
+names; custom scripts reading ConfigService keys should use those names too.
+
+
 ### Numeric Sensor History
 
 `sensor_history` in the main configuration controls event-driven numeric recording:
@@ -240,20 +290,20 @@ Spoken warnings for notable system events -- Zigbee devices leaving the mesh and
 ```yaml
 alerts:
   zigbee_offline_tts: true            # master switch (default ON)
-  zigbee_offline_cooldown_ms: "30m"   # per-device re-warning window ("90s"/"15m"/plain ms; 0 disables)
+  zigbee_offline_cooldown: "30m"   # per-device re-warning window ("90s"/"15m"/plain ms; 0 disables)
   zigbee_offline_ignore: []           # device names never announced
   zigbee_offline_tts_profile: ''      # framing profile from the locale tts.yaml profiles: registry
   # zigbee_offline_tts_options: { intro: 'alarm.wav' }   # explicit framing, wins over the profile
 
   network_offline_tts: true
-  network_offline_cooldown_ms: "30m"
+  network_offline_cooldown: "30m"
   network_offline_ignore: []
   network_offline_tts_profile: ''
   network_offline_announce_boot: true       # announce hosts already down at startup
   network_offline_announce_recovery: false  # speak the way back (opt-in)
   network_offline_devices:                  # allow-list; names from etc/device/network.yaml
     core-server:                            # null = family defaults
-    wifi-router: { cooldown_ms: "5m", tts_profile: 'alarm' }   # per-host overrides
+    wifi-router: { cooldown: "5m", tts_profile: 'alarm' }   # per-host overrides
 ```
 
 Sentences live in the locale's `alerts.yaml` bundle. Full key reference, cooldown semantics and the legacy `device_offline_*` key family: [Offline Alerts](monitors/offline-alerts.md).
@@ -341,7 +391,7 @@ Each player's IP resolves from the same-named `computers` entry; an optional `ho
 | `vlc` | VLC HTTP interface | `/requests/status.json` (JSON) |
 | `mpc` | MPC-HC web interface | `/variables.html` (HTML) |
 
-Optional per-player keys: `username` / `password` (VLC basic auth) and `timeout_ms` (default 500 ms). Player-side setup (MPC-HC web interface, VLC Lua HTTP password), polling mechanics, and the `videoPlayer:<host>` status events are covered in [Video Player Monitor](monitors/video-player.md); subscribe automations to status changes via `triggers_video`.
+Optional per-player keys: `username` / `password` (VLC basic auth) and `timeout` (default 1200 ms). Player-side setup (MPC-HC web interface, VLC Lua HTTP password), polling mechanics, and the `videoPlayer:<host>` status events are covered in [Video Player Monitor](monitors/video-player.md); subscribe automations to status changes via `triggers_video`.
 
 ---
 
@@ -778,10 +828,10 @@ Sequences send ordered commands with optional loops. Copy `etc/sequence/sequence
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `name` | yes | Friendly name; internally slugified (`'Living Room Hazard Light'` → `living_room_hazard_light`). Slugs must be unique across all sequences |
-| `delay_ms` | no | Sequence-level inter-step pause (duration like `"500ms"` / `"2s"`, or plain ms number). Absent ⇒ **multi-device endpoint mode** — every step fires back-to-back |
-| `devices` | simple form | Ordered list of names (or `{device, command?, delay_ms?}` objects). ON sends each device `'ON'`; OFF sends each device `'OFF'` in the same order |
-| `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay_ms?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
-| `loop` | no | Block making this a looping sequence: `enabled: true`, `cycle: once \| continuous`, `off_delay_ms: auto \| duration` (gap between end of ON run and start of OFF run), `on_delay_ms: auto \| duration` (gap between end of OFF run and next ON run; only fires on continuous cycles). `auto` = phase starts right when the previous one finishes |
+| `delay` | no | Sequence-level inter-step pause (duration like `"500ms"` / `"2s"`, or plain ms number). Absent ⇒ **multi-device endpoint mode** — every step fires back-to-back |
+| `devices` | simple form | Ordered list of names (or `{device, command?, delay?}` objects). ON sends each device `'ON'`; OFF sends each device `'OFF'` in the same order |
+| `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
+| `loop` | no | Block making this a looping sequence: `enabled: true`, `cycle: once \| continuous`, `off_delay: auto \| duration` (gap between end of ON run and start of OFF run), `on_delay: auto \| duration` (gap between end of OFF run and next ON run; only fires on continuous cycles). `auto` = phase starts right when the previous one finishes |
 
 Use exactly one of `devices` or `on`. Invalid durations warn and use defaults. Missing devices warn and their steps are skipped.
 
@@ -790,13 +840,13 @@ Use exactly one of `devices` or `on`. Invalid durations warn and use defaults. M
 ```yaml
 sequences:
   - name: 'Ambient Lights'
-    delay_ms: '500ms'
+    delay: '500ms'
     devices:
       - 'Living Room Ambient Left'
       - 'Bedroom Ambient'
       - device: 'Kitchen LED Strip'   # object entries allow per-step overrides
         command: 'ON'
-        delay_ms: '800ms'
+        delay: '800ms'
 ```
 
 ### Rich form + loop (hazard light oscillation)
@@ -806,8 +856,8 @@ sequences:
     loop:
       enabled: true
       cycle: continuous
-      off_delay_ms: '2s'   # dwell before the OFF swing
-      on_delay_ms: '2s'    # dwell before the next ON swing
+      off_delay: '2s'   # dwell before the OFF swing
+      on_delay: '2s'    # dwell before the next ON swing
     on:                               # phase A -- low values
       - device: 'Living Room Dimmer'
         payload: { state: 'ON', brightness: { l1: 1, l2: 25 } }

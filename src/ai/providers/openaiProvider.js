@@ -194,13 +194,13 @@ class OpenAiProvider {
         }
     }
 
-    /** Resolve the per-request HTTP timeout from main config (`fetch_timeout_ms`).
+    /** Resolve the per-request HTTP timeout from main config (`fetch_timeout`).
      * @returns {number} Timeout in whole ms (> 0)
      * @private */
     #resolveFetchTimeoutMs() {
         let raw
         try {
-            raw = ConfigService.get('ai.fetch_timeout_ms')
+            raw = ConfigService.get('ai.fetch_timeout')
         } catch {
             return DEFAULT_FETCH_TIMEOUT_MS   // config not initialized yet -- default is safe
         }
@@ -210,7 +210,7 @@ class OpenAiProvider {
         if (ms != null && Number.isFinite(ms) && ms > 0) return Math.round(ms)
 
         LoggerService.warn(
-            `Invalid ai.fetch_timeout_ms ${JSON.stringify(raw)} (expected e.g. "5m" or plain ms); using default ${DEFAULT_FETCH_TIMEOUT_MS}ms`,
+            `Invalid ai.fetch_timeout ${JSON.stringify(raw)} (expected e.g. "5m" or plain ms); using default ${DEFAULT_FETCH_TIMEOUT_MS}ms`,
             'OpenAiProvider'
         )
         return DEFAULT_FETCH_TIMEOUT_MS

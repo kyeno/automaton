@@ -260,6 +260,21 @@ async function main() {
         EventBus.emit('ai:userMessage', { text: 'typed after stop', source: 'ui' })
         await sleep(80)
         assert(fake.published.length === beforeStop, 'no frames after stop() (inbound, events and UI mirror all silent)')
+
+        // Nested bridge settings govern enablement, custom topics and event forwarding.
+        ConfigService.section('main').set('ai.bridge', { enabled: false, topic_base: 'test/nested', forward_events: false })
+        await AiBridgeMonitor.init()
+        deliver(fake, 'test/nested/request', JSON.stringify({ text: 'disabled nested bridge' }))
+        assert(fake.published.length === beforeStop, 'ai.bridge.enabled=false keeps the bridge disabled')
+        ConfigService.section('main').set('ai.bridge.enabled', true)
+        await AiBridgeMonitor.init()
+        deliver(fake, 'test/nested/request', JSON.stringify({ text: 'custom nested topic' }))
+        await sleep(80)
+        assert(framesFor(fake, 'test/nested/message').length === 2, 'ai.bridge.topic_base routes both transcript frames')
+        const nestedCount = fake.published.length
+        EventBus.emit('ai:deviceInteraction', { device: 'X', action: 'ON' })
+        assert(fake.published.length === nestedCount, 'ai.bridge.forward_events=false suppresses event forwarding')
+        AiBridgeMonitor.stop()
     } catch (err) {
         console.error(`\nFatal error in test suite: ${err.message}\n${err.stack}`)
         process.exitCode = 1

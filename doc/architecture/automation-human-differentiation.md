@@ -91,14 +91,14 @@ Travel commands (`OPEN`/`CLOSE`/`POS:N`) imply continued motion until their targ
 | Progress then halt | Something external stopped our motion (e.g., wall-switch STOP on an unmodeled device) | Flip origin to `human` + write cooldown |
 | Zero progress | The device never responded at all (offline/faulty) | Preserve attribution, write **no** cooldown, log a distinct warning, back off identical retries |
 
-With zero progress, identical automation retries are blocked until device state changes or `automation.failed_command_backoff_ms` expires (default `10m`). The token remains valid until TTL expiry so late completion can still match. STOP, instant, and wildcard commands do not arm the watchdog.
+With zero progress, identical automation retries are blocked until device state changes or `automation.failed_command_backoff` expires (default `10m`). The token remains valid until TTL expiry so late completion can still match. STOP, instant, and wildcard commands do not arm the watchdog.
 
 ### Settle Absorption (Post-Completion Tail)
 
 After a positional completion, follow-up motor reports are absorbed by two rules:
 
 1. **Positional stability gate** in `#didStateChange()`: when both old and new payloads carry finite positions within ±2% of each other, differences confined to the `state` label are treated as motor-status churn at a fixed point, not input events. Non-positional devices (lights etc.) never satisfy this gate and keep strict label comparison.
-2. **Settling snapshot**: a positional echo starts a short-lived window (`automation.settle_absorb_window_ms`, default 10 s). While active, follow-ups consistent with the settled position — pure label/status churn or wobble within ±5% (`SETTLE_WOBBLE_TOLERANCE`) — are absorbed without changing origin or cooldowns. Any motion beyond that tolerance drops the snapshot immediately and is classified normally, so a genuine human action right after completion is still caught in one report. Label-only echoes do not start the window (no positional reference exists), keeping legacy behavior for such outcomes.
+2. **Settling snapshot**: a positional echo starts a short-lived window (`automation.settle_absorb_window`, default 10 s). While active, follow-ups consistent with the settled position — pure label/status churn or wobble within ±5% (`SETTLE_WOBBLE_TOLERANCE`) — are absorbed without changing origin or cooldowns. Any motion beyond that tolerance drops the snapshot immediately and is classified normally, so a genuine human action right after completion is still caught in one report. Label-only echoes do not start the window (no positional reference exists), keeping legacy behavior for such outcomes.
 
 ---
 
@@ -148,7 +148,7 @@ Unexplained state changes and reports conflicting with an active automation toke
 | `STOP` command: movement > 5% from stop anchor | `conflict` (something else drove it) |
 | `TOGGLE`: first report differing from pre-command snapshot | `echo`; identical periodic reports do not consume |
 
-Before any forward progress, a near-target report inside `automation.travel_echo_grace_ms` (default `2s`) does not consume a travel token. It returns no verdict and preserves attribution. Later completion or progress can confirm the token; reversal still counts as conflict.
+Before any forward progress, a near-target report inside `automation.travel_echo_grace` (default `2s`) does not consume a travel token. It returns no verdict and preserves attribution. Later completion or progress can confirm the token; reversal still counts as conflict.
 
 Cold start protection: when cached state is empty (first boot or after Redis wipe), incoming data is treated as calibration — no token exists yet and origin stays `unknown`, so initial z2m advertisements are never misclassified.
 
@@ -165,7 +165,7 @@ The cooldown starts **immediately** in either of these cases:
 
 ```javascript
 CacheService.setHumanCooldown(slugify(deviceName), cooldownSeconds)
-// Key: cooldown:<slug>   TTL: automation.human_interaction_cooldown_ms (default 15 min)
+// Key: cooldown:<slug>   TTL: automation.human_interaction_cooldown (default 15 min)
 ```
 
 Failures are logged loudly (warn/error): a silent miss here means automations may fight the user.
@@ -201,14 +201,14 @@ All durations accept human-readable strings ("30s", "25m") or plain milliseconds
 
 | Constant / config key | Default | Purpose |
 |----------|---------|---------|
-| `automation.echo_window_instant_ms` (`INSTANT_ECHO_WINDOW_DEFAULT_MS`) | 15,000 ms | Token TTL for ON/OFF/TOGGLE commands. Covers delayed z2m confirmations while keeping the attribution window short. |
-| `automation.echo_window_travel_ms` (`TRAVEL_ECHO_WINDOW_DEFAULT_MS`) | 90,000 ms | Token TTL for OPEN/CLOSE/POS:N/STOP. Must outlive full travel (~40-60 s); forward progress refreshes it. |
-| `automation.travel_echo_grace_ms` (`TRAVEL_ECHO_GRACE_DEFAULT_MS`) | 2,000 ms | Pre-motion window during which a near-target positional report cannot confirm completion — stale/optimistic z2m re-advertisements arrive here; real travel takes longer. |
-| `automation.motion_stall_timeout_ms` (`MOTION_STALL_TIMEOUT_DEFAULT_MS`) | 20,000 ms | Watchdog: no forward progress this long during commanded travel → external stop if progress was seen, no-response handling otherwise. |
-| `automation.settle_absorb_window_ms` (`SETTLE_ABSORB_WINDOW_DEFAULT_MS`) | 10,000 ms | Post-completion tail absorption window; motor-status churn within it is not human input. |
-| `automation.failed_command_backoff_ms` (`FAILED_COMMAND_BACKOFF_DEFAULT_MS`) | 600,000 ms (10 min) | Retry backoff for identical automated commands that produced no observable response while state stays unchanged. |
+| `automation.echo_window_instant` (`INSTANT_ECHO_WINDOW_DEFAULT_MS`) | 15,000 ms | Token TTL for ON/OFF/TOGGLE commands. Covers delayed z2m confirmations while keeping the attribution window short. |
+| `automation.echo_window_travel` (`TRAVEL_ECHO_WINDOW_DEFAULT_MS`) | 90,000 ms | Token TTL for OPEN/CLOSE/POS:N/STOP. Must outlive full travel (~40-60 s); forward progress refreshes it. |
+| `automation.travel_echo_grace` (`TRAVEL_ECHO_GRACE_DEFAULT_MS`) | 2,000 ms | Pre-motion window during which a near-target positional report cannot confirm completion — stale/optimistic z2m re-advertisements arrive here; real travel takes longer. |
+| `automation.motion_stall_timeout` (`MOTION_STALL_TIMEOUT_DEFAULT_MS`) | 20,000 ms | Watchdog: no forward progress this long during commanded travel → external stop if progress was seen, no-response handling otherwise. |
+| `automation.settle_absorb_window` (`SETTLE_ABSORB_WINDOW_DEFAULT_MS`) | 10,000 ms | Post-completion tail absorption window; motor-status churn within it is not human input. |
+| `automation.failed_command_backoff` (`FAILED_COMMAND_BACKOFF_DEFAULT_MS`) | 600,000 ms (10 min) | Retry backoff for identical automated commands that produced no observable response while state stays unchanged. |
 | `MAX_TOKEN_LIFETIME_MS` | 600,000 ms | Hard cap on token lifetime even with continuous continuation refreshes. |
-| `HUMAN_INTERACTION_COOLDOWN_SECONDS` / `automation.human_interaction_cooldown_ms` | 900 s (15 min) | Redis cooldown duration after human interaction; 0 disables entirely. |
+| `HUMAN_INTERACTION_COOLDOWN_SECONDS` / `automation.human_interaction_cooldown` | 900 s (15 min) | Redis cooldown duration after human interaction; 0 disables entirely. |
 | `POSITION_MATCH_TOLERANCE` | ±2% | Jitter tolerance for position comparisons and reversal detection. |
 | `OPEN_ECHO_POSITION_MIN` / `CLOSED_ECHO_POSITION_MAX` | 90% / 10% | Terminal thresholds for echo matching. |
 | `STOP_DRIFT_TOLERANCE` | 5% | Max drift from a STOP anchor still attributable to motor inertia. |
@@ -242,5 +242,5 @@ All durations accept human-readable strings ("30s", "25m") or plain milliseconds
 | Document | Relation |
 |----------|----------|
 | [AI Conversation Caching](./ai-conversation-caching.md) | Sibling deep-dive: how chat history persistence interacts with message origin |
-| [Configuration Guide](../configuration.md) | All config keys referenced here (`automation.human_interaction_cooldown_ms`, echo windows, stall timeout, settle absorption, failed-command backoff) |
+| [Configuration Guide](../configuration.md) | All config keys referenced here (`automation.human_interaction_cooldown`, echo windows, stall timeout, settle absorption, failed-command backoff) |
 | [Architecture Overview](./index.md) | Project structure and core concepts |

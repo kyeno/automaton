@@ -4,7 +4,7 @@
  * Pins the behaviours behind the Aug-22 weather-report outages without waiting anywhere
  * near a real LLM latency budget -- all timeouts are emulated with millisecond-scale
  * values against a local HTTP stand-in that controls how long each response takes:
- *   A) fetch_timeout_ms resolution ("5m" from automaton.yaml -> 300000ms; constructor
+ *   A) fetch_timeout resolution ("5m" from automaton.yaml -> 300000ms; constructor
  *      override wins over config file)
  *   B) slow backend rejects with "Fetch timed out after <configured>ms", status 408
  *      (kept in the non-retried 4xx band), and exactly ONE request reaches the server
@@ -84,13 +84,13 @@ console.log('\n── OpenAiProvider timeout handling ──\n')
 
 try {
     // -----------------------------------------------------------------------
-    // A. fetch_timeout_ms resolution
+    // A. fetch_timeout resolution
     // -----------------------------------------------------------------------
     console.log('── A. timeout configuration resolution ──')
     {
         const fromConfig = new OpenAiProvider({ apiUrl: base, model: 'test-model' })
         assert(fromConfig.getFetchTimeoutMs() === 300_000,
-            'fetch_timeout_ms "5m" in automaton.yaml resolves to 300000ms (raised default era)')
+            'fetch_timeout "5m" in automaton.yaml resolves to 300000ms (raised default era)')
 
         const overridden = new OpenAiProvider({ apiUrl: base, model: 'test-model', fetchTimeoutMs: 42 })
         assert(overridden.getFetchTimeoutMs() === 42, 'constructor override wins over config file')

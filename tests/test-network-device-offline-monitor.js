@@ -13,7 +13,7 @@ config()
  *   B) online transition is silent while recovery speech is off
  *   C) recovery speaks only with alerts.network_offline_announce_recovery: true
  *   D) startup sweep announces hosts already found down at boot
- *   E) per-device cooldown_ms override wins over the family default
+ *   E) per-device cooldown override wins over the family default
  *   F) per-device tts_profile / tts_options overrides reach the payload
  *   G) ignore list entries are never announced
  *   H) master switch silences every host
@@ -125,9 +125,9 @@ function clearOverride(key) { delete configOverrides[key] }
 // override, cooldown override, and a host network.yaml does not monitor (wifi-router).
 const ANNOUNCE_LIST = {
     'core-server': null,
-    'dns-server': { cooldown_ms: 0, tts_profile: 'alarm' },
-    'wifi-router': { cooldown_ms: 0, tts_options: { intro: 'router-intro.wav' } },
-    'nas-server': { cooldown_ms: '5m' }
+    'dns-server': { cooldown: 0, tts_profile: 'alarm' },
+    'wifi-router': { cooldown: 0, tts_options: { intro: 'router-intro.wav' } },
+    'nas-server': { cooldown: '5m' }
 }
 
 
@@ -158,7 +158,7 @@ async function main() {
 
     setOverride('alerts.network_offline_devices', ANNOUNCE_LIST)
     setOverride('alerts.network_offline_tts', true)
-    setOverride('alerts.network_offline_cooldown_ms', '30m')
+    setOverride('alerts.network_offline_cooldown', '30m')
     setOverride('alerts.network_offline_ignore', [])
     setOverride('alerts.network_offline_tts_profile', '')
     setOverride('alerts.network_offline_announce_boot', true)
@@ -184,11 +184,11 @@ async function main() {
             `sorted by name (${devices.map((d) => d.name).join(', ')})`)
         const core = devices.find((d) => d.name === 'core-server')
         const dns = devices.find((d) => d.name === 'dns-server')
-        assert(core.overrides.cooldown_ms === undefined, 'null entry yields empty overrides (family defaults)')
+        assert(core.overrides.cooldown === undefined, 'null entry yields empty overrides (family defaults)')
         assert(dns.overrides.tts_profile === 'alarm', 'per-device overrides carried through')
         setOverride('alerts.network_offline_devices', { 'core-server': 'not-an-object', '': null })
         const junky = NetworkDeviceOfflineMonitor.configuredDevices()
-        assert(junky.length === 1 && junky[0].name === 'core-server' && junky[0].overrides.cooldown_ms === undefined,
+        assert(junky.length === 1 && junky[0].name === 'core-server' && junky[0].overrides.cooldown === undefined,
             `junk override values degrade to defaults, empty names dropped (got ${JSON.stringify(junky)})`)
         setOverride('alerts.network_offline_devices', ANNOUNCE_LIST)
 
@@ -236,14 +236,14 @@ async function main() {
 
 
         // E) per-device cooldown override --------------------------------------------
-        console.log('-- E) per-device cooldown_ms overrides the family default --')
+        console.log('-- E) per-device cooldown overrides the family default --')
         spoken.length = 0
         setLabel('dns-server', 'offline')
         EventBus.emit('network:dns-server', { name: 'dns-server', status: 'offline' })
         await sleep(30)
         EventBus.emit('network:dns-server', { name: 'dns-server', status: 'offline' })
         await sleep(50)
-        assert(spoken.length === 2, `cooldown_ms 0 re-warns every transition (got ${spoken.length})`)
+        assert(spoken.length === 2, `cooldown 0 re-warns every transition (got ${spoken.length})`)
         EventBus.emit('network:core-server', { name: 'core-server', status: 'offline' })
         await sleep(50)
         assert(spoken.length === 2, 'family 30m cooldown still suppresses core-server')

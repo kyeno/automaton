@@ -151,7 +151,7 @@ class SNetworkDeviceOfflineMonitor extends AlertMonitorBase {
                 key: OFFLINE_KEY,
                 fallback: FALLBACK_OFFLINE,
                 source: this.#framingFor(device.overrides),
-                cooldownMs: device.overrides.cooldown_ms,
+                cooldownMs: device.overrides.cooldown,
                 cooldownKey: `${device.name}|offline`,
                 logMessage: `Spoken warning: host "${device.name}" is offline`
             })
@@ -163,7 +163,7 @@ class SNetworkDeviceOfflineMonitor extends AlertMonitorBase {
                 key: ONLINE_KEY,
                 fallback: FALLBACK_ONLINE,
                 source: this.#framingFor(device.overrides),
-                cooldownMs: device.overrides.cooldown_ms,
+                cooldownMs: device.overrides.cooldown,
                 cooldownKey: `${device.name}|online`,
                 logMessage: `Spoken notice: host "${device.name}" is back online`
             })

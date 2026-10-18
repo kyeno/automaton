@@ -468,18 +468,13 @@ class SAiAssistant {
      * @private
      * @returns {number} TTL in whole seconds (> 0) */
     #resolveConversationTtl() {
-        const raw = ConfigService.get('ai.conversation_ttl_sec')
+        const raw = ConfigService.get('ai.conversation_ttl')
         if (raw == null) return DEFAULT_CONVERSATION_TTL_SEC
-        let sec = null
-        if (typeof raw === 'number' && Number.isFinite(raw)) {
-            sec = Math.round(raw)
-        } else if (typeof raw === 'string') {
-            const ms = temporal.humanToMs(raw)
-            if (ms != null) sec = Math.round(ms / 1000)
-        }
+        const ms = temporal.parseDurationMs(raw)
+        const sec = ms !== null && ms > 0 ? Math.max(1, Math.ceil(ms / 1000)) : null
         if (sec == null || !(sec > 0)) {
             LoggerService.warn(
-                `Invalid conversation_ttl_sec ${JSON.stringify(raw)} (expected e.g. "15m" or plain seconds); using default ${DEFAULT_CONVERSATION_TTL_SEC}s`,
+                `Invalid conversation_ttl ${JSON.stringify(raw)} (expected e.g. "15m" or plain milliseconds); using default ${DEFAULT_CONVERSATION_TTL_SEC}s`,
                 'AiAssistant'
             )
             return DEFAULT_CONVERSATION_TTL_SEC

@@ -15,6 +15,7 @@ import TimedAction from '../../lib/timedAction.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import { slugify } from '../../lib/string.js'
 import temporal from '../../lib/date.js'
+import { normalizeSequenceConfig } from '../../lib/configMigration.js'
 
 
 //  SequenceBase class.
@@ -52,17 +53,17 @@ class SequenceBase {
 
     /** Create a sequence instance from one validated YAML entry; normalizes steps + durations.
      * @param {string} name - Friendly name from config (`name:` field)
-     * @param {Object} [config={}] - Raw normalized entry object (devices/on/off/delay_ms/loop) */
+     * @param {Object} [config={}] - Raw normalized entry object (devices/on/off/delay/loop) */
     constructor(name, config = {}) {
         this.#name = String(name ?? '').trim()
         this.#slug = slugify(this.#name || 'sequence')
-        this.#config = config && typeof config === 'object' ? config : {}
+        this.#config = normalizeSequenceConfig(config && typeof config === 'object' ? config : {})
 
         //  Sequence-level pacing -- fully optional (absent => endpoint mode, D5).
-        if (this.#config.delay_ms !== undefined) {
-            const parsed = temporal.parseDurationMs(this.#config.delay_ms)
+        if (this.#config.delay !== undefined) {
+            const parsed = temporal.parseDurationMs(this.#config.delay)
             if (parsed === null) {
-                LoggerService.warn(`Sequence "${this.#name}": invalid delay_ms "${this.#config.delay_ms}" -- treating as absent`, 'SequenceBase')
+                LoggerService.warn(`Sequence "${this.#name}": invalid delay "${this.#config.delay}" -- treating as absent`, 'SequenceBase')
             } else {
                 this.#defaultDelayMs = parsed
             }
@@ -86,8 +87,8 @@ class SequenceBase {
                 }
                 return parsed
             }
-            const offDelayMs = parseGap(loopRaw.off_delay_ms, 'off_delay_ms')   // gap before OFF runs
-            const onDelayMs = parseGap(loopRaw.on_delay_ms, 'on_delay_ms')     // gap before ON runs
+            const offDelayMs = parseGap(loopRaw.off_delay, 'off_delay')   // gap before OFF runs
+            const onDelayMs = parseGap(loopRaw.on_delay, 'on_delay')     // gap before ON runs
             this.#loopConfig = { cycle, offDelayMs, onDelayMs }
         }
 
@@ -179,7 +180,7 @@ class SequenceBase {
     //  -- Run core -------------------------------------------------------------
 
     /** The blocking core: walk the ordered step list for the given action, pacing steps with
-     * their per-step delay (falling back to the sequence-level `delay_ms`). Concurrent invocations
+     * their per-step delay (falling back to the sequence-level `delay`). Concurrent invocations
      * are rejected and logged, never queued, never overridden (D7).
      * @param {'ON'|'OFF'} [command='ON'] - Action to send down the sequence
      * @returns {Promise<boolean>} true when the run executed; false when rejected by the mutex */
@@ -279,7 +280,7 @@ class SequenceBase {
             } else if (entry && typeof entry === 'object') {
                 deviceName = String(entry.device ?? '').trim()
                 payload = entry.payload !== undefined ? entry.payload : (entry.command !== undefined ? entry.command : null)
-                delayMs = parseDelayMs(entry.delay_ms, `step[${index}] delay_ms`)
+                delayMs = parseDelayMs(entry.delay, `step[${index}] delay`)
             }
             if (!deviceName) {
                 LoggerService.warn(`Sequence "${this.#name}": step[${index}] has no device name -- skipped`, 'SequenceBase')
