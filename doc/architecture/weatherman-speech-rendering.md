@@ -47,7 +47,15 @@ The template picker tries a clock-fraction key, then `default`:
 | `{% time_of_day %}` | Localized period word; raw English period name if missing |
 
 Polish uses `src/lib/polish.js` through `temporal.getClockWords()`, e.g.
-`09:32` → `dziewiąta trzydzieści dwa`. Locale vocabulary lives in `date.yaml`.
+`09:32` → `dziewiąta trzydzieści dwa`. This reaches the model and direct TTS already
+spelled out; Polish AI prefixes do not need an instruction to convert the clock.
+Locale vocabulary lives in `date.yaml`.
+
+WeatherMan uses `temporal.getSpeechDuration()` for the next-update closer (Polish
+accusative, e.g. `za jedną godzinę`) and history window (genitive, e.g. `z okresu
+jednej godziny`). The shared number tables also select measurement-unit agreement,
+such as `2 stopnie` and `0,8 stopnia`. These are deterministic speech forms rather
+than work delegated to the model.
 
 ## Calendar Date on First Runs
 
@@ -61,6 +69,14 @@ dated_<fraction> → dated → <fraction> → default
 Day names, genitive month names, `date_sentence`, `period_words`, and `duration_units`
 come from `etc/i18n/{locale}/date.yaml`. Move older custom period/duration entries there
 from `weatherman.yaml`.
+
+## Historical Facts
+
+Before the existing segment assembly, optional history tokens in the core body are
+resolved from time-weighted SQL statistics. They explicitly describe adjacent-window
+means. The same clauses reach AI, direct TTS and the AI-failure fallback. Session
+markers and proverb/anecdote instructions continue to use the existing assembly.
+See [Historical trends](../automations/weatherman.md#historical-trends).
 
 ## Closing Proverb
 

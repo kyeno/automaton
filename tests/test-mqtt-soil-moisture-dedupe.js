@@ -129,6 +129,16 @@ function testNonSemanticOnlyStaysDeduped(fake) {
     assert(dev.length === 2, `actuator topic unaffected (got ${dev.length})`)
 }
 
+/** Pressure-only changes must not disappear before the numeric history recorder sees them. */
+function testPressureDelivered(fake) {
+    const got = []
+    MqttService.subscribe('zigbee2mqtt/Barometer', (_topic, message) => got.push(message))
+    deliver(fake, 'zigbee2mqtt/Barometer', { pressure: 1000 })
+    deliver(fake, 'zigbee2mqtt/Barometer', { pressure: 1000.2 })
+    deliver(fake, 'zigbee2mqtt/Barometer', { pressure: 1000.2, linkquality: 12 })
+    assert(got.length === 2, 'pressure changes pass the semantic filter; identical pressure is deduped')
+}
+
 async function main() {
     console.log('=== MQTT Semantic-Key Dedupe Tests (soil_moisture) ===\n')
 
@@ -136,6 +146,7 @@ async function main() {
     await MqttService.init({ connectFn: () => fake })
 
     try {
+        testPressureDelivered(fake)
         testDistinctMoistureDelivered(fake)
         testIdenticalMoistureDeduped(fake)
         testBatteryBlipThenRealDrop(fake)

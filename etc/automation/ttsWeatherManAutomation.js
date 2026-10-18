@@ -26,6 +26,8 @@ import { round } from '../../src/lib/math.js'
 import { interpolateTokens } from '../../src/lib/string.js'
 import { readRandomLine } from '../../src/lib/randomLine.js'
 import TtsProfiles from '../../src/lib/ttsProfiles.js'
+import DatabaseService from '../../src/service/databaseService.js'
+import { countedUnit } from '../../src/lib/polish.js'
 import temporal from '../../src/lib/date.js'
 
 
@@ -147,7 +149,8 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         if (timeLine && /{%\s*time\s*%}/.test(baseText)) {
             this.log('Base sentence still contains {% time %}; the opening line already states the time -- consider removing it from your base template', 'debug')
         }
-        const baseMessage = this.#interpolate(baseText, context)
+        const history = this.buildHistoryTokens(now.getTime())
+        const baseMessage = this.#interpolate(baseText, context, history)
         let message = timeLine ? `${timeLine} ${baseMessage}` : baseMessage
 
         //  Evaluate all rules, collect matches, then pick highest priority winner.
@@ -188,7 +191,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             if (best.rule.sentence) {
                 const ruleText = this.#resolveI18n(best.rule.sentence, '')
                 if (ruleText) {
-                    const interpolated = this.#interpolate(ruleText, context)
+                    const interpolated = this.#interpolate(ruleText, context, history)
                     message += ' ' + interpolated
                     this.log(`Rule matched: "${best.rule.name}" -> appended sentence`, 'debug')
                 }
@@ -197,6 +200,50 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
 
         //  Route output through AI->TTS or direct TTS.
         await this.#speak(message, meta)
+    }
+
+    /** Localized history clauses from adjacent time-weighted SQL windows.
+     * Current readings remain live values; deltas explicitly describe window means.
+     * @param {number} [now=Date.now()] - Shared report instant in epoch milliseconds.
+     * @returns {Record<string, string>} Optional temperature/humidity/pressure history tokens. */
+    buildHistoryTokens(now = Date.now()) {
+        const tokens = { temperature_history: '', humidity_history: '', pressure_history: '' }
+        const history = this.config.history ?? {}
+        if (history.enabled === false) return tokens
+        const windowMs = temporal.parseDurationMs(history.window ?? '1h')
+        const maxGap = temporal.parseDurationMs(history.max_gap ?? '30m')
+        const coverage = history.min_coverage ?? 0.8
+        if (!(windowMs > 0) || !(maxGap > 0) || !Number.isFinite(coverage) || coverage <= 0 || coverage > 1) return tokens
+        const tolerances = { temperature: 0.2, humidity: 2, pressure: 0.5, ...history.tolerances }
+        for (const metric of Object.keys(tokens).map((key) => key.replace('_history', ''))) {
+            const device = this.config.sensors?.[metric]
+            const tolerance = tolerances[metric]
+            if (typeof device !== 'string' || !Number.isFinite(tolerance) || tolerance < 0) continue
+            const query = (from, to) => DatabaseService.sensorWindowStats({ device, property: metric, from, to, maxGap })
+            const recent = query(now - windowMs, now)
+            const earlier = query(now - 2 * windowMs, now - windowMs)
+            if (![recent, earlier].every((stats) => stats && Number.isFinite(stats.mean) && stats.coverageMs >= windowMs * coverage)) continue
+            // Historical coverage alone does not establish a fresh current observation.
+            if (!Number.isFinite(recent.latestAt) || now - recent.latestAt > maxGap || recent.latestAt > now) continue
+            const delta = round(recent.mean - earlier.mean)
+            const direction = Math.abs(delta) <= tolerance ? 'stable' : delta > 0 ? 'rising' : 'falling'
+            const template = this.#resolveI18n(`weatherman.history.${metric}.${direction}`, '')
+            if (typeof template !== 'string' || !template) continue
+            const mean = round(recent.mean)
+            const difference = round(Math.abs(delta))
+            const unit = (kind, value) => {
+                const forms = this.#resolveI18n(`weatherman.history.${metric}.units.${kind}`, [])
+                return /^pl(?:_|-|$)/i.test(I18nLoader.getLocale()) ? countedUnit(value, forms) : forms[value === 1 ? 0 : 2] ?? ''
+            }
+            tokens[`${metric}_history`] = this.#interpolate(template, null, {
+                mean: I18nLoader.formatNumber(mean),
+                delta: I18nLoader.formatNumber(difference),
+                mean_unit: unit('mean', mean),
+                delta_unit: unit('delta', difference),
+                window: temporal.getSpeechDuration(windowMs, 'genitive') ?? temporal.millisecondsToHumanReadable(windowMs),
+            })
+        }
+        return tokens
     }
 
     /** No device targets for this automation -- returns empty Map so parent
@@ -277,7 +324,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         //  Closing "next update" line -- every run except the last, when a next tick is known.
         if (!meta.isLast && typeof meta.nextIntervalMs === 'number' && meta.nextIntervalMs > 0) {
             const template = this.#resolveI18n('weatherman.ai_message_next', '')
-            const phrase = temporal.msToHumanPhrase(meta.nextIntervalMs, temporal.getDurationUnits())
+            const phrase = temporal.getSpeechDuration(meta.nextIntervalMs, 'accusative')
             if (template && phrase) {
                 parts.push(this.#interpolate(template, null, { next_interval: phrase }))
             }

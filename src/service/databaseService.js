@@ -1,5 +1,5 @@
 /**
- * Durable state-transition history and runtime state backed by local SQLite.
+ * Durable state transitions, numeric observations and runtime state in local SQLite.
  * Stores monitored transitions plus current state that must outlive history retention.
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -157,6 +157,68 @@ class SDatabaseService {
         }
     }
 
+    /** Store finite numeric observations from one received device report.
+     * @param {{device: string, timestamp: number, values: Record<string, number>}} sample - Reported measurements.
+     * @returns {boolean} Whether the report was stored. */
+    recordSensorSample({ device, timestamp, values }) {
+        if (!this.isAvailable()) return false
+        if (!device || !Number.isFinite(timestamp)) return false
+        try {
+            const insert = this.#db.prepare('INSERT INTO sensor_samples (device, property, ts_ms, value) VALUES (?, ?, ?, ?) ON CONFLICT(device, property, ts_ms) DO UPDATE SET value = excluded.value')
+            this.#db.exec('BEGIN')
+            try {
+                for (const [property, value] of Object.entries(values)) {
+                    if (typeof value === 'number' && Number.isFinite(value)) insert.run(device, property, timestamp, value)
+                }
+                this.#db.exec('COMMIT')
+            } catch (error) { this.#db.exec('ROLLBACK'); throw error }
+            return true
+        } catch (error) {
+            this.#log('warn', `Sensor history write failed: ${error.message}`)
+            return false
+        }
+    }
+
+    /** Time-weighted statistics over a half-open interval, with bounded carry-forward.
+     * Each observation holds until the next report or maxGap, whichever comes first.
+     * @param {{device: string, property: string, from: number, to: number, maxGap: number}} query - Series and window.
+     * @returns {{mean: number|null, min: number|null, max: number|null, coverageMs: number, samples: number, latestAt: number|null}|null} Statistics or null when unavailable/invalid. */
+    sensorWindowStats({ device, property, from, to, maxGap }) {
+        if (!this.isAvailable() || ![from, to, maxGap].every(Number.isFinite) || to <= from || maxGap <= 0) return null
+        try {
+            const row = this.#db.prepare(`
+                WITH points AS (
+                    SELECT ts_ms, value, LEAD(ts_ms, 1, ?) OVER (ORDER BY ts_ms) AS next_ts
+                    FROM sensor_samples WHERE device = ? AND property = ? AND ts_ms >= ? AND ts_ms <= ?
+                ), segments AS (
+                    SELECT value, MIN(next_ts, ts_ms + ?, ?) - MAX(ts_ms, ?) AS duration FROM points
+                )
+                SELECT SUM(value * duration) / SUM(duration) AS mean,
+                    MIN(value) AS min, MAX(value) AS max, SUM(duration) AS coverageMs, COUNT(*) AS samples,
+                    (SELECT MAX(ts_ms) FROM points) AS latestAt
+                FROM segments WHERE duration > 0
+            `).get(to, device, property, from - maxGap, to, maxGap, to, from)
+            return { ...row, coverageMs: Number(row.coverageMs ?? 0), samples: Number(row.samples) }
+        } catch (error) {
+            this.#log('warn', `Sensor history query failed: ${error.message}`)
+            return null
+        }
+    }
+
+    /** Bound numeric history independently of transition retention.
+     * @param {number} retentionMs - Maximum history age.
+     * @returns {boolean} Whether pruning succeeded. */
+    pruneSensorSamples(retentionMs) {
+        if (!this.isAvailable() || !Number.isFinite(retentionMs) || retentionMs <= 0) return false
+        try {
+            this.#db.prepare('DELETE FROM sensor_samples WHERE ts_ms < ?').run(Date.now() - retentionMs)
+            return true
+        } catch (error) {
+            this.#log('warn', `Sensor history prune failed: ${error.message}`)
+            return false
+        }
+    }
+
     /** Current stored label for a subject, or null when absent/unavailable.
      * @param {string} domain - e.g., 'videoPlayer' | 'network'.
      * @param {string} subject - host name / device name.
@@ -295,6 +357,14 @@ class SDatabaseService {
                 source     TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_state_lookup ON state_events (domain, subject, id);
+            CREATE TABLE IF NOT EXISTS sensor_samples (
+                device TEXT NOT NULL,
+                property TEXT NOT NULL,
+                ts_ms INTEGER NOT NULL,
+                value REAL NOT NULL,
+                PRIMARY KEY (device, property, ts_ms)
+            );
+            CREATE INDEX IF NOT EXISTS idx_sensor_age ON sensor_samples (ts_ms);
             CREATE TABLE IF NOT EXISTS runtime_state (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL

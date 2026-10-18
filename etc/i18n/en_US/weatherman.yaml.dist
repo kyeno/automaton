@@ -21,8 +21,8 @@ time_sentence:
 # Day-period words ({% time_of_day %}) and duration units ({% next_interval %}) live in
 # the per-locale date.yaml bundle.
 
-base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals.'
-ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Finally - before announcing when the next update comes - toss in a short anecdote about what you once pulled off in such weather while completely drunk. Here is the information: '
+base: 'The outside temperature is {{ Outdoor Temperature.temperature }} degrees Celsius, humidity is at {{ Outdoor Temperature.humidity }} percent, and atmospheric pressure is {{ Kitchen Temperature.pressure }} hectopascals. {% temperature_history %} {% humidity_history %} {% pressure_history %}'
+ai_prefix: 'You are a weather announcer. Rewrite the following information creatively and uniquely. Do not use tools -- base your answer only on the provided information. Do not say that this is the last update if you receive information about the next update. Do not use the word "forecast", only "report". Finally - before announcing when the next update comes - add a short, light-hearted anecdote fitting the weather. Here is the information: '
 
 # AI prompt markers -- injected around the message when routing through AI.
 # first/last mark the opening/closing update of each daily session (the stretch between
@@ -57,3 +57,27 @@ warning_cold_night: 'When going outside, put on a hoodie, a jacket, and thicker 
 soothing_warm_day: 'The weather is perfect! Ideal for a walk or working outside!'
 soothing_warm_evening: 'What a beautiful evening out there -- perfect for a refreshing walk!'
 soothing_warm_night: 'Beautiful night out there. You could step outside in shorts and a t-shirt to enjoy the stars.'
+
+# SQL time-weighted means of adjacent windows; generated facts, not model arithmetic.
+history:
+  temperature:
+    units:
+      mean: ['degree Celsius', 'degrees Celsius', 'degrees Celsius', 'degrees Celsius']
+      delta: ['degree', 'degrees', 'degrees', 'degrees']
+    rising: 'The average temperature over the last {% window %} was {% mean %} {% mean_unit %}; it rose by {% delta %} {% delta_unit %} compared with the preceding window.'
+    falling: 'The average temperature over the last {% window %} was {% mean %} {% mean_unit %}; it fell by {% delta %} {% delta_unit %} compared with the preceding window.'
+    stable: 'The average temperature over the last {% window %} was {% mean %} {% mean_unit %}; it remained stable compared with the preceding window.'
+  humidity:
+    units:
+      mean: ['percent', 'percent', 'percent', 'percent']
+      delta: ['percentage point', 'percentage points', 'percentage points', 'percentage points']
+    rising: 'The average humidity over the last {% window %} was {% mean %} {% mean_unit %}; it rose by {% delta %} {% delta_unit %} compared with the preceding window.'
+    falling: 'The average humidity over the last {% window %} was {% mean %} {% mean_unit %}; it fell by {% delta %} {% delta_unit %} compared with the preceding window.'
+    stable: 'The average humidity over the last {% window %} was {% mean %} {% mean_unit %}; it remained stable compared with the preceding window.'
+  pressure:
+    units:
+      mean: ['hectopascal', 'hectopascals', 'hectopascals', 'hectopascals']
+      delta: ['hectopascal', 'hectopascals', 'hectopascals', 'hectopascals']
+    rising: 'The average pressure over the last {% window %} was {% mean %} {% mean_unit %}; it rose by {% delta %} {% delta_unit %} compared with the preceding window.'
+    falling: 'The average pressure over the last {% window %} was {% mean %} {% mean_unit %}; it fell by {% delta %} {% delta_unit %} compared with the preceding window.'
+    stable: 'The average pressure over the last {% window %} was {% mean %} {% mean_unit %}; it remained stable compared with the preceding window.'

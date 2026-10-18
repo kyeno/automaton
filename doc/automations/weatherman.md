@@ -123,6 +123,79 @@ rules:
     sentence: 'weatherman.soothing_warm_night'
 ```
 
+### Historical trends
+
+`SensorHistoryService` records actual device reports independently of WeatherMan's
+speech schedule, quiet hours, playback suppression and AI availability. Finite numeric
+`temperature`, `humidity` and `pressure` fields are recorded by default. Restoring
+cached device state does not create measurements, and partial reports only contribute
+the properties actually present. Unchanged reports are retained as observations of
+continued availability; reports are subject to the existing MQTT duplicate filter.
+
+```yaml
+# In etc/automaton.yaml:
+sensor_history:
+  enabled: true
+  properties: [temperature, humidity, pressure]
+  retention: "7d"
+
+# In etc/automation/tts-weatherman.yaml:
+history:
+  enabled: true
+  window: "1h"
+  max_gap: "30m"
+  min_coverage: 0.8
+  tolerances: { temperature: 0.2, humidity: 2, pressure: 0.5 }
+```
+
+SQLite stores `(device, property, ts_ms, value)` in `sensor_samples`. Duplicate
+observations for the same series and millisecond replace that millisecond's value.
+The recorder prunes on startup and hourly; a non-positive or invalid retention
+falls back to seven days. Disabling recording leaves existing data queryable until
+retention removes it. Database failures leave current-value weather reports usable;
+missing observations are not backfilled.
+
+At announcement time, two adjacent windows are queried: `[now-2W, now-W)` and
+`[now-W, now)`. Means are **time-weighted**, holding each observation until the next
+report or `max_gap`, whichever comes first. SQL clips intervals to window boundaries
+and does not fill stale gaps indefinitely. A plain average would over-weight periods
+with frequent sensor reports. Both windows need `min_coverage` (default 80%), and the
+latest observation must be no older than `max_gap`.
+
+The tolerances are in each measurement's units: degrees Celsius, humidity percentage
+points and hectopascals. Mean differences within tolerance are stable; larger ones
+are rising or falling. Differences are rounded to the same one-decimal precision
+used in speech. There is no oscillation classification.
+
+The locale's `base` sentence can include these optional tokens:
+
+| Token | Description |
+|-------|-------------|
+| `{% temperature_history %}` | Complete temperature mean/comparison clause |
+| `{% humidity_history %}` | Complete humidity mean/comparison clause |
+| `{% pressure_history %}` | Complete pressure mean/comparison clause |
+
+These tokens are also available in winning-rule sentences. Missing/disabled history,
+missing locale templates or inadequate coverage resolve to an empty clause. Existing
+current-value `{{ Device.property }}` placeholders and rule priorities keep their
+meaning. Changing a configured sensor selects a different historical series.
+
+For example: “The average temperature over the last 1 hour was 18.9 degrees Celsius;
+it fell by 0.8 degrees compared with the preceding window.” This describes a change
+between **means**, not a claimed endpoint drop within one hour. Raw current readings
+remain separately identified in the report.
+
+Clause grammar lives under `history.<metric>.rising|falling|stable` in each language
+bundle. Its `{% mean %}`, `{% delta %}`, `{% mean_unit %}`, `{% delta_unit %}` and
+`{% window %}` tokens are computed in code; the small AI model receives finished
+facts rather than numerical work. Shared Polish helpers render declined duration
+words and unit agreement. The existing prefix, opening date/clock, winning advice,
+anecdote, proverb, next-update placement and TTS framing remain the report pipeline.
+
+A fresh deployment starts collecting on its first live reports. With default
+settings, allow roughly two hours of sufficiently frequent observations before
+historical clauses can appear. Normal current-value reports continue meanwhile.
+
 ### Time-of-Day Periods
 
 Rules use fixed local periods: night 00–04, morning 05–10, noon 11–12,

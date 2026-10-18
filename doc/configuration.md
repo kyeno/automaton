@@ -220,6 +220,14 @@ ui:
 
 `ui.tts_profile` selects a locale TTS framing profile for typed speech; empty means no jingle.
 
+### Numeric Sensor History
+
+`sensor_history` in the main configuration controls event-driven numeric recording:
+`enabled` (default true), `properties` (default temperature/humidity/pressure), and
+`retention` (default seven days). SQLite samples are independent of transition
+history and frozen-sensor incident state. WeatherMan's own `history` block controls
+comparison windows and coverage. See [Historical trends](automations/weatherman.md#historical-trends).
+
 ### Alerts Section
 
 Independent freeze detection is configured under `alerts.frozen_sensors`. See

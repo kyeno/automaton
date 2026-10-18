@@ -9,6 +9,14 @@ timer_interval: "1h"
 
 silence_between: "2300-0600"     # Suppress execution between these local times (HHmm-HHmm); set to null to disable
 
+# Event-driven numeric history is independent of this automation's speech schedule.
+history:
+  enabled: true
+  window: "1h"              # compare the last hour's mean with the preceding hour
+  max_gap: "30m"            # do not carry a reading forward beyond this age
+  min_coverage: 0.8         # require observed coverage of at least 80% in BOTH windows
+  tolerances: { temperature: 0.2, humidity: 2, pressure: 0.5 }
+
 sentence_base: 'weatherman.base'           # Always-played opening i18n key
 sentence_ai_prefix: 'weatherman.ai_prefix' # Prepend when routing through AI
 

@@ -17,7 +17,7 @@ import { parseDocument as yamlParseDocument } from 'yaml'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { PROJECT_ROOT } from './projectRoot.js'
-import { clockWords as polishClockWords } from './polish.js'
+import { clockWords as polishClockWords, durationWords as polishDurationWords } from './polish.js'
 
 
 /** Root directory containing per-locale i18n subdirectories (holds date.yaml). */
@@ -294,6 +294,27 @@ class STemporal {
         return null
     }
 
+
+    /** Duration spoken with locale-specific agreement and case, without model inflection.
+     * @param {number} ms - Positive duration in milliseconds.
+     * @param {'nominative'|'genitive'|'accusative'} [grammaticalCase='nominative'] - Sentence context.
+     * @returns {string|null} Spoken duration or the existing locale fallback. */
+    getSpeechDuration(ms, grammaticalCase = 'nominative') {
+        if (/^pl(?:_|-|$)/i.test(I18nLoader.getLocale())) {
+            return polishDurationWords(ms, grammaticalCase) ?? this.msToHumanPhrase(ms, this.getDurationUnits())
+        }
+        if (/^en(?:_|-|$)/i.test(I18nLoader.getLocale()) && Number.isFinite(ms) && ms >= 1000) {
+            const parts = []
+            let remaining = Math.floor(ms / 1000)
+            for (const [seconds, unit] of [[86400, 'day'], [3600, 'hour'], [60, 'minute'], [1, 'second']]) {
+                const count = Math.floor(remaining / seconds)
+                remaining %= seconds
+                if (count) parts.push(`${count} ${unit}${count === 1 ? '' : 's'}`)
+            }
+            return parts.join(' ') || null
+        }
+        return this.msToHumanPhrase(ms, this.getDurationUnits())
+    }
 
     /** Parse a human-readable duration string into milliseconds.
      * @param {string} text - Human-readable duration, e.g. "500ms", "1h" or "3m 45s".

@@ -14,6 +14,7 @@ import ConfigService from './service/configService.js'
 import LoggerService from './service/loggerService.js'
 import CacheService from './service/cacheService.js'
 import DatabaseService from './service/databaseService.js'
+import SensorHistoryService from './service/sensorHistoryService.js'
 import MqttService from './service/mqttService.js'
 import I18nLoader from './service/i18nLoader.js'
 import EventBus from './service/eventBus.js'
@@ -242,6 +243,8 @@ async function gracefulDeath(reason, errorLevel = 0) {
             AiBridgeMonitor.stop()
         }
 
+        if (initialized.has('SensorHistoryService')) SensorHistoryService.stop()
+
         //  Phase 2 -- Unsubscribe devices from MQTT topics.
         if (initialized.has('DeviceContainer')) {
             LoggerService.debug('Cleaning up devices...', 'Main')
@@ -374,6 +377,7 @@ async function bootstrap() {
     //  I18n Loader must initialize BEFORE the automation/interaction containers.
     await initService('I18nLoader', () => I18nLoader.init(), true)
 
+    await initService('SensorHistoryService', () => SensorHistoryService.init(), true)
     await initService('DeviceContainer', () => DeviceContainer.init())
     //  Sequences resolve their steps through DeviceContainer -- must come after it (D16: optional-tolerant).
     await initService('SequenceContainer', () => SequenceContainer.init(), true)

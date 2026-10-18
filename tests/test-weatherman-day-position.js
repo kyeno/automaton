@@ -277,7 +277,7 @@ console.log('\n── computeDayPosition() ──\n')
     assert(!out.includes('{%'), 'ONLY: no unresolved placeholders leak into prompt')
 
     // Middle-of-session run → closer with resolved {% next_interval %}.
-    const phrase = temporal.msToHumanPhrase(I, temporal.getDurationUnits())
+    const phrase = temporal.getSpeechDuration(I, 'accusative')
     const expectedCloser = String(bundle.ai_message_next).replace('{% next_interval %}', phrase)
     out = wm.buildAiPrompt(CORE, { nextIntervalMs: I })
     lines = out.split('\n')

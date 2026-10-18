@@ -102,3 +102,73 @@ export function clockWords(date) {
     const minutes = date.getMinutes()
     return minutes > 0 ? `${hour} ${cardinalWords(minutes)}` : hour
 }
+
+/** Genitive cardinal forms for durations ("dwóch godzin", "trzydziestu minut"). */
+const GENITIVE_ONES = ['', 'jeden', 'dwóch', 'trzech', 'czterech', 'pięciu', 'sześciu', 'siedmiu', 'ośmiu', 'dziewięciu']
+/** Genitive teens. */
+const GENITIVE_TEENS = ['dziesięciu', 'jedenastu', 'dwunastu', 'trzynastu', 'czternastu', 'piętnastu', 'szesnastu', 'siedemnastu', 'osiemnastu', 'dziewiętnastu']
+/** Genitive tens. */
+const GENITIVE_TENS = ['', '', 'dwudziestu', 'trzydziestu', 'czterdziestu', 'pięćdziesięciu', 'sześćdziesięciu', 'siedemdziesięciu', 'osiemdziesięciu', 'dziewięćdziesięciu']
+/** Genitive hundreds. */
+const GENITIVE_HUNDREDS = ['', 'stu', 'dwustu', 'trzystu', 'czterystu', 'pięciuset', 'sześciuset', 'siedmiuset', 'ośmiuset', 'dziewięciuset']
+
+/** Spell a positive cardinal in the genitive, reusing the existing number decomposition.
+ * @param {number} n - Integer in 1-999.
+ * @returns {string} Inflected words. */
+function genitiveCardinal(n) {
+    const parts = []
+    if (n >= 100) parts.push(GENITIVE_HUNDREDS[Math.floor(n / 100)])
+    const rest = n % 100
+    if (rest >= 10 && rest < 20) parts.push(GENITIVE_TEENS[rest - 10])
+    else {
+        if (rest >= 20) parts.push(GENITIVE_TENS[Math.floor(rest / 10)])
+        if (rest % 10) parts.push(GENITIVE_ONES[rest % 10])
+    }
+    return parts.join(' ')
+}
+
+/** Spell a duration with number agreement and the grammatical case required by its sentence.
+ * @param {number} ms - Positive duration in milliseconds.
+ * @param {'nominative'|'genitive'|'accusative'} [grammaticalCase='nominative'] - E.g. 'z okresu jednej godziny' or 'za jedną godzinę'.
+ * @returns {string|null} Spoken duration, or null when unsupported. */
+export function durationWords(ms, grammaticalCase = 'nominative') {
+    if (!Number.isFinite(ms) || ms < 1000 || !['nominative', 'genitive', 'accusative'].includes(grammaticalCase)) return null
+    const units = [
+        [86_400_000, 'dzień', 'dni', 'dni', 'dnia', false],
+        [3_600_000, 'godzina', 'godziny', 'godzin', 'godziny', true],
+        [60_000, 'minuta', 'minuty', 'minut', 'minuty', true],
+        [1000, 'sekunda', 'sekundy', 'sekund', 'sekundy', true],
+    ]
+    const parts = []
+    let remaining = Math.floor(ms / 1000) * 1000
+    for (const [size, singular, few, many, genitive, feminine] of units) {
+        const n = Math.floor(remaining / size)
+        remaining %= size
+        if (!n) continue
+        if (n > 999) return null
+        let number = cardinalWords(n)
+        let word = n === 1 ? singular : n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? few : many
+        if (grammaticalCase === 'genitive') {
+            number = n === 1 ? (feminine ? 'jednej' : 'jednego') : genitiveCardinal(n)
+            word = n === 1 ? genitive : many
+        } else if (feminine) {
+            if (n === 1) {
+                number = grammaticalCase === 'accusative' ? 'jedną' : 'jedna'
+                if (grammaticalCase === 'accusative') word = singular.slice(0, -1) + 'ę'
+            } else number = number.replace(/\bdwa$/, 'dwie')
+        }
+        parts.push(`${number} ${word}`)
+    }
+    return parts.join(' ') || null
+}
+
+/** Select unit agreement for a numeric measurement (including decimal fractions).
+ * @param {number} value - Numeric amount.
+ * @param {string[]} forms - Singular, few, many, fractional forms.
+ * @returns {string} Correct unit form, or an empty fallback. */
+export function countedUnit(value, forms) {
+    if (!Array.isArray(forms) || !Number.isFinite(value)) return ''
+    const n = Math.abs(value)
+    const index = !Number.isInteger(n) ? 3 : n === 1 ? 0 : n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? 1 : 2
+    return forms[index] ?? forms[2] ?? ''
+}

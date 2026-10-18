@@ -1122,6 +1122,10 @@ export default class DeviceBase {
             this.log(summary)
         }
 
+        // A received report is an observation; cached-state restoration never emits this event.
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            EventBus.emit('device:stateReported', { device: this.#name, state: parsed, timestamp: Date.now() })
+        }
         EventBus.publish(`zigbee:${this.#name}`)
     }
 

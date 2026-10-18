@@ -37,6 +37,15 @@ export default {
         }
     },
 
+    sensor_history: {
+        type: 'object',
+        properties: {
+            enabled: { type: 'boolean' },
+            properties: { type: 'array', items: { type: 'string' } },
+            retention: { type: ['number', 'string'] }
+        }
+    },
+
     //  AI section -- provider + conversation settings.
     ai: {
         type: 'object',

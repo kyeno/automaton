@@ -1,11 +1,6 @@
 # TODO -- Zigbee Automaton
 
 ## General
-- Weatherman: Use hourly storage of temp/pressure/humidity values in each cycle,
-  then when those values are available, modify the sentence to say not the
-  temperature "is X", but "has risen to X", "has fallen to X" or "remains stable at
-  X". More can be added like "temperature is X and have fallen X degrees within
-  the last hour", etc.
 - BUG: /config reload is so inherently broken it's probably beyond repair.
   Consider a fixing attempt and if it fails, remove the functionality altogether.
 - VERIFY: When AI fires request to sensor and we don't have cached data yet

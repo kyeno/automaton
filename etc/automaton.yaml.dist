@@ -13,6 +13,12 @@ locale:
   geo_latitude: 52.0
   geo_longitude: 21.0
 
+# Numeric sensor history, recorded on real device reports even while speech is quiet.
+sensor_history:
+  enabled: true
+  properties: [temperature, humidity, pressure]
+  retention: "7d"
+
 # --- AI: provider + conversation settings (API secret stays in .env)
 ai:
   model: gemma-4-E2B-it      # required for chat requests
