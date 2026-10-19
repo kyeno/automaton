@@ -304,6 +304,7 @@ class STemporal {
             return polishDurationWords(ms, grammaticalCase) ?? this.msToHumanPhrase(ms, this.getDurationUnits())
         }
         if (/^en(?:_|-|$)/i.test(I18nLoader.getLocale()) && Number.isFinite(ms) && ms >= 1000) {
+            if (ms === 3_600_000) return 'an hour'
             const parts = []
             let remaining = Math.floor(ms / 1000)
             for (const [seconds, unit] of [[86400, 'day'], [3600, 'hour'], [60, 'minute'], [1, 'second']]) {

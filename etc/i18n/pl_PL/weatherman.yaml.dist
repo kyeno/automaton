@@ -23,7 +23,7 @@ time_sentence:
 # the per-locale date.yaml bundle.
 
 ai_prefix: 'Jesteś radiowym prezenterem pogody. Przepisz poniższe informacje w kreatywny i unikalny sposób. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach. Nie mów, że to ostatnia wiadomość, jeżeli dostajesz informację o następnej aktualizacji. Nie używaj słowa "prognoza" tylko "raport". Nie mów "widzowie" tylko "słuchacze". Na koniec - zanim ogłosisz, kiedy następna informacja - dorzuć krótką, żartobliwą anegdotę pasującą do pogody. Oto informacje: '
-base: 'Temperatura na zewnątrz wynosi {{ Outdoor Temperature.temperature }} stopni Celsjusza, wilgotność to {{ Outdoor Temperature.humidity }} procent, a ciśnienie atmosferyczne to {{ Kitchen Temperature.pressure }} hektopaskali. {% temperature_history %} {% humidity_history %} {% pressure_history %}'
+base: '{% temperature_reading %}, {% humidity_reading %}, a {% pressure_reading %}.'
 
 # AI prompt markers -- injected around the message when routing through AI.
 # first/last mark the opening/closing announcement of each daily session (the stretch
@@ -64,26 +64,23 @@ warning_cold_night: 'Wychodząc na zewnątrz załóż bluzę, kurtkę i grubsze 
 
 # TODO: Other seasons of the year
 
-# SQL time-weighted means of adjacent windows; generated facts, not model arithmetic.
-history:
+# Current readings; trends compare adjacent time-weighted hourly means.
+readings:
   temperature:
-    units:
-      mean: ['stopień Celsjusza', 'stopnie Celsjusza', 'stopni Celsjusza', 'stopnia Celsjusza']
-      delta: ['stopień', 'stopnie', 'stopni', 'stopnia']
-    rising: 'Średnia temperatura z okresu {% window %} wyniosła {% mean %} {% mean_unit %} i jest o {% delta %} {% delta_unit %} wyższa niż w poprzednim okresie o tej samej długości.'
-    falling: 'Średnia temperatura z okresu {% window %} wyniosła {% mean %} {% mean_unit %} i jest o {% delta %} {% delta_unit %} niższa niż w poprzednim okresie o tej samej długości.'
-    stable: 'Średnia temperatura z okresu {% window %} wyniosła {% mean %} {% mean_unit %} i jest zbliżona do średniej z poprzedniego okresu.'
+    delta_units: ['stopień', 'stopnie', 'stopni', 'stopnia']
+    unknown: 'Temperatura na zewnątrz wynosi {% value %} stopni Celsjusza'
+    stable: 'Temperatura na zewnątrz utrzymuje się na poziomie {% value %} stopni Celsjusza'
+    rising: 'Temperatura na zewnątrz wynosi {% value %} stopni Celsjusza i w ciągu {% window %} wzrosła o {% delta %} {% delta_unit %}'
+    falling: 'Temperatura na zewnątrz wynosi {% value %} stopni Celsjusza i w ciągu {% window %} spadła o {% delta %} {% delta_unit %}'
   humidity:
-    units:
-      mean: ['procent', 'procent', 'procent', 'procenta']
-      delta: ['punkt procentowy', 'punkty procentowe', 'punktów procentowych', 'punktu procentowego']
-    rising: 'Średnia wilgotność z okresu {% window %} wyniosła {% mean %} {% mean_unit %} i jest o {% delta %} {% delta_unit %} wyższa niż w poprzednim okresie o tej samej długości.'
-    falling: 'Średnia wilgotność z okresu {% window %} wyniosła {% mean %} {% mean_unit %} i jest o {% delta %} {% delta_unit %} niższa niż w poprzednim okresie o tej samej długości.'
-    stable: 'Średnia wilgotność z okresu {% window %} wyniosła {% mean %} {% mean_unit %} i jest zbliżona do średniej z poprzedniego okresu.'
+    delta_units: ['punkt procentowy', 'punkty procentowe', 'punktów procentowych', 'punktu procentowego']
+    unknown: 'wilgotność wynosi {% value %} procent'
+    stable: 'wilgotność utrzymuje się na poziomie {% value %} procent'
+    rising: 'wilgotność wynosi {% value %} procent i w ciągu {% window %} wzrosła o {% delta %} {% delta_unit %}'
+    falling: 'wilgotność wynosi {% value %} procent i w ciągu {% window %} spadła o {% delta %} {% delta_unit %}'
   pressure:
-    units:
-      mean: ['hektopaskal', 'hektopaskale', 'hektopaskali', 'hektopaskala']
-      delta: ['hektopaskal', 'hektopaskale', 'hektopaskali', 'hektopaskala']
-    rising: 'Średnie ciśnienie z okresu {% window %} wyniosło {% mean %} {% mean_unit %} i jest o {% delta %} {% delta_unit %} wyższe niż w poprzednim okresie o tej samej długości.'
-    falling: 'Średnie ciśnienie z okresu {% window %} wyniosło {% mean %} {% mean_unit %} i jest o {% delta %} {% delta_unit %} niższe niż w poprzednim okresie o tej samej długości.'
-    stable: 'Średnie ciśnienie z okresu {% window %} wyniosło {% mean %} {% mean_unit %} i jest zbliżone do średniej z poprzedniego okresu.'
+    delta_units: ['hektopaskal', 'hektopaskale', 'hektopaskali', 'hektopaskala']
+    unknown: 'ciśnienie atmosferyczne wynosi {% value %} hektopaskali'
+    stable: 'ciśnienie atmosferyczne utrzymuje się na poziomie {% value %} hektopaskali'
+    rising: 'ciśnienie atmosferyczne wynosi {% value %} hektopaskali i w ciągu {% window %} wzrosło o {% delta %} {% delta_unit %}'
+    falling: 'ciśnienie atmosferyczne wynosi {% value %} hektopaskali i w ciągu {% window %} spadło o {% delta %} {% delta_unit %}'

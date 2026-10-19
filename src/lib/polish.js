@@ -129,10 +129,12 @@ function genitiveCardinal(n) {
 
 /** Spell a duration with number agreement and the grammatical case required by its sentence.
  * @param {number} ms - Positive duration in milliseconds.
- * @param {'nominative'|'genitive'|'accusative'} [grammaticalCase='nominative'] - E.g. 'z okresu jednej godziny' or 'za jedną godzinę'.
+ * @param {'nominative'|'genitive'|'accusative'} [grammaticalCase='nominative'] - E.g. 'w ciągu godziny' or 'za godzinę'.
  * @returns {string|null} Spoken duration, or null when unsupported. */
 export function durationWords(ms, grammaticalCase = 'nominative') {
     if (!Number.isFinite(ms) || ms < 1000 || !['nominative', 'genitive', 'accusative'].includes(grammaticalCase)) return null
+    // A standalone hour uses the natural unnumbered form; compound durations keep their count.
+    if (ms === 3_600_000) return { nominative: 'godzina', genitive: 'godziny', accusative: 'godzinę' }[grammaticalCase]
     const units = [
         [86_400_000, 'dzień', 'dni', 'dni', 'dnia', false],
         [3_600_000, 'godzina', 'godziny', 'godzin', 'godziny', true],

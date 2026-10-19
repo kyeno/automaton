@@ -76,16 +76,27 @@ try {
     }
     await wm.init()
     wm.config = { ...wm.config, sensors: { temperature: 'Weather Test', humidity: 'Weather Test', pressure: 'Weather Test' }, history: { window: '1h', max_gap: '30m', min_coverage: 0.8 } }
+    stub(DeviceContainer, 'findByName', (name) => name === 'Weather Test' ? sensor : null)
     const tokens = wm.buildHistoryTokens(end)
-    assert.ok(tokens.temperature_history.includes('wyższa') && tokens.temperature_history.includes('2 stopnie'))
-    assert.ok(tokens.humidity_history.includes('zbliżona') && tokens.humidity_history.includes('50,5 procenta'))
-    assert.ok(tokens.pressure_history.includes('niższe') && tokens.pressure_history.includes('1 hektopaskal'))
-    assert.ok(tokens.temperature_history.includes('jednej godziny'), 'history uses declined words for the time window')
+    assert.ok(tokens.temperature_reading.includes('22') && tokens.temperature_reading.includes('wzrosła o 2 stopnie'))
+    assert.ok(tokens.humidity_reading.includes('utrzymuje się') && tokens.humidity_reading.includes('50,5'))
+    assert.ok(tokens.pressure_reading.includes('999') && tokens.pressure_reading.includes('spadło o 1 hektopaskal'))
     assert.ok(!Object.values(tokens).join('').includes('{%'), 'no unresolved trend placeholders reach the model')
-    assert.ok(Object.values(wm.buildHistoryTokens(end + 2 * HOUR)).every((value) => !value), 'stale/sparse history quietly omits claims')
+    const neutral = wm.buildHistoryTokens(end + 2 * HOUR)
+    assert.ok(neutral.temperature_reading.includes('wynosi') && !neutral.temperature_reading.includes('wzrosła o 2 stopnie'), 'stale history uses neutral current wording')
     wm.config.history.enabled = false
-    assert.ok(Object.values(wm.buildHistoryTokens(end)).every((value) => !value))
+    assert.equal(wm.buildHistoryTokens(end).temperature_reading, neutral.temperature_reading)
     wm.config.history.enabled = true
+
+    // Hourly unchanged reports remain usable with the default two-hour carry-forward.
+    wm.config.history = { window: '1h', min_coverage: 0.8 }
+    report(end + HOUR, { temperature: 22, humidity: 50.5, pressure: 999 })
+    const quiet = wm.buildHistoryTokens(end + HOUR + 50 * 60_000)
+    assert.ok(quiet.temperature_reading.includes('utrzymuje się'), 'hourly quiet temperature has a trend')
+    assert.ok(quiet.humidity_reading.includes('utrzymuje się'), 'same-device humidity has its independent trend')
+    assert.ok(!wm.buildHistoryTokens(end + 4 * HOUR).temperature_reading.includes('utrzymuje się'), 'two-hour limit still rejects stale observations')
+    now = end
+    wm.config.history.max_gap = '30m'
 
     // The existing presenter prefix and segment assembly receive finished historical facts.
     let aiPrompt = ''
@@ -97,8 +108,8 @@ try {
     await wm.execute({ trigger: 'test', force: true })
     const bundle = yamlParse(fs.readFileSync(path.resolve('etc/i18n/pl_PL/weatherman.yaml'), 'utf8'))
     assert.equal(aiPrompt.split('\n')[0], bundle.ai_prefix, 'the complete configured presenter prefix is preserved')
-    assert.ok(aiPrompt.includes('jednej godziny') && aiPrompt.includes('wyższa'), 'computed history reaches the real AI prompt')
-    assert.ok(aiPrompt.includes('za jedną godzinę'), 'next-update grammar is ready for the small model')
+    assert.ok(aiPrompt.includes('22 stopni Celsjusza i w ciągu godziny wzrosła o 2 stopnie') && !aiPrompt.includes('Średni'), 'computed history reaches the real AI prompt')
+    assert.ok(aiPrompt.includes('za godzinę'), 'next-update grammar is ready for the small model')
     assert.ok(!aiPrompt.includes('{%') && !aiPrompt.includes('{{'), 'all facts are interpolated before AI')
     const direct = []
     const unsub = EventBus.subscribe('tts:speak', (payload) => direct.push(payload.text))
@@ -106,13 +117,13 @@ try {
         stub(AiAssistant, 'processMessage', async () => { throw new Error('model unavailable') })
         await wm.execute({ trigger: 'test', force: true })
         assert.equal(direct.length, 1, 'failed AI speaks one direct report')
-        assert.ok(direct[0].includes('jednej godziny') && direct[0].includes('wyższa'), 'fallback retains historical facts')
+        assert.ok(direct[0].includes('22 stopni Celsjusza i w ciągu godziny wzrosła o 2 stopnie') && !direct[0].includes('Średni'), 'fallback retains historical facts')
         assert.ok(!direct[0].includes(bundle.ai_prefix), 'presenter instructions are never spoken by fallback')
     } finally { unsub() }
 
     await DatabaseService.close()
     await DatabaseService.init(dbFile)
-    assert.equal(wm.buildHistoryTokens(end).temperature_history, tokens.temperature_history, 'history survives SQLite reopen')
+    assert.equal(wm.buildHistoryTokens(end).temperature_reading, tokens.temperature_reading, 'history survives SQLite reopen')
     now = end + 8 * 24 * HOUR
     DatabaseService.pruneSensorSamples(7 * 24 * HOUR)
     assert.equal(stats(start, end).samples, 0, 'periodic retention bounds stored rows')
@@ -120,16 +131,27 @@ try {
     report(now, { temperature: 40 })
     assert.equal(stats(now, now + HOUR).samples, 0, 'stop releases the measurement subscription')
 
-    assert.equal(durationWords(HOUR, 'genitive'), 'jednej godziny')
+    assert.equal(durationWords(HOUR), 'godzina')
+    assert.equal(durationWords(HOUR, 'genitive'), 'godziny')
     assert.equal(durationWords(2 * HOUR, 'genitive'), 'dwóch godzin')
     assert.equal(durationWords(5 * HOUR, 'genitive'), 'pięciu godzin')
-    assert.equal(durationWords(HOUR, 'accusative'), 'jedną godzinę')
+    assert.equal(durationWords(HOUR, 'accusative'), 'godzinę')
     assert.equal(durationWords(2 * HOUR, 'accusative'), 'dwie godziny')
     assert.equal(durationWords(22 * 60_000, 'genitive'), 'dwudziestu dwóch minut')
     assert.equal(durationWords(90 * 60_000, 'genitive'), 'jednej godziny trzydziestu minut')
     assert.equal(durationWords(12 * HOUR, 'accusative'), 'dwanaście godzin')
     assert.equal(durationWords(-1), null)
     assert.equal(countedUnit(1.2, ['stopień', 'stopnie', 'stopni', 'stopnia']), 'stopnia')
+    const i18nProto = Object.getPrototypeOf(I18nLoader)
+    const originalLocale = i18nProto.getLocale
+    try {
+        i18nProto.getLocale = () => 'en_US'
+        const temporal = (await import('../src/lib/date.js')).default
+        assert.equal(temporal.getSpeechDuration(HOUR, 'genitive'), 'an hour')
+        assert.equal(temporal.getSpeechDuration(HOUR, 'accusative'), 'an hour')
+        assert.equal(temporal.getSpeechDuration(2 * HOUR), '2 hours')
+        assert.equal(temporal.getSpeechDuration(90 * 60_000), '1 hour 30 minutes')
+    } finally { i18nProto.getLocale = originalLocale }
     console.log('Sensor history, weighted SQL, Polish speech and WeatherMan integration passed')
 } finally {
     wm.cleanup()

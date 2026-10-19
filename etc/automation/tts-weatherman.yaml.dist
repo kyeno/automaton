@@ -13,7 +13,7 @@ silence_between: "2300-0600"     # Suppress execution between these local times 
 history:
   enabled: true
   window: "1h"              # compare the last hour's mean with the preceding hour
-  max_gap: "30m"            # do not carry a reading forward beyond this age
+  max_gap: "2h"             # hold quiet sensors' readings for up to two hours
   min_coverage: 0.8         # require observed coverage of at least 80% in BOTH windows
   tolerances: { temperature: 0.2, humidity: 2, pressure: 0.5 }
 

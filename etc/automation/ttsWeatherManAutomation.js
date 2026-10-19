@@ -27,8 +27,8 @@ import { interpolateTokens } from '../../src/lib/string.js'
 import { readRandomLine } from '../../src/lib/randomLine.js'
 import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import DatabaseService from '../../src/service/databaseService.js'
-import { countedUnit } from '../../src/lib/polish.js'
 import temporal from '../../src/lib/date.js'
+import { countedUnit } from '../../src/lib/polish.js'
 
 
 /** Path to this automation's YAML config file. */
@@ -202,45 +202,43 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         await this.#speak(message, meta)
     }
 
-    /** Localized history clauses from adjacent time-weighted SQL windows.
-     * Current readings remain live values; deltas explicitly describe window means.
+    /** Render current readings with trends from adjacent time-weighted windows.
+     * Quiet sensors retain their last observation up to max_gap; unknown trends stay neutral.
      * @param {number} [now=Date.now()] - Shared report instant in epoch milliseconds.
-     * @returns {Record<string, string>} Optional temperature/humidity/pressure history tokens. */
+     * @returns {Record<string, string>} Current-reading clauses and empty legacy history tokens. */
     buildHistoryTokens(now = Date.now()) {
         const tokens = { temperature_history: '', humidity_history: '', pressure_history: '' }
         const history = this.config.history ?? {}
-        if (history.enabled === false) return tokens
         const windowMs = temporal.parseDurationMs(history.window ?? '1h')
-        const maxGap = temporal.parseDurationMs(history.max_gap ?? '30m')
+        const maxGap = temporal.parseDurationMs(history.max_gap ?? '2h')
         const coverage = history.min_coverage ?? 0.8
-        if (!(windowMs > 0) || !(maxGap > 0) || !Number.isFinite(coverage) || coverage <= 0 || coverage > 1) return tokens
+        const valid = history.enabled !== false && windowMs > 0 && maxGap > 0 && Number.isFinite(coverage) && coverage > 0 && coverage <= 1
         const tolerances = { temperature: 0.2, humidity: 2, pressure: 0.5, ...history.tolerances }
-        for (const metric of Object.keys(tokens).map((key) => key.replace('_history', ''))) {
+        for (const metric of ['temperature', 'humidity', 'pressure']) {
             const device = this.config.sensors?.[metric]
             const tolerance = tolerances[metric]
-            if (typeof device !== 'string' || !Number.isFinite(tolerance) || tolerance < 0) continue
-            const query = (from, to) => DatabaseService.sensorWindowStats({ device, property: metric, from, to, maxGap })
-            const recent = query(now - windowMs, now)
-            const earlier = query(now - 2 * windowMs, now - windowMs)
-            if (![recent, earlier].every((stats) => stats && Number.isFinite(stats.mean) && stats.coverageMs >= windowMs * coverage)) continue
-            // Historical coverage alone does not establish a fresh current observation.
-            if (!Number.isFinite(recent.latestAt) || now - recent.latestAt > maxGap || recent.latestAt > now) continue
-            const delta = round(recent.mean - earlier.mean)
-            const direction = Math.abs(delta) <= tolerance ? 'stable' : delta > 0 ? 'rising' : 'falling'
-            const template = this.#resolveI18n(`weatherman.history.${metric}.${direction}`, '')
-            if (typeof template !== 'string' || !template) continue
-            const mean = round(recent.mean)
-            const difference = round(Math.abs(delta))
-            const unit = (kind, value) => {
-                const forms = this.#resolveI18n(`weatherman.history.${metric}.units.${kind}`, [])
-                return /^pl(?:_|-|$)/i.test(I18nLoader.getLocale()) ? countedUnit(value, forms) : forms[value === 1 ? 0 : 2] ?? ''
+            let direction = 'unknown'
+            let difference = 0
+            if (valid && typeof device === 'string' && Number.isFinite(tolerance) && tolerance >= 0) {
+                const query = (from, to) => DatabaseService.sensorWindowStats({ device, property: metric, from, to, maxGap })
+                const recent = query(now - windowMs, now)
+                const earlier = query(now - 2 * windowMs, now - windowMs)
+                if ([recent, earlier].every((stats) => stats && Number.isFinite(stats.mean) && stats.coverageMs >= windowMs * coverage)
+                    && Number.isFinite(recent.latestAt) && now - recent.latestAt <= maxGap && recent.latestAt <= now) {
+                    const delta = round(recent.mean - earlier.mean)
+                    difference = Math.abs(delta)
+                    direction = Math.abs(delta) <= tolerance ? 'stable' : delta > 0 ? 'rising' : 'falling'
+                }
             }
-            tokens[`${metric}_history`] = this.#interpolate(template, null, {
-                mean: I18nLoader.formatNumber(mean),
+            const template = this.#resolveI18n(`weatherman.readings.${metric}.${direction}`, '')
+            const forms = this.#resolveI18n(`weatherman.readings.${metric}.delta_units`, [])
+            const deltaUnit = /^pl(?:_|-|$)/i.test(I18nLoader.getLocale())
+                ? countedUnit(difference, forms) : forms[difference === 1 ? 0 : 2] ?? ''
+            tokens[`${metric}_reading`] = this.#interpolate(template, null, {
                 delta: I18nLoader.formatNumber(difference),
-                mean_unit: unit('mean', mean),
-                delta_unit: unit('delta', difference),
+                delta_unit: deltaUnit,
                 window: temporal.getSpeechDuration(windowMs, 'genitive') ?? temporal.millisecondsToHumanReadable(windowMs),
+                value: typeof device === 'string' ? this.#interpolate(`{{ ${device}.${metric} }}`) : 'N/A',
             })
         }
         return tokens

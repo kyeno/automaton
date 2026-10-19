@@ -143,7 +143,7 @@ sensor_history:
 history:
   enabled: true
   window: "1h"
-  max_gap: "30m"
+  max_gap: "2h"
   min_coverage: 0.8
   tolerances: { temperature: 0.2, humidity: 2, pressure: 0.5 }
 ```
@@ -167,34 +167,29 @@ points and hectopascals. Mean differences within tolerance are stable; larger on
 are rising or falling. Differences are rounded to the same one-decimal precision
 used in speech. There is no oscillation classification.
 
-The locale's `base` sentence can include these optional tokens:
+The default two-hour `max_gap` accommodates sensors that report roughly hourly or
+only when values change. A reading is held until the next report or this limit;
+no synthetic samples are inserted. Coverage means observed or held time within
+each window, not a count of reports or total process uptime. A 30-minute limit
+would leave gaps between hourly reports even after days of uptime. Increase the
+limit explicitly for devices with longer reporting intervals; silence beyond the
+limit is unknown, not evidence of stability.
 
-| Token | Description |
-|-------|-------------|
-| `{% temperature_history %}` | Complete temperature mean/comparison clause |
-| `{% humidity_history %}` | Complete humidity mean/comparison clause |
-| `{% pressure_history %}` | Complete pressure mean/comparison clause |
+The base sentence uses `{% temperature_reading %}`, `{% humidity_reading %}` and
+`{% pressure_reading %}`. Each renders the configured sensor's current value with
+neutral, stable, rising or falling wording from `readings.<metric>` in the locale
+bundle. For example: “Temperatura na zewnątrz wynosi 9,4 stopni Celsjusza i w ciągu godziny spadła o 0,8 stopnia”.
+Changes quantify the difference between adjacent time-weighted window means.
+Speech does not announce the averages themselves or append history
+sentences. Missing, disabled, stale or insufficient history uses neutral wording,
+never an assumed stable trend. Legacy `*_history` tokens resolve to empty strings.
+These clauses also work in winning-rule sentences and direct TTS / AI fallback.
 
-These tokens are also available in winning-rule sentences. Missing/disabled history,
-missing locale templates or inadequate coverage resolve to an empty clause. Existing
-current-value `{{ Device.property }}` placeholders and rule priorities keep their
-meaning. Changing a configured sensor selects a different historical series.
-
-For example: “The average temperature over the last 1 hour was 18.9 degrees Celsius;
-it fell by 0.8 degrees compared with the preceding window.” This describes a change
-between **means**, not a claimed endpoint drop within one hour. Raw current readings
-remain separately identified in the report.
-
-Clause grammar lives under `history.<metric>.rising|falling|stable` in each language
-bundle. Its `{% mean %}`, `{% delta %}`, `{% mean_unit %}`, `{% delta_unit %}` and
-`{% window %}` tokens are computed in code; the small AI model receives finished
-facts rather than numerical work. Shared Polish helpers render declined duration
-words and unit agreement. The existing prefix, opening date/clock, winning advice,
-anecdote, proverb, next-update placement and TTS framing remain the report pipeline.
-
-A fresh deployment starts collecting on its first live reports. With default
-settings, allow roughly two hours of sufficiently frequent observations before
-historical clauses can appear. Normal current-value reports continue meanwhile.
+Temperature and humidity from a combined sensor are independent database series.
+Every finite property actually present in a report is stored, including unchanged
+values; partial reports do not manufacture observations for absent properties.
+A fresh deployment needs observations spanning enough of both windows before
+trends appear. Current readings remain available during that initial period.
 
 ### Time-of-Day Periods
 
