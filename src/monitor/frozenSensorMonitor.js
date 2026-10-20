@@ -209,7 +209,7 @@ class SFrozenSensorMonitor {
 
         const pending = this.#frozen().filter((probe) => probe.emailPending)
         if (pending.length > 0) {
-            // Mail never waits for AI or quiet hours. Failed/disabled delivery remains pending.
+            // Mail uses AI when enabled, independently of quiet hours. Failed/disabled delivery remains pending.
             let outcome = null
             try { outcome = await this.#announce(pending, config, false, true) }
             catch (error) { this.#log(`Initial frozen-sensor mail failed: ${error.message}`, 'warn') }
@@ -324,7 +324,7 @@ class SFrozenSensorMonitor {
         }
         return AnnouncementPipeline.announce({
             bundle: this.#bundle(), section: 'frozen', tokens, label: LABEL,
-            useAi: speak && config.use_ai === true, speak,
+            useAi: config.use_ai === true, speak,
             emitUi: speak, emitBridge: speak,
             email: email ? { kind: 'sensor_frozen', tokens } : null,
             ttsOptions: TtsProfiles.resolve(config, (message) => this.#log(message, 'warn')),

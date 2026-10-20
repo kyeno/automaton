@@ -162,7 +162,7 @@ class SAnnouncementPipeline {
         let spoken = false
         let ui = false
 
-        if (useAi === true && speak === true) {
+        if (useAi === true) {
             if (!AiAssistant.isAvailable()) {
                 warn('use_ai enabled but the AI assistant is unavailable -- using the plain sentence')
             } else {
@@ -170,17 +170,15 @@ class SAnnouncementPipeline {
                 if (!instruction) {
                     warn(`No AI instruction for "${section}.ai" -- speaking the plain sentence instead`)
                 } else {
-                    const reply = await this.#routeThroughAi(instruction, ttsOptions, emitUi, report)
+                    const reply = await this.#routeThroughAi(instruction, ttsOptions, emitUi, report, speak)
                     if (reply) {
                         text = reply
                         via = 'ai'
-                        spoken = true
-                        ui = true
+                        spoken = speak
+                        ui = emitUi
                     }
                 }
             }
-        } else if (useAi === true) {
-            report('Speech gated off -- announcement built from the plain sentence, model bypassed', 'debug')
         }
 
         if (via === 'tts') {
@@ -203,16 +201,18 @@ class SAnnouncementPipeline {
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} ttsOptions - Framing for the model's own speech
      * @param {boolean} emitUi - Echo the instruction and the reply into the AI window
      * @param {(message: string, level?: string) => void} report - Log sink
+     * @param {boolean} speak - Whether the assistant should voice its reply
      * @returns {Promise<string>} The model's reply, or '' when the leg must fall back
      * @private
      * @async */
-    async #routeThroughAi(instruction, ttsOptions, emitUi, report) {
+    async #routeThroughAi(instruction, ttsOptions, emitUi, report, speak) {
         if (emitUi) this.#emitTranscript(SYSTEM_MESSAGE_CHANNEL, instruction)
 
         let spoken = ''
         try {
             const response = await AiAssistant.processMessage(instruction, {
                 origin: ChatMessageOrigin.SYSTEM,
+                speak,
                 tts: ttsOptions
             })
             spoken = typeof response === 'string' ? response.trim() : ''

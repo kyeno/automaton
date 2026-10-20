@@ -6,13 +6,13 @@
 #   subject   -- temat; przedrostek email.subject_prefix z automaton.yaml jest doklejany
 #   greeting  -- naglowek, zwrocony do domownika, ktory dostaje te kopie
 #   signature -- zakonczenie; linia "--" to konwencjonalny znak podpisu w mailu
-#   footer    -- linia proweniencji, mowiaca kiedy i gdzie wiadomosc powstala
 #   body      -- pelna tresc, gdy nadawca nie ma wlasnego tekstu ogloszenia
 #                (potrzebuje jej tylko sekcja 'test')
 # Placeholdery wypelniane przez serwis pocztowy przy kazdym wyslaniu:
 #   {% owner_name %}   -- imie domownika z house_owners
 #   {% owner_email %}  -- jego adres
 #   {% bot_name %}     -- imie asystenta (ai.name), "Automaton" gdy nieustawione
+#   {% short_commit_sha %} -- Git revision of the running checkout
 #   {% hostname %}     -- komputer, na ktorym dziala automat
 #   {% date %}         -- lokalny dzien kalendarzowy, "RRRR-MM-DD"
 #   {% time %}         -- lokalny czas, "GG:MM"
@@ -24,18 +24,15 @@
 gardener_stuck:
   subject: 'Zawieszony czujnik gleby: {% stuck_flowers %}'
   greeting: 'Czesc, {% owner_name %},'
-  signature: "-- \n{% bot_name %}, automatyczna obsluga domu"
-  footer: 'Wygenerowano {% date %} o {% time %} przez automat na {% hostname %}.'
+  signature: "-- \n{% bot_name %},\nAutomaton {% short_commit_sha %}"
 
 sensor_frozen:
   subject: 'Zawieszony czujnik: {% frozen_sensors %}'
   greeting: 'Czesc, {% owner_name %},'
-  signature: "-- \n{% bot_name %}, automatyczna obsluga domu"
-  footer: 'Wygenerowano {% date %} o {% time %} przez automat na {% hostname %}.'
+  signature: "-- \n{% bot_name %},\nAutomaton {% short_commit_sha %}"
 
 test:
   subject: 'Test kanalu pocztowego automatu'
   greeting: 'Czesc, {% owner_name %},'
   body: 'To jest wiadomosc testowa kanalu pocztowego automatu. Skoro ja czytasz, to serwer SMTP, adres nadawcy i lista domownikow sa ustawione prawidlowo -- nie musisz nic robic, po prostu usun te wiadomosc.'
-  signature: "-- \n{% bot_name %}, automatyczna obsluga domu"
-  footer: 'Wygenerowano {% date %} o {% time %} przez automat na {% hostname %}.'
+  signature: "-- \n{% bot_name %},\nAutomaton {% short_commit_sha %}"

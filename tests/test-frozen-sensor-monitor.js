@@ -19,6 +19,7 @@ import DeviceContainer from '../src/device/container/deviceContainer.js'
 import AiAssistant from '../src/ai/aiAssistant.js'
 import TtsService from '../src/service/ttsService.js'
 import EmailService from '../src/service/emailService.js'
+import AnnouncementPipeline from '../src/lib/announcementPipeline.js'
 import FrozenSensorMonitor, { FROZEN_SENSOR_STATE_KEY } from '../src/monitor/frozenSensorMonitor.js'
 
 const HOUR = 3_600_000
@@ -56,6 +57,7 @@ let settings = {
 const readings = new Map(Array.from({ length: 10 }, (_, i) => [`Plant ${i}`, 30 + i]))
 const mail = []
 const prompts = []
+const aiOptions = []
 const speech = []
 let ttsUp = true
 let aiUp = true
@@ -66,7 +68,7 @@ for (const level of ['debug', 'info', 'warn', 'error', 'trace']) stub(LoggerServ
 stub(ConfigService, 'get', (key, fallback) => key === 'alerts.frozen_sensors' ? settings : fallback)
 stub(DeviceContainer, 'findByName', (name) => readings.has(name) ? { getStateLast: () => ({ soil_moisture: readings.get(name) }) } : null)
 stub(AiAssistant, 'isAvailable', () => aiUp)
-stub(AiAssistant, 'processMessage', async (text) => { prompts.push(text); return aiHandler() })
+stub(AiAssistant, 'processMessage', async (text, options) => { prompts.push(text); aiOptions.push(options); return aiHandler() })
 stub(TtsService, 'isEnabled', () => ttsUp)
 stub(EmailService, 'notify', async (request) => { mail.push(request); if (mailThrow) throw new Error('SMTP request failed'); return mailAccept })
 const unsub = EventBus.subscribe('tts:speak', (payload) => speech.push(payload.text))
@@ -87,16 +89,18 @@ try {
     assert.equal(frozen().length, 10)
     assert.equal(mail.length, 1, 'ten simultaneous freezes produce ONE mail')
     assert.equal(mail[0].kind, 'sensor_frozen')
-    for (const name of readings.keys()) assert.ok(mail[0].message.includes(name), `grouped email names ${name}`)
-    assert.equal(prompts.length, 1, 'ten freezes produce one grouped AI announcement')
+    assert.equal(mail[0].message, 'Grouped AI warning', 'email body is exactly the AI response')
+    assert.equal(aiOptions[0].speak, false, 'email AI request suppresses speech')
+    assert.equal(aiOptions[1].speak, true, 'voice reminder still requests speech')
+    assert.equal(prompts.length, 2, 'ten freezes produce one grouped AI announcement')
     assert.equal(speech.length, 0, 'AI routing does not also speak plain TTS')
     assert.ok(prompts[0].includes('Plant 0') && prompts[0].includes('Plant 9'))
     await advance(14 * MINUTE)
-    assert.equal(prompts.length, 1)
+    assert.equal(prompts.length, 2)
     now += MINUTE
     timers[0].callback()
     await FrozenSensorMonitor.tick()
-    assert.equal(prompts.length, 2, 'independent timer voices the 15-minute reminder without a gardener slot')
+    assert.equal(prompts.length, 3, 'independent timer voices the 15-minute reminder without a gardener slot')
     assert.equal(mail.length, 1, 'reminders never mail')
     assert.ok(frozen().every((probe) => probe.emailPending === false), 'runtime list reflects accepted initial mail')
 
@@ -108,7 +112,7 @@ try {
     await FrozenSensorMonitor.init()
     assert.equal(frozen().length, 10)
     assert.equal(mail.length, 1, 'restart never re-mails an accepted detection')
-    assert.equal(prompts.length, 2, 'restart preserves speech cooldown')
+    assert.equal(prompts.length, 3, 'restart preserves speech cooldown')
 
     readings.set('Plant 0', 41)
     EventBus.publish('zigbee:Plant 0')
@@ -123,14 +127,14 @@ try {
     const beforeQuiet = prompts.length
     await advance(24 * HOUR)
     assert.equal(mail.length, 2, 'a later freeze of the recovered probe starts a new mailed incident')
-    assert.ok(mail.at(-1).message.includes('Plant 0'))
-    assert.equal(prompts.length, beforeQuiet, 'monitor quiet hours mute only speech')
+    assert.equal(mail.at(-1).message, 'Grouped AI warning')
+    assert.equal(prompts.length, beforeQuiet + 1, 'quiet hours still allow AI email generation')
     readings.set('Plant 0', 42)
     EventBus.publish('zigbee:Plant 0')
     assert.equal(frozen().length, 9, 'recovery still runs during quiet hours')
     settings.silence_between = null
     await FrozenSensorMonitor.tick()
-    assert.equal(prompts.length, beforeQuiet + 1, 'overdue reminder resumes after quiet hours')
+    assert.equal(prompts.length, beforeQuiet + 2, 'overdue reminder resumes after quiet hours')
     assert.equal(mail.length, 2, 'next-day sweeps of ongoing incidents do not re-mail')
 
     // A reading that changes and returns is not continuously frozen.
@@ -206,7 +210,7 @@ try {
     mailThrow = true
     const promptsBeforeMailFailure = prompts.length
     await advance(24 * HOUR)
-    assert.equal(prompts.length, promptsBeforeMailFailure + 1, 'mail failure does not block grouped speech')
+    assert.equal(prompts.length, promptsBeforeMailFailure + 2, 'mail failure does not block grouped speech')
     assert.equal(frozen()[0].emailPending, true)
     mailThrow = false
     await advance(MINUTE)
@@ -228,6 +232,21 @@ try {
     EventBus.publish('zigbee:Retry')
     assert.equal(StateService.get(FROZEN_SENSOR_STATE_KEY), undefined, 'stop removes runtime state and event subscriptions')
     assert.ok(timers.every((timer) => timer.cleared), 'stop clears every installed sweep timer')
+    // Email generation follows the same fallback contract without producing speech.
+    const speechBeforeFallbacks = speech.length
+    for (const mode of ['unavailable', 'empty', 'error']) {
+        aiUp = mode !== 'unavailable'
+        aiHandler = async () => { if (mode === 'error') throw new Error('Provider failed'); return '   ' }
+        const outcome = await AnnouncementPipeline.announce({
+            bundle: { frozen: { tts: 'Existing warning body', ai: 'Rewrite warning' } },
+            section: 'frozen', useAi: true, speak: false, emitUi: false, emitBridge: false,
+            email: { kind: 'sensor_frozen' },
+        })
+        assert.equal(outcome.text, 'Existing warning body', `${mode}: original message survives`)
+        assert.equal(mail.at(-1).message, 'Existing warning body', `${mode}: email receives original body`)
+        assert.equal(outcome.spoken, false)
+    }
+    assert.equal(speech.length, speechBeforeFallbacks, 'silent email fallback never speaks')
     console.log('Frozen sensor monitor: batching, reminders, recovery, persistence, quiet hours and failures passed')
 } finally {
     await FrozenSensorMonitor.stop()

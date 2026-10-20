@@ -30,7 +30,7 @@ The service then:
 4. Renders the **subject** (prefix + template line) and the **body** (greeting, the announcement message, signature, footer).
 5. Queues one copy per owner on a single FIFO chain and returns immediately — a slow or dead relay can never block the caller.
 
-The body wraps the supplied message with the locale greeting, signature, and footer.
+The body wraps the supplied message with the locale greeting and signature. Frozen-sensor notifications use the AI response when `use_ai` is enabled, including during quiet hours, without voicing the email request. If AI is unavailable, fails, or returns an empty reply, the existing plain TTS sentence becomes the email body. The signature places the assistant name and `Automaton {% short_commit_sha %}` on separate lines; the revision is resolved from the running checkout at startup (`unknown` when Git metadata is unavailable).
 
 Unresolved `{% placeholder %}` tokens are removed.
 

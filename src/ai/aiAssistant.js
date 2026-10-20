@@ -171,6 +171,7 @@ class SAiAssistant {
       * @param {string} userInput - The user's input message.
       * @param {Object} [options] - Optional processing options.
       * @param {'user'|'system'} [options.origin='user'] - Message authorship origin (for UI rendering).
+      * @param {boolean} [options.speak=true] - Whether to voice the reply through TTS.
       * @param {Record<string, unknown>} [options.tts] - Extra TTS server parameters forwarded verbatim into the 'tts:speak' event payload for this reply (e.g., intro/outro jingle framing); omitted when absent or not an object.
       * @returns {Promise<string>} The assistant's textual reply. */
     processMessage(userInput, options = {}) {
@@ -318,7 +319,7 @@ class SAiAssistant {
                 response = this.#maybeStripFormatting(response)
 
                 //  Emit TTS event so the decoupled TtsService can speak the response;
-                if (response) {
+                if (response && options.speak !== false) {
                     EventBus.emit('tts:speak', { text: response, ...ttsOptions })
                 }
 
@@ -345,7 +346,7 @@ class SAiAssistant {
             await this.#persistConversation()
         }
         fallback = this.#maybeStripFormatting(fallback)
-        EventBus.emit('tts:speak', { text: fallback, ...ttsOptions })
+        if (options.speak !== false) EventBus.emit('tts:speak', { text: fallback, ...ttsOptions })
         return fallback
     }
 

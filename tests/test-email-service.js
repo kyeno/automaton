@@ -19,7 +19,6 @@
  */
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
-import os from 'node:os'
 import { parse as yamlParse } from 'yaml'
 
 import ConfigService from '../src/service/configService.js'
@@ -214,8 +213,8 @@ try {
     assert(mail.text.includes('Anna'), 'the greeting addresses the owner by name')
     assert(mail.text.includes(STUCK_MESSAGE), 'the body carries the very text the speech used')
     assert(mail.text.includes('--'), 'the body carries the signature marker')
-    assert(mail.text.includes('automatyczna obsluga domu'), 'the body carries the bundle signature')
-    assert(mail.text.includes(os.hostname()), 'the footer names the machine that generated the mail')
+    assert(/Automaton,\nAutomaton (?:[a-f0-9]+|unknown)/.test(mail.text), 'signature includes assistant name, newline and checkout revision')
+    assert(!/Wygenerowano|Generated on/.test(mail.text), 'generated provenance footer is removed')
     assert(!mail.text.includes('{%'), 'no unanswered placeholder survives in a mail')
 
     await useWorkingChannel({ 'email.subject_prefix': '', 'email.cooldown': 0 })

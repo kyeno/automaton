@@ -18,6 +18,7 @@
 'use strict'
 
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import nodemailer from 'nodemailer'
@@ -35,6 +36,15 @@ import { interpolateTokens, TOKEN_INTERPOLATION_REGEX } from '../lib/string.js'
 
 /** Root directory containing per-locale i18n subdirectories. */
 const I18N_ROOT = path.join(PROJECT_ROOT, 'etc', 'i18n')
+
+/** Running checkout revision, resolved once; source archives have no Git metadata. */
+const SHORT_COMMIT_SHA = (() => {
+    try {
+        return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: PROJECT_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    } catch {
+        return 'unknown'
+    }
+})()
 
 /** Default fallback locale for email templates. */
 const DEFAULT_LOCALE = 'pl_PL'
@@ -571,6 +581,7 @@ class SEmailService {
         const name = String(ConfigService.get('ai.name') ?? '').trim()
         return {
             bot_name: name || DEFAULT_SENDER_NAME,
+            short_commit_sha: SHORT_COMMIT_SHA,
             hostname: String(os.hostname() || 'automaton'),
             date: temporal.getLocalDayString(now),
             time: temporal.formatClockTime(now),
