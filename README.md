@@ -22,6 +22,14 @@
 
 Automaton adds YAML rules, remote-button interactions, AI chat, speech, and an IRC-style terminal UI to Zigbee2MQTT. It connects through MQTT and caches device state in Redis.
 
+### Name inspiration
+
+The name **Automaton** is a personal nod to the Dwemer automatons from *The Elder Scrolls* universe.
+
+This is an independent software project and is not affiliated with, sponsored by, or endorsed by Bethesda Softworks or its affiliates.
+
+*The Elder Scrolls* and related names are trademarks of their respective owners.
+
 ## ⚠️ Experimental Software
 
 **This project is in early active development.** APIs, configuration formats, and architecture may change without notice between versions. Not recommended for production use yet — pin your version and test thoroughly before upgrading.
