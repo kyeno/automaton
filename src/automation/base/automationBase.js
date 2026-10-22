@@ -47,6 +47,10 @@ export default class AutomationBase {
     /** True while a consolidated event-triggered {@link execute} is in flight. */
     #flushing = false
 
+    /** Operations currently using AI, including queue wait, fallback and completion markers.
+     * @type {Set<string>} */
+    #aiProcessing = new Set()
+
     //  -- Constructor --------------------------------------------------------
 
     /** Construct an automation instance.
@@ -172,6 +176,27 @@ export default class AutomationBase {
      * @throws {Error} If not overridden */
     execute(triggerData = null) {
         throw new Error('Method "execute()" must be implemented in subclasses.')
+    }
+
+    /** Run an AI-enabled automation without overlapping another run of this instance.
+     * Acquire before the callback's first await; keep ownership through completion markers
+     * and fallback. Plain TTS bypasses the guard. Skipped runs are not queued for replay.
+     * @param {boolean} useAi - Whether this run is configured to use an available AI assistant
+     * @param {() => Promise<void>} run - Complete automation operation
+     * @param {string} [key='run'] - Independent operation identity (e.g. a greeter host)
+     * @returns {Promise<void>} Resolves when the operation completes or is skipped */
+    async runWithAiGuard(useAi, run, key = 'run') {
+        if (!useAi) return run()
+        if (this.#aiProcessing.has(key)) {
+            this.log(`AI-enabled operation ${key} already processing -- skipping overlapping run`, 'debug')
+            return
+        }
+        this.#aiProcessing.add(key)
+        try {
+            await run()
+        } finally {
+            this.#aiProcessing.delete(key)
+        }
     }
 
     //  -- Timer management ---------------------------------------------------

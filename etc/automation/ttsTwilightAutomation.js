@@ -87,6 +87,14 @@ export default class TtsTwilightAutomation extends RuleBasedAutomationBase {
      * @param {{trigger?: string, force?: boolean}|null} [triggerData] - Trigger info
      * @returns {Promise<void>} */
     async execute(triggerData = null) {
+        return this.runWithAiGuard(this.config?.use_ai === true && AiAssistant.isAvailable(), () => this.#executeRun(triggerData))
+    }
+
+    /** Execute one announcement run, holding the shared guard when AI is enabled.
+     * @private
+     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} triggerData - Trigger metadata
+     * @returns {Promise<void>} Resolves after output and completion bookkeeping */
+    async #executeRun(triggerData) {
         const triggerSource = String(triggerData?.trigger ?? 'unknown')
         const forced = triggerData?.force === true
         this.log(`Triggered by: ${triggerSource}`, 'info')

@@ -92,7 +92,11 @@ export default class TtsGreeterAutomation extends RuleBasedAutomationBase {
 
         for (const host of this.#candidateHosts(triggerSource)) {
             try {
-                await this.#greetIfDue(host)
+                await this.runWithAiGuard(
+                    this.config?.use_ai === true && AiAssistant.isAvailable(),
+                    () => this.#greetIfDue(host),
+                    host
+                )
             } catch (error) {
                 this.log(`Greeting evaluation failed for "${host}": ${error.message}`, 'error')
             }

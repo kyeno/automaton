@@ -562,6 +562,50 @@ try {
     }
 
     // -----------------------------------------------------------------------
+    console.log('\n-- slow AI runs hold protection through the daily marker --')
+    for (const [hour, minute] of [[DAWN_HOUR, DAWN_MINUTE], [DUSK_HOUR, DUSK_MINUTE]]) {
+        const restore = stubDate(hour, minute)
+        let releaseAi
+        let releaseMarker
+        const aiGate = new Promise(resolve => { releaseAi = resolve })
+        const markerGate = new Promise(resolve => { releaseMarker = resolve })
+        const normalSet = cacheProto.set
+        let calls = 0
+        let markerStarted = false
+        try {
+            twilight.config = cfg({ use_ai: true })
+            clearMarkers()
+            setAi({ available: true })
+            aiProto.processMessage = async () => { calls++; await aiGate; return 'announcement' }
+            cacheProto.set = async (...args) => {
+                markerStarted = true
+                await markerGate
+                return normalSet(...args)
+            }
+            const first = twilight.execute({ trigger: 'timer' })
+            for (let i = 0; i < 100 && calls === 0; i++) await new Promise(resolve => setImmediate(resolve))
+            assert(calls === 1, 'first sun-event run reaches AI')
+            await twilight.execute({ trigger: 'timer' })
+            assert(calls === 1, 'overlapping tick cannot queue another AI request')
+            releaseAi()
+            for (let i = 0; i < 100 && !markerStarted; i++) await new Promise(resolve => setImmediate(resolve))
+            assert(markerStarted, 'successful AI response reaches marker write')
+            await twilight.execute({ trigger: 'timer' })
+            assert(calls === 1, 'protection remains held during asynchronous marker write')
+            releaseMarker()
+            await first
+            await twilight.execute({ trigger: 'timer' })
+            assert(calls === 1 && markerStore.size === 1, 'completed daily marker prevents subsequent announcements')
+        } finally {
+            releaseAi()
+            releaseMarker()
+            cacheProto.set = normalSet
+            resetAi()
+            restore()
+        }
+    }
+    twilight.config = cfg()
+
     console.log('\n-- the timer is anchored to the interval boundary --')
     {
         twilight.config = cfg()

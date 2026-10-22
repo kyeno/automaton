@@ -12,9 +12,10 @@ silence_between: "2300-0600"     # Suppress execution between these local times 
 # Event-driven numeric history is independent of this automation's speech schedule.
 history:
   enabled: true
-  window: "1h"              # compare the last hour's mean with the preceding hour
+  window: "1h"              # duration of the historical baseline
+  gap: "1h"                 # baseline ends this long before the current reading
   max_gap: "2h"             # hold quiet sensors' readings for up to two hours
-  min_coverage: 0.8         # require observed coverage of at least 80% in BOTH windows
+  min_coverage: 0.8         # require observed coverage of at least 80% of the baseline
   tolerances: { temperature: 0.2, humidity: 2, pressure: 0.5 }
 
 sentence_base: 'weatherman.base'           # Always-played opening i18n key

@@ -3,6 +3,8 @@
 Announces civil dawn and actual sunset using the configured coordinates and locale.
 The template uses direct TTS; `use_ai: true` enables AI rewriting with TTS fallback.
 
+When AI is enabled and available, a shared processing guard skips overlapping runs of this automation until the current run finishes, including queue wait, TTS fallback and completion bookkeeping. Plain TTS bypasses this guard.
+
 ## How It Works
 
 - A minute-aligned timer checks today's solar events.

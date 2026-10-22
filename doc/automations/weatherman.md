@@ -2,6 +2,8 @@
 
 TTS Weather Man combines live sensor values with locale templates and the highest-priority matching rule. It speaks directly or uses AI rewriting with TTS fallback.
 
+When AI is enabled and available, a shared processing guard skips overlapping runs of this automation until the current run finishes, including queue wait, TTS fallback and completion bookkeeping. Plain TTS bypasses this guard.
+
 ## How It Works
 
 1. On each timer tick, the automation loads its locale-specific i18n bundle (`etc/i18n/{locale}/weatherman.yaml`).
@@ -12,6 +14,12 @@ TTS Weather Man combines live sensor values with locale templates and the highes
 If **neither** the AI pipeline nor the TTS server is available, the run is skipped entirely before any context build or device reads. A run with exactly one of the two available still proceeds.
 
 The clock-phrase pre-rendering, day-position markers (first/last/only/next), calendar-date fusion, and the proverb segment are rendering mechanics — see [Weatherman Speech Rendering](../architecture/weatherman-speech-rendering.md).
+
+Local illuminance and human sky labels can be archived independently using
+`/weather sunny`, `/weather cloudy` and `/weather overcast`. See
+[Local daylight learning](../services/daylight.md) for the recording flag,
+undo/export workflow and proposed classifier. Collection currently adds no sky
+classification to Weatherman speech.
 
 ### Segment order
 
@@ -142,7 +150,8 @@ sensor_history:
 # In etc/automation/tts-weatherman.yaml:
 history:
   enabled: true
-  window: "1h"
+  window: "1h"   # baseline duration
+  gap: "1h"      # baseline ends one hour before now
   max_gap: "2h"
   min_coverage: 0.8
   tolerances: { temperature: 0.2, humidity: 2, pressure: 0.5 }
@@ -155,22 +164,28 @@ falls back to seven days. Disabling recording leaves existing data queryable unt
 retention removes it. Database failures leave current-value weather reports usable;
 missing observations are not backfilled.
 
-At announcement time, two adjacent windows are queried: `[now-2W, now-W)` and
-`[now-W, now)`. Means are **time-weighted**, holding each observation until the next
-report or `max_gap`, whichever comes first. SQL clips intervals to window boundaries
-and does not fill stale gaps indefinitely. A plain average would over-weight periods
-with frequent sensor reports. Both windows need `min_coverage` (default 80%), and the
-latest observation must be no older than `max_gap`.
+At announcement time, the current sensor reading is compared with the historical
+baseline `[now-gap-window, now-gap)`. With the defaults, an 18:00 report compares
+the current reading against observations from 16:00 to 17:00. The most recent hour
+is excluded from the baseline. `window` controls baseline duration; `gap` controls
+how far back it ends and may be zero.
+
+The baseline mean is **time-weighted**: each observation counts for how long it
+lasted, until the next report or `max_gap`, whichever comes first. SQL clips intervals
+to baseline boundaries and does not fill stale gaps indefinitely. Frequent reports
+do not receive extra weight. The baseline needs `min_coverage` (default 80%), and
+the latest observation of the current property must be no older than `max_gap`.
+The current device value must also be finite. Invalid settings leave trends neutral.
 
 The tolerances are in each measurement's units: degrees Celsius, humidity percentage
-points and hectopascals. Mean differences within tolerance are stable; larger ones
+points and hectopascals. Current-minus-baseline differences within tolerance are stable; larger ones
 are rising or falling. Differences are rounded to the same one-decimal precision
 used in speech. There is no oscillation classification.
 
 The default two-hour `max_gap` accommodates sensors that report roughly hourly or
 only when values change. A reading is held until the next report or this limit;
 no synthetic samples are inserted. Coverage means observed or held time within
-each window, not a count of reports or total process uptime. A 30-minute limit
+the baseline, not a count of reports or total process uptime. A 30-minute limit
 would leave gaps between hourly reports even after days of uptime. Increase the
 limit explicitly for devices with longer reporting intervals; silence beyond the
 limit is unknown, not evidence of stability.
@@ -178,8 +193,10 @@ limit is unknown, not evidence of stability.
 The base sentence uses `{% temperature_reading %}`, `{% humidity_reading %}` and
 `{% pressure_reading %}`. Each renders the configured sensor's current value with
 neutral, stable, rising or falling wording from `readings.<metric>` in the locale
-bundle. For example: “Temperatura na zewnątrz wynosi 9,4 stopni Celsjusza i w ciągu godziny spadła o 0,8 stopnia”.
-Changes quantify the difference between adjacent time-weighted window means.
+bundle. For example: “Temperatura na zewnątrz wynosi 9,4 stopni Celsjusza i w ciągu jednej godziny trzydziestu minut spadła o 0,8 stopnia”.
+Changes quantify the difference between the current reading and the baseline mean.
+Existing speech templates are retained; their duration uses the baseline midpoint
+(`gap + window / 2`, 90 minutes by default), an approximate reference age.
 Speech does not announce the averages themselves or append history
 sentences. Missing, disabled, stale or insufficient history uses neutral wording,
 never an assumed stable trend. Legacy `*_history` tokens resolve to empty strings.
@@ -188,7 +205,7 @@ These clauses also work in winning-rule sentences and direct TTS / AI fallback.
 Temperature and humidity from a combined sensor are independent database series.
 Every finite property actually present in a report is stored, including unchanged
 values; partial reports do not manufacture observations for absent properties.
-A fresh deployment needs observations spanning enough of both windows before
+A fresh deployment needs observations covering enough of the historical baseline before
 trends appear. Current readings remain available during that initial period.
 
 ### Time-of-Day Periods

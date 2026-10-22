@@ -11,6 +11,7 @@ import ConfigService from './configService.js'
 import DatabaseService from './databaseService.js'
 import EventBus from './eventBus.js'
 import temporal from '../lib/date.js'
+import DaylightService from './daylightService.js'
 
 /** Numeric measurements recorded by default; battery/link quality are intentionally excluded. */
 const DEFAULT_PROPERTIES = ['temperature', 'humidity', 'pressure']
@@ -26,6 +27,7 @@ class SSensorHistoryService {
     async init() {
         if (this.#unsubscribe) return
         this.#unsubscribe = EventBus.subscribe('device:stateReported', (report) => {
+            DaylightService.record(report)
             const config = ConfigService.get('sensor_history', {})
             if (config.enabled === false) return
             const properties = Array.isArray(config.properties) ? config.properties : DEFAULT_PROPERTIES

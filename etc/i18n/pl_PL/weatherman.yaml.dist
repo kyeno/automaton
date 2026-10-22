@@ -84,3 +84,8 @@ readings:
     stable: 'ciśnienie atmosferyczne utrzymuje się na poziomie {% value %} hektopaskali'
     rising: 'ciśnienie atmosferyczne wynosi {% value %} hektopaskali i w ciągu {% window %} wzrosło o {% delta %} {% delta_unit %}'
     falling: 'ciśnienie atmosferyczne wynosi {% value %} hektopaskali i w ciągu {% window %} spadło o {% delta %} {% delta_unit %}'
+
+# Qualified local sky estimates; unknown is omitted.
+sky_sunny: 'Poziom światła sugeruje przeważnie bezchmurne niebo.'
+sky_cloudy: 'Poziom światła sugeruje częściowe zachmurzenie.'
+sky_overcast: 'Poziom światła sugeruje całkowite zachmurzenie.'

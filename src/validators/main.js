@@ -37,6 +37,24 @@ export default {
         }
     },
 
+    daylight: {
+        type: 'object',
+        properties: {
+            recording_enabled: { type: 'boolean' },
+            announcements_enabled: { type: 'boolean' },
+            sensors: { type: 'array', items: { type: 'object', properties: {
+                id: { type: 'string', required: true },
+                device: { type: 'string', required: true },
+                property: { type: 'string', required: true },
+                installation: { type: 'string', required: true },
+                azimuth_degrees: { type: 'number' },
+                tilt_degrees: { type: 'number' },
+                max_lux: { type: 'number' },
+                max_age_seconds: { type: 'number' }
+            } } }
+        }
+    },
+
     sensor_history: {
         type: 'object',
         properties: {

@@ -2,6 +2,8 @@
 
 TTS Greeter announces when a configured host returns online. YAML windows select a greeting from the recorded absence duration.
 
+When AI is enabled and available, a shared processing guard skips overlapping greetings for the same host. Different hosts remain independent. Plain TTS bypasses this guard.
+
 ## How It Works
 
 1. On `network:<host>` events, greet only hosts that are currently online. Timer/forced runs check all configured hosts.

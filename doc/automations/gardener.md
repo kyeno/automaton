@@ -11,7 +11,7 @@ Standard probes use the `soil_moisture` state property. The rule condition key i
 2. Evaluate bands top-down per plant; first match wins. Report the worst band's message and list unhealthy plants, driest first.
 3. Event reports require worsening into a `reactive: true` band. Recovery lowers the baseline silently. Failed or cooled reports do not consume an escalation.
 4. `event_cooldown` limits garden-wide event speech (default `5m`). Scheduled and manual reports bypass it.
-5. `announce_times` slots report once per day using Redis markers. An in-flight set prevents overlapping reports; markers are written after successful speech.
+5. `announce_times` slots report once per day using Redis markers. The shared AI processing guard prevents overlapping AI-enabled reports; markers are written after successful speech. Plain TTS bypasses the guard.
 6. Manual runs speak immediately. Forced runs also bypass `silence_between` and do not consume slot markers.
 7. `use_ai: false` speaks plain TTS; `true` uses AI with plain-TTS fallback on failure or empty replies. Runs skip when both channels are unavailable.
 ## Configuration

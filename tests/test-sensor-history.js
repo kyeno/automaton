@@ -69,7 +69,7 @@ try {
     report(start + 60 * 60_000, { temperature: null, humidity: 'wrong', pressure: true })
     assert.equal(stats(start, start + HOUR).max, 20, 'invalid values do not enter numeric history')
 
-    // Adjacent complete windows: rising temperature, stable humidity and falling pressure.
+    // Current readings versus the older baseline: rising temperature, stable humidity and falling pressure.
     const end = start + 3 * HOUR
     for (let i = 0; i <= 12; i++) {
         report(start + HOUR + i * 10 * 60_000, { temperature: i < 6 ? 20 : 22, humidity: i < 6 ? 50 : 50.5, pressure: i < 6 ? 1000 : 999 })
@@ -82,6 +82,35 @@ try {
     assert.ok(tokens.humidity_reading.includes('utrzymuje się') && tokens.humidity_reading.includes('50,5'))
     assert.ok(tokens.pressure_reading.includes('999') && tokens.pressure_reading.includes('spadło o 1 hektopaskal'))
     assert.ok(!Object.values(tokens).join('').includes('{%'), 'no unresolved trend placeholders reach the model')
+    assert.ok(tokens.temperature_reading.includes('jednej godziny trzydziestu minut'), 'speech duration represents the baseline midpoint without changing templates')
+    assert.equal(DatabaseService.sensorLatestSample({ device: 'Weather Test', property: 'temperature', at: end }).timestamp, end)
+    assert.equal(DatabaseService.sensorLatestSample({ device: 'Weather Test', property: 'missing', at: end }), null)
+    assert.equal(DatabaseService.sensorLatestSample({ device: 'Weather Test', property: 'temperature', at: start + 10 * 60_000 }).value, 10, 'future samples are excluded')
+
+    // A change right now must not be averaged away by the preceding hour.
+    report(end, { temperature: 25, humidity: 55, pressure: 998 })
+    const changed = wm.buildHistoryTokens(end)
+    assert.ok(changed.temperature_reading.includes('wzrosła o 5 stopni'), 'delta uses the current temperature, not the recent-hour mean')
+    assert.ok(changed.humidity_reading.includes('wzrosła o 5 punktów procentowych'), 'humidity uses its current reading')
+    assert.ok(changed.pressure_reading.includes('spadło o 2 hektopaskale'), 'pressure uses its current reading')
+    wm.config.history.gap = '0m'
+    assert.ok(wm.buildHistoryTokens(end).temperature_reading.includes('wzrosła o 3 stopnie'), 'zero gap compares current reading against the last-hour baseline')
+    wm.config.history.gap = '2h'
+    assert.ok(wm.buildHistoryTokens(end).temperature_reading.includes('wzrosła o 13,3 stopnia'), 'configurable gap selects the older time-weighted baseline')
+    wm.config.history.gap = '1h'
+    wm.config.history.window = '4h'
+    assert.ok(wm.buildHistoryTokens(end).temperature_reading.includes('wynosi') && !wm.buildHistoryTokens(end).temperature_reading.includes('wzrosła'), 'baseline with insufficient coverage stays neutral')
+    wm.config.history.window = '1h'
+    for (const invalid of ['nonsense', '-1h']) {
+        wm.config.history.gap = invalid
+        assert.ok(!wm.buildHistoryTokens(end).temperature_reading.includes('wzrosła'), 'invalid gap does not invent a trend')
+    }
+    wm.config.history.gap = '1h'
+    const state = sensor.getStateLast()
+    stub(DeviceContainer, 'findByName', () => ({ getStateLast: () => ({ ...state, temperature: null }) }))
+    assert.ok(!wm.buildHistoryTokens(end).temperature_reading.includes('wzrosła'), 'missing current value cannot create a trend')
+    stub(DeviceContainer, 'findByName', (name) => name === 'Weather Test' ? sensor : null)
+    report(end, { temperature: 22, humidity: 50.5, pressure: 999 })
     const neutral = wm.buildHistoryTokens(end + 2 * HOUR)
     assert.ok(neutral.temperature_reading.includes('wynosi') && !neutral.temperature_reading.includes('wzrosła o 2 stopnie'), 'stale history uses neutral current wording')
     wm.config.history.enabled = false
@@ -108,7 +137,7 @@ try {
     await wm.execute({ trigger: 'test', force: true })
     const bundle = yamlParse(fs.readFileSync(path.resolve('etc/i18n/pl_PL/weatherman.yaml'), 'utf8'))
     assert.equal(aiPrompt.split('\n')[0], bundle.ai_prefix, 'the complete configured presenter prefix is preserved')
-    assert.ok(aiPrompt.includes('22 stopni Celsjusza i w ciągu godziny wzrosła o 2 stopnie') && !aiPrompt.includes('Średni'), 'computed history reaches the real AI prompt')
+    assert.ok(aiPrompt.includes('22 stopni Celsjusza i w ciągu jednej godziny trzydziestu minut wzrosła o 2 stopnie') && !aiPrompt.includes('Średni'), 'computed history reaches the real AI prompt')
     assert.ok(aiPrompt.includes('za godzinę'), 'next-update grammar is ready for the small model')
     assert.ok(!aiPrompt.includes('{%') && !aiPrompt.includes('{{'), 'all facts are interpolated before AI')
     const direct = []
@@ -117,7 +146,7 @@ try {
         stub(AiAssistant, 'processMessage', async () => { throw new Error('model unavailable') })
         await wm.execute({ trigger: 'test', force: true })
         assert.equal(direct.length, 1, 'failed AI speaks one direct report')
-        assert.ok(direct[0].includes('22 stopni Celsjusza i w ciągu godziny wzrosła o 2 stopnie') && !direct[0].includes('Średni'), 'fallback retains historical facts')
+        assert.ok(direct[0].includes('22 stopni Celsjusza i w ciągu jednej godziny trzydziestu minut wzrosła o 2 stopnie') && !direct[0].includes('Średni'), 'fallback retains historical facts')
         assert.ok(!direct[0].includes(bundle.ai_prefix), 'presenter instructions are never spoken by fallback')
     } finally { unsub() }
 

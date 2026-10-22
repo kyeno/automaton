@@ -78,3 +78,8 @@ readings:
     stable: 'atmospheric pressure holds steady at {% value %} hectopascals'
     rising: 'atmospheric pressure is {% value %} hectopascals and has risen by {% delta %} {% delta_unit %} over {% window %}'
     falling: 'atmospheric pressure is {% value %} hectopascals and has fallen by {% delta %} {% delta_unit %} over {% window %}'
+
+# Qualified local sky estimates; unknown is omitted.
+sky_sunny: 'Light levels suggest mostly clear skies.'
+sky_cloudy: 'Light levels suggest mixed cloud cover.'
+sky_overcast: 'Light levels suggest overcast skies.'

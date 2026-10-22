@@ -19,6 +19,28 @@ sensor_history:
   properties: [temperature, humidity, pressure]
   retention: "7d"
 
+# Durable calibration archive, independent of sensor_history retention and TTS.
+# Enable recording and configure your own sensor before using /weather sunny.
+# Raw reports and labels are retained indefinitely; see doc/services/daylight.md.
+daylight:
+  announcements_enabled: false # Weatherman use; requires a fitted model
+  recording_enabled: false
+  sensors:
+    - id: balcony_east
+      device: 'Outdoor Luminance'
+      property: illuminance
+      installation: balcony-east-v1
+      azimuth_degrees: 90  # sensing face, clockwise from north
+      tilt_degrees: 90     # 0 = upward horizontal, 90 = vertical
+      max_age_seconds: 300 # set from actual reporting cadence
+      # max_lux: 65535     # set only after checking the device range
+    # - id: balcony_west
+    #   device: 'West Luminance'
+    #   property: illuminance
+    #   installation: balcony-west-v1
+    #   azimuth_degrees: 270
+    #   tilt_degrees: 90
+
 # --- AI: provider + conversation settings (API secret stays in .env)
 ai:
   model: gemma-4-E2B-it      # required for chat requests

@@ -56,13 +56,6 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
      * @type {number|null} */
     #lastSpokenAt = null
 
-    /** Announce slots whose report is currently in flight (AI/TTS call running). In-memory
-     *  only: a restart clears it, and the Redis once-marker (set on success) is the
-     *  authoritative cross-restart copy. Prevents a slow call from letting the next tick
-     *  re-fire the same slot inside its grace window.
-     * @type {Set<string>} */
-    #inFlightSlots = new Set()
-
     //  -- Construction & lifecycle ------------------------------------------
 
     /** Fixed identity constructor -- name and config path are constants of this automation. */
@@ -81,6 +74,14 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
     /** Main execution flow. Classifies the trigger into one of three kinds and routes:
      * @param {{trigger?: string, force?: boolean}|null} [triggerData] - Trigger info; */
     async execute(triggerData = null) {
+        return this.runWithAiGuard(this.config?.use_ai === true && AiAssistant.isAvailable(), () => this.#executeRun(triggerData))
+    }
+
+    /** Execute one announcement run, holding the shared guard when AI is enabled.
+     * @private
+     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} triggerData - Trigger metadata
+     * @returns {Promise<void>} Resolves after output and completion bookkeeping */
+    async #executeRun(triggerData) {
         const triggerSource = String(triggerData?.trigger ?? 'unknown')
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
@@ -115,28 +116,13 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
                 this.log('Timer tick with no announce slot due -- staying quiet', 'debug')
                 return
             }
-            //  In-flight guard: a slot's report can take longer than the tick interval (a slow
-            //  AI call), so the next tick inside the grace window would otherwise see the
-            //  once-marker still unset and launch a duplicate. Mark the slot in flight now and
-            //  release it in the finally below; the Redis once-marker (set on success) remains
-            //  the authoritative cross-restart copy.
-            if (this.#inFlightSlots.has(dueSlot)) {
-                this.log(`Slot ${dueSlot} report already in flight -- staying quiet`, 'debug')
-                return
-            }
-            this.#inFlightSlots.add(dueSlot)
             this.log(`Scheduled status report for slot ${dueSlot}`, 'info')
         }
 
-        try {
-            await this.#runReport(kind, dueSlot)
-        } finally {
-            if (dueSlot != null) this.#inFlightSlots.delete(dueSlot)
-        }
+        await this.#runReport(kind, dueSlot)
     }
 
-    /** Evaluate the garden and voice the report for this run. Holds everything after the
-     *  slot's in-flight guard is taken: the event cooldown, the readings, the per-flower
+    /** Evaluate the garden and voice the report for this run. Includes the event cooldown, the readings, the per-flower
      *  banding, the event worsening gate, the speech, and the slot's once-marker. Runs for
      *  all three trigger kinds; `dueSlot` is non-null only for slot runs.
      * @private
@@ -362,13 +348,12 @@ export default class TtsGardenerAutomation extends RuleBasedAutomationBase {
         return outcome.spoken
     }
 
-    /** Clear in-memory severity, cooldown and in-flight slot state.
+    /** Clear in-memory severity and cooldown state.
      * Daily slot markers remain in Redis across restarts.
      * @returns {void} */
     resetState() {
         this.#lastAnnouncedSeverity.clear()
         this.#lastSpokenAt = null
-        this.#inFlightSlots.clear()
     }
 
     //  -- Config & bundle helpers ---------------------------------------------

@@ -205,6 +205,22 @@ class SDatabaseService {
         }
     }
 
+    /** Latest numeric observation at or before a report instant, independently per property.
+     * @param {{device: string, property: string, at: number}} query - Series and report instant.
+     * @returns {{value: number, timestamp: number}|null} Observation, or null when unavailable. */
+    sensorLatestSample({ device, property, at }) {
+        if (!this.isAvailable() || !Number.isFinite(at)) return null
+        try {
+            return this.#db.prepare(`
+                SELECT value, ts_ms AS timestamp FROM sensor_samples
+                WHERE device = ? AND property = ? AND ts_ms <= ? ORDER BY ts_ms DESC LIMIT 1
+            `).get(device, property, at) ?? null
+        } catch (error) {
+            this.#log('warn', `Latest sensor observation query failed: ${error.message}`)
+            return null
+        }
+    }
+
     /** Bound numeric history independently of transition retention.
      * @param {number} retentionMs - Maximum history age.
      * @returns {boolean} Whether pruning succeeded. */
@@ -321,6 +337,69 @@ class SDatabaseService {
 
     //  -- Internal ---------------------------------------------------------
 
+    /** Append immutable daylight evidence or a human-label audit event.
+     * @param {string} kind - sample, observation or undo.
+     * @param {object} payload - Versioned JSON evidence.
+     * @returns {number|null} Durable event identifier, or null on failure. */
+    recordDaylightEvent(kind, payload) {
+        if (!this.isAvailable()) return null
+        try {
+            const result = this.#db.prepare('INSERT INTO daylight_events (kind, payload) VALUES (?, ?)')
+                .run(kind, JSON.stringify(payload))
+            return Number(result.lastInsertRowid)
+        } catch (error) {
+            this.#log('warn', `Daylight archive write failed: ${error.message}`)
+            return null
+        }
+    }
+
+    /** Read a bounded page of calibration events in insertion order.
+     * @param {number} [after=0] - Exclusive event cursor.
+     * @param {number} [limit=1000] - Maximum events per page.
+     * @returns {object[]|null} Events, or null when storage failed. */
+    daylightEvents(after = 0, limit = 1000) {
+        if (!this.isAvailable()) return null
+        try {
+            return this.#db.prepare('SELECT id, kind, payload FROM daylight_events WHERE id > ? ORDER BY id LIMIT ?')
+                .all(after, Math.max(1, Math.min(10000, limit)))
+                .map(row => ({ id: Number(row.id), kind: row.kind, ...JSON.parse(row.payload) }))
+        } catch (error) {
+            this.#log('warn', `Daylight archive read failed: ${error.message}`)
+            return null
+        }
+    }
+
+    /** Read human observation and undo events, without loading raw history.
+     * @returns {object[]|null} Audit events or null on failure. */
+    daylightLabels() {
+        return this.#daylightQuery("kind IN ('observation', 'undo')", [])
+    }
+
+    /** Read real reports in a bounded past window; no future evidence is included.
+     * @param {number} from - Inclusive start in epoch milliseconds.
+     * @param {number} to - Inclusive end in epoch milliseconds.
+     * @returns {object[]|null} Samples ordered by report time. */
+    daylightSamples(from, to) {
+        return this.#daylightQuery("kind = 'sample' AND json_extract(payload, '$.timestamp') BETWEEN ? AND ?", [from, to])
+            ?.sort((a, b) => a.timestamp - b.timestamp) ?? null
+    }
+
+    /** Decode archive rows with a fixed internal predicate.
+     * @private
+     * @param {string} predicate - Internal SQL predicate.
+     * @param {Array} params - Bound parameters.
+     * @returns {object[]|null} Decoded events. */
+    #daylightQuery(predicate, params) {
+        if (!this.isAvailable()) return null
+        try {
+            return this.#db.prepare(`SELECT id, kind, payload FROM daylight_events WHERE ${predicate} ORDER BY id`)
+                .all(...params).map(row => ({ id: Number(row.id), kind: row.kind, ...JSON.parse(row.payload) }))
+        } catch (error) {
+            this.#log('warn', `Daylight query failed: ${error.message}`)
+            return null
+        }
+    }
+
     /** Total number of stored transition rows (0 when unavailable or unreadable). @private */
     #rowCount() {
         if (!this.isAvailable()) return 0
@@ -347,6 +426,12 @@ class SDatabaseService {
     /** Create tables + index if missing. @private */
     #createSchema() {
         this.#db.exec(`
+            CREATE TABLE IF NOT EXISTS daylight_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_daylight_time ON daylight_events (kind, json_extract(payload, '$.timestamp'));
             CREATE TABLE IF NOT EXISTS state_events (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts_ms      INTEGER NOT NULL,

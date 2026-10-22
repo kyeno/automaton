@@ -27,6 +27,7 @@ import { interpolateTokens } from '../../src/lib/string.js'
 import { readRandomLine } from '../../src/lib/randomLine.js'
 import TtsProfiles from '../../src/lib/ttsProfiles.js'
 import DatabaseService from '../../src/service/databaseService.js'
+import DaylightService from '../../src/service/daylightService.js'
 import temporal from '../../src/lib/date.js'
 import { countedUnit } from '../../src/lib/polish.js'
 
@@ -74,6 +75,14 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
     /** Custom execute that builds a speech message and sends it to TTS.
      * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} [triggerData] - */
     async execute(triggerData = null) {
+        return this.runWithAiGuard(this.config?.use_ai !== false && AiAssistant.isAvailable(), () => this.#executeRun(triggerData))
+    }
+
+    /** Execute one announcement run, holding the shared guard when AI is enabled.
+     * @private
+     * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}|null} triggerData - Trigger metadata
+     * @returns {Promise<void>} Resolves after output and completion bookkeeping */
+    async #executeRun(triggerData) {
         const triggerSource = triggerData?.trigger ?? 'unknown'
         this.log(`Triggered by: ${triggerSource}`, 'info')
 
@@ -198,11 +207,32 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             }
         }
 
+        const sky = this.buildSkyReading(now.getTime())
+        if (sky) message += ' ' + sky
+
         //  Route output through AI->TTS or direct TTS.
         await this.#speak(message, meta)
     }
 
-    /** Render current readings with trends from adjacent time-weighted windows.
+    /** Consume qualified sky evidence independently of comfort-rule priority.
+     * @param {number} [at=Date.now()] - Evaluation instant.
+     * @returns {string} Localized sentence, or empty when disabled/unknown/stale. */
+    buildSkyReading(at = Date.now()) {
+        if (DaylightService.config().announcements_enabled !== true) return ''
+        try {
+            const estimate = DaylightService.estimate(at)
+            if (!['sunny', 'cloudy', 'overcast'].includes(estimate?.state) || !estimate.modelVersion
+                || !Number.isFinite(estimate.timestamp) || estimate.timestamp > at || at - estimate.timestamp > 300000
+                || !Number.isFinite(estimate.evidenceAgeMs) || estimate.evidenceAgeMs < 0
+                || estimate.evidenceAgeMs + at - estimate.timestamp > 300000) return ''
+            return this.#resolveI18n(`weatherman.sky_${estimate.state}`, '')
+        } catch (error) {
+            this.log(`Sky estimate unavailable: ${error.message}`, 'warn')
+            return ''
+        }
+    }
+
+    /** Render current readings against an older time-weighted baseline.
      * Quiet sensors retain their last observation up to max_gap; unknown trends stay neutral.
      * @param {number} [now=Date.now()] - Shared report instant in epoch milliseconds.
      * @returns {Record<string, string>} Current-reading clauses and empty legacy history tokens. */
@@ -210,9 +240,11 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
         const tokens = { temperature_history: '', humidity_history: '', pressure_history: '' }
         const history = this.config.history ?? {}
         const windowMs = temporal.parseDurationMs(history.window ?? '1h')
+        const gapMs = temporal.parseDurationMs(history.gap ?? '1h')
+        const comparisonMs = gapMs + windowMs / 2
         const maxGap = temporal.parseDurationMs(history.max_gap ?? '2h')
         const coverage = history.min_coverage ?? 0.8
-        const valid = history.enabled !== false && windowMs > 0 && maxGap > 0 && Number.isFinite(coverage) && coverage > 0 && coverage <= 1
+        const valid = history.enabled !== false && windowMs > 0 && gapMs !== null && gapMs >= 0 && maxGap > 0 && Number.isFinite(coverage) && coverage > 0 && coverage <= 1
         const tolerances = { temperature: 0.2, humidity: 2, pressure: 0.5, ...history.tolerances }
         for (const metric of ['temperature', 'humidity', 'pressure']) {
             const device = this.config.sensors?.[metric]
@@ -220,12 +252,15 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             let direction = 'unknown'
             let difference = 0
             if (valid && typeof device === 'string' && Number.isFinite(tolerance) && tolerance >= 0) {
-                const query = (from, to) => DatabaseService.sensorWindowStats({ device, property: metric, from, to, maxGap })
-                const recent = query(now - windowMs, now)
-                const earlier = query(now - 2 * windowMs, now - windowMs)
-                if ([recent, earlier].every((stats) => stats && Number.isFinite(stats.mean) && stats.coverageMs >= windowMs * coverage)
-                    && Number.isFinite(recent.latestAt) && now - recent.latestAt <= maxGap && recent.latestAt <= now) {
-                    const delta = round(recent.mean - earlier.mean)
+                const baseline = DatabaseService.sensorWindowStats({
+                    device, property: metric, from: now - gapMs - windowMs, to: now - gapMs, maxGap,
+                })
+                const latest = DatabaseService.sensorLatestSample({ device, property: metric, at: now })
+                const current = DeviceContainer.findByName(device)?.getStateLast()?.[metric]
+                if (baseline && Number.isFinite(baseline.mean) && baseline.coverageMs >= windowMs * coverage
+                    && latest && now - latest.timestamp <= maxGap && latest.timestamp <= now
+                    && Number.isFinite(current)) {
+                    const delta = round(current - baseline.mean)
                     difference = Math.abs(delta)
                     direction = Math.abs(delta) <= tolerance ? 'stable' : delta > 0 ? 'rising' : 'falling'
                 }
@@ -237,7 +272,7 @@ export default class TtsWeatherManAutomation extends RuleBasedAutomationBase {
             tokens[`${metric}_reading`] = this.#interpolate(template, null, {
                 delta: I18nLoader.formatNumber(difference),
                 delta_unit: deltaUnit,
-                window: temporal.getSpeechDuration(windowMs, 'genitive') ?? temporal.millisecondsToHumanReadable(windowMs),
+                window: temporal.getSpeechDuration(comparisonMs, 'genitive') ?? temporal.millisecondsToHumanReadable(comparisonMs),
                 value: typeof device === 'string' ? this.#interpolate(`{{ ${device}.${metric} }}`) : 'N/A',
             })
         }
