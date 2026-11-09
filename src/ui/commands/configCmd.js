@@ -13,6 +13,9 @@ import I18nLoader from '../../service/i18nLoader.js'
 import TtsService from '../../service/ttsService.js'
 import AiAssistant from '../../ai/aiAssistant.js'
 import SequenceContainer from '../../sequence/container/sequenceContainer.js'
+import IRCommandService from '../../ir/irCommandService.js'
+import HostCommandService from '../../host/hostCommandService.js'
+import VirtualDeviceService from '../../ai/virtualDeviceService.js'
 import channels from '../channels.js'
 
 
@@ -243,16 +246,26 @@ class ConfigCmd extends CommandBase {
             refreshed.push('TTS skipped (not initialized / disabled by env)')
         }
 
-        if ((changed.has('ai') || localeChanged || i18nBundleMoved) && AiAssistant.isReady()) {
-            const r = await AiAssistant.resetConversation()
-            if (r.reset) refreshed.push(`AI conversation cleared (${r.dropped} message(s))`)
-        }
+        let aiPromptChanged = changed.has('ai') || localeChanged || i18nBundleMoved
 
         //  Sequences live in their own file (etc/sequence/sequences.yaml), so they are probed on every
         //  successful reload whenever the container took part in bootstrap -- engaged loops stop
         //  gracefully first, then the registry is rebuilt so added/renamed/removed definitions take
         //  effect without a restart. An unreadable file keeps the current registry intact; processes
         //  that never initialized the container stay silent here (same convention as i18n/TTS above).
+        if (IRCommandService.isInitialized()) {
+            const r = await IRCommandService.reload()
+            refreshed.push(r.ok ? `IR commands reloaded -- ${r.loaded} registered` : `IR commands kept as-is: ${r.error}`)
+        }
+        if (HostCommandService.isInitialized()) {
+            const r = await HostCommandService.reload()
+            //  Target count alone is not enough to act on: a target whose secret_env is unset
+            //  accepts nothing. listTargets() reports readiness without ever exposing the secret.
+            const ready = HostCommandService.listTargets().filter((t) => t.ready).length
+            refreshed.push(r.ok
+                ? `host commands reloaded -- ${r.enabled ? `${r.targets} target(s), ${ready} ready` : 'disabled'}`
+                : `host commands kept as-is: ${r.error}`)
+        }
         if (SequenceContainer.isInitialized()) {
             const r = await SequenceContainer.reloadSequences()
             if (!r.ok) {
@@ -266,6 +279,15 @@ class ConfigCmd extends CommandBase {
                     ? `sequences reloaded -- ${r.loaded} registered (${moved.join(' / ')})`
                     : `sequences reloaded -- ${r.loaded} registered`)
             }
+        }
+        if (VirtualDeviceService.isInitialized()) {
+            const r = await VirtualDeviceService.reload()
+            refreshed.push(r.ok ? `virtual devices reloaded -- ${r.loaded} registered` : `virtual devices kept as-is: ${r.error}`)
+            aiPromptChanged ||= Boolean(r.ok && r.changed)
+        }
+        if (aiPromptChanged && AiAssistant.isReady()) {
+            const r = await AiAssistant.resetConversation()
+            if (r.reset) refreshed.push(`AI conversation cleared (${r.dropped} message(s))`)
         }
 
         //  ---- Housekeeping for the UI ------------------------------------------

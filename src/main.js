@@ -24,6 +24,9 @@ import DeviceContainer from './device/container/deviceContainer.js'
 import AutomationContainer from './automation/container/automationContainer.js'
 import InteractionContainer from './interaction/container/interactionContainer.js'
 import SequenceContainer from './sequence/container/sequenceContainer.js'
+import VirtualDeviceService from './ai/virtualDeviceService.js'
+import IRCommandService from './ir/irCommandService.js'
+import HostCommandService from './host/hostCommandService.js'
 
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
@@ -72,6 +75,7 @@ Environment variables (.env):
   SMTP_SECURE                       Use TLS on the relay connection (default: true)
   SMTP_USER                         SMTP login user; also the default sender address
   SMTP_PASS                         SMTP login password
+  HTPC_MQTT_SECRET                  Shared HMAC key for MQTT host shutdown (host_commands.targets.htpc.secret_env)
 
 Behavior settings are in etc/automaton.yaml (locale.language, locale.time_format); individual values can be overridden per-run via -c/--config-override.
 
@@ -205,6 +209,12 @@ async function gracefulDeath(reason, errorLevel = 0) {
         if (initialized.has('SequenceContainer')) {
             LoggerService.debug('Cleaning up sequences...', 'Main')
             await Promise.resolve(SequenceContainer.cleanupSequences())
+        }
+
+        //  In-flight host requests are resolved as failed here -- no caller waits on a dead broker.
+        if (initialized.has('HostCommandService')) {
+            LoggerService.debug('Cleaning up HostCommandService...', 'Main')
+            await HostCommandService.cleanup()
         }
 
         if (initialized.has('AutomationContainer')) {
@@ -380,9 +390,12 @@ async function bootstrap() {
     await initService('SensorHistoryService', () => SensorHistoryService.init(), true)
     await initService('DeviceContainer', () => DeviceContainer.init())
     //  Sequences resolve their steps through DeviceContainer -- must come after it (D16: optional-tolerant).
+    await initService('IRCommandService', () => IRCommandService.init(), true)
+    await initService('HostCommandService', () => HostCommandService.init(), true)
     await initService('SequenceContainer', () => SequenceContainer.init(), true)
     await initService('AutomationContainer', () => AutomationContainer.init())
     await initService('InteractionContainer', () => InteractionContainer.init())
+    await initService('VirtualDeviceService', () => VirtualDeviceService.init(), true)
     await initService('NetworkPresence', () => NetworkPresence.init())
     await initService('VideoPlayerMonitor', () => VideoPlayerMonitor.init())
     //  Spoken warnings for devices leaving the Zigbee mesh and for mission-critical.
