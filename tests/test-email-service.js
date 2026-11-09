@@ -100,6 +100,7 @@ async function useWorkingChannel(extra = {}) {
     process.env.SMTP_USER = 'automaton@test.local'
     process.env.SMTP_PASS = 'secret'
     setConfig({
+        'ai.name': 'Gerwazy',
         'email.enabled': true,
         'email.from': 'automaton@test.local',
         'email.subject_prefix': 'Automaton',
@@ -207,15 +208,45 @@ try {
     assert(accepted === true, 'the stuck notification is accepted')
     assert(sent.length === 2, 'every owner gets exactly one copy')
     const mail = sent[0]
-    assert(mail.from === 'automaton@test.local', 'the sender is the configured address')
+    assert(mail.from.address === 'automaton@test.local' && mail.from.name === 'Gerwazy', 'the sender is the configured address with the ai.name display name')
     assert(mail.to === 'anna@test.local', 'the first copy goes to the first owner')
     assert(mail.subject === `Automaton: ${expectedSubject}`, 'the subject follows the bundle template with the prefix')
     assert(mail.text.includes('Anna'), 'the greeting addresses the owner by name')
     assert(mail.text.includes(STUCK_MESSAGE), 'the body carries the very text the speech used')
     assert(mail.text.includes('--'), 'the body carries the signature marker')
-    assert(/Automaton,\nAutomaton (?:[a-f0-9]+|unknown)/.test(mail.text), 'signature includes assistant name, newline and checkout revision')
+    assert(/Gerwazy,\nAutomaton (?:[a-f0-9]+|unknown)/.test(mail.text), 'signature includes assistant name, newline and checkout revision')
     assert(!/Wygenerowano|Generated on/.test(mail.text), 'generated provenance footer is removed')
     assert(!mail.text.includes('{%'), 'no unanswered placeholder survives in a mail')
+
+    // -----------------------------------------------------------------------
+    //  Sender display name
+    // -----------------------------------------------------------------------
+    console.log('\n-- sender display name --')
+    await useWorkingChannel({ 'ai.name': 'Gerwazy', 'email.from_name': '' })
+    resetSends()
+    assert(EmailService.send({ to: 'anna@test.local', subject: 'Sender', text: 'Sender display test.' }) === true, 'the sender display test is accepted')
+    await EmailService.flush()
+    assert(sent[0].from.address === 'automaton@test.local', 'the sender address remains the configured address')
+    assert(sent[0].from.name === 'Gerwazy', 'the sender display name comes from ai.name')
+    assert(EmailService.getSender() === 'Gerwazy <automaton@test.local>', 'getSender() formats the sender header')
+
+    await useWorkingChannel({ 'ai.name': 'Gerwazy', 'email.from_name': 'Custom Sender' })
+    resetSends()
+    EmailService.send({ to: 'anna@test.local', subject: 'Sender', text: 'Sender display test.' })
+    await EmailService.flush()
+    assert(sent[0].from.name === 'Custom Sender', 'email.from_name overrides ai.name')
+
+    await useWorkingChannel({ 'ai.name': '', 'email.from_name': '' })
+    resetSends()
+    EmailService.send({ to: 'anna@test.local', subject: 'Sender', text: 'Sender display test.' })
+    await EmailService.flush()
+    assert(sent[0].from.name === 'Automaton', 'an empty ai.name falls back to the default sender name')
+
+    await useWorkingChannel({ 'ai.name': 'Bad\r\nName <x>', 'email.from_name': '' })
+    resetSends()
+    EmailService.send({ to: 'anna@test.local', subject: 'Sender', text: 'Sender display test.' })
+    await EmailService.flush()
+    assert(sent[0].from.name === 'Bad Name x', 'control characters and angle brackets are removed from the display name')
 
     await useWorkingChannel({ 'email.subject_prefix': '', 'email.cooldown': 0 })
     resetSends()

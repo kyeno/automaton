@@ -144,7 +144,7 @@ class SEmailService {
         this.#enabled = true
 
         LoggerService.info(
-            `Email enabled -- relay=${settings.host}:${settings.port}${settings.secure ? ' (TLS)' : ''}, sender=${this.#from}, recipients=${this.getRecipients().length}`,
+            `Email enabled -- relay=${settings.host}:${settings.port}${settings.secure ? ' (TLS)' : ''}, sender=${this.getSender()}, recipients=${this.getRecipients().length}`,
             'EmailService'
         )
         this.#initialized = true
@@ -189,6 +189,12 @@ class SEmailService {
             if (owner) out.push(owner)
         }
         return out
+    }
+
+    /** Formatted sender header for status display: display name plus address.
+     * @returns {string} Sender string, '' when no sender address is active */
+    getSender() {
+        return this.#from ? `${this.#resolveFromName()} <${this.#from}>` : ''
     }
 
     /** Cumulative send counters for this process run.
@@ -369,6 +375,31 @@ class SEmailService {
         return EMAIL_ADDRESS_REGEX.test(login) ? login : ''
     }
 
+    /** Resolve the sender display name: email.from_name first, ai.name, then the default.
+     * @returns {string} Safe display name for the From header
+     * @private */
+    #resolveFromName() {
+        const configured = String(ConfigService.get('email.from_name') ?? '').trim()
+        if (configured) return this.#sanitizeDisplayName(configured)
+
+        const aiName = String(ConfigService.get('ai.name') ?? '').trim()
+        if (aiName) return this.#sanitizeDisplayName(aiName)
+
+        return DEFAULT_SENDER_NAME
+    }
+
+    /** Make a display name safe for a mail header.
+     * @param {*} raw - Raw display name
+     * @returns {string} Single-line display name, never empty
+     * @private */
+    #sanitizeDisplayName(raw) {
+        const name = String(raw ?? '')
+            .replace(/[\x00-\x1F\x7F<>]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+        return name || DEFAULT_SENDER_NAME
+    }
+
     /** Read the subject prefix, keeping an explicit empty value as "no prefix".
      * @returns {string} Prefix (may be empty)
      * @private */
@@ -506,7 +537,7 @@ class SEmailService {
 
         try {
             await this.#transport.sendMail({
-                from: this.#from,
+                from: { name: this.#resolveFromName(), address: this.#from },
                 to: job.to,
                 subject: job.subject,
                 text: job.text,

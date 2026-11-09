@@ -110,6 +110,7 @@ assert(typeof EmailService.getStats === 'function', 'has getStats()')
 assert(typeof EmailService.flush === 'function', 'has flush()')
 assert(typeof EmailService.cleanup === 'function', 'has cleanup()')
 assert(typeof EmailService.attachTransport === 'function', 'has attachTransport()')
+assert(typeof EmailService.getSender === 'function', 'has getSender()')
 
 // Without SMTP_* env, the channel is not configured and not enabled
 assert(EmailService.isConfigured() === false, 'isConfigured() is false without SMTP_* env')

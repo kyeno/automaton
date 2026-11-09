@@ -80,7 +80,7 @@ class MailCmd extends CommandBase {
             'Email channel:',
             `  state:     ${EmailService.isEnabled() ? 'active' : (EmailService.isReady() ? 'disabled' : 'not initialized')}`,
             `  relay:     ${relay}`,
-            `  sender:    ${email.from || process.env.SMTP_USER || '(unset)'}`,
+            `  sender:    ${EmailService.getSender() || email.from || process.env.SMTP_USER || '(unset)'}`,
             `  prefix:    ${email.subject_prefix ?? 'Automaton'}`,
             `  cooldown:  ${email.cooldown ?? '60m'} per kind`,
             `  kinds:     ${this.#formatKinds(email.notify)}`,

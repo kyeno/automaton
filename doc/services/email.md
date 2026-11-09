@@ -58,6 +58,7 @@ house_owners:                     # who gets the mail
 email:
   enabled: true                   # false disables the channel even with a relay set
   from: ''                        # sender address; falls back to SMTP_USER when empty
+  from_name: ''                   # display name; defaults to ai.name when empty
   subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
   cooldown: "60m"              # per-kind silence after one notification; 0 = mail every event
   notify:                        # per-kind switches; a kind set to false never mails
@@ -67,6 +68,7 @@ email:
 - **`house_owners`** — a list of `{ name, email }` (a bare address string is also accepted). Entries without a well-formed address are dropped, not mangled. A missing name falls back to the local part of the address.
 - **`email.enabled`** — the master switch. `false` disables the channel even when `SMTP_HOST` is set.
 - **`email.from`** — the sender address. When empty, `SMTP_USER` is used.
+- **`email.from_name`** — the sender display name. When empty, `ai.name` is used; if that is empty too, `Automaton` is used.
 - **`email.subject_prefix`** — prepended to every subject. Empty string drops the prefix.
 - **`email.cooldown`** — the per-kind re-notification window. `0` mails every event.
 - **`email.notify`** — a map of kind → boolean. A kind set to `false` is muted; a kind with no entry is allowed.
