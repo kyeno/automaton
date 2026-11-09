@@ -245,7 +245,39 @@ class SI18nLoader {
                 'I18nLoader'
             )
             this.#bundle = {}
+        } finally {
+            for (const namespace of ['ir']) {
+                this.#bundle ??= {}
+                this.#bundle[namespace] = this.#loadNamespace(namespace)
+            }
         }
+    }
+
+    /** Load optional domain metadata with per-entry English fallback.
+     * @private
+     * @param {string} namespace - Bundle filename without extension
+     * @returns {Object} Merged localized namespace */
+    #loadNamespace(namespace) {
+        let result = {}
+        for (const locale of [...new Set(['en_US', this.#locale])]) {
+            const base = path.join(I18N_ROOT, locale, `${namespace}.yaml`)
+            const file = fs.existsSync(base) ? base : `${base}.dist`
+            if (!fs.existsSync(file)) continue
+            try {
+                const doc = yamlParseDocument(fs.readFileSync(file, 'utf8'))
+                if (doc.errors.length) throw new Error(doc.errors[0].message)
+                const data = doc.toJS() ?? {}
+                const entries = { ...result.commands, ...result.entries }
+                const key = namespace === 'ir' ? 'commands' : 'entries'
+                for (const [id, metadata] of Object.entries(data[key] ?? {})) {
+                    entries[id] = { ...entries[id], ...metadata }
+                }
+                result = { ...result, ...data, [key]: entries }
+            } catch (error) {
+                LoggerService.warn(`Cannot load ${namespace} translations: ${error.message}`, 'I18nLoader')
+            }
+        }
+        return result
     }
 }
 

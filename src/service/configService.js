@@ -22,7 +22,9 @@ const DEFAULT_PATHS = Object.freeze({
     configs: {
         network:     'etc/device/network.yaml',
         interaction: 'etc/interaction/interaction.yaml',
-        sequence:    'etc/sequence/sequences.yaml'
+        sequence:    'etc/sequence/sequences.yaml',
+        ir:          'etc/ir/commands.yaml',
+        virtual:     'etc/device/virtual.yaml'
     },
     directories: {
         automation:  'etc/automation/',

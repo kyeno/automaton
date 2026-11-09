@@ -7,7 +7,7 @@ config()
  * Focused tests for the get_time tool (ToolBuilder).
  *
  * Pins down:
- *   A) build() exposes exactly 3 tools including get_time with empty parameters schema
+ *   A) build() exposes five static tools including get_time with empty parameters schema
  *   B) execute({ function: { name:'get_time', arguments:'{}' } }) returns valid JSON with
  *      time_of_day, day, clock, hour, minute fields of correct types
  *   C) time_of_day is one of the known lib/date periods
@@ -48,7 +48,8 @@ async function main() {
         // A) schema ---------------------------------------------------------------------
         console.log('-- A) build() exposes get_time with empty parameters --')
         const tools = ToolBuilder.build(true)
-        assert(tools.length === 3, `three tools registered (got ${tools.length})`)
+        assert(tools.length === 5, `five static tools registered (got ${tools.length})`)
+        assert(!tools.some(t => t.function?.name.includes('sequence')), 'no sequence-specific AI tool')
         const getTimeTool = tools.find((t) => t.function?.name === 'get_time')
         assert(!!getTimeTool, 'get_time tool exists in the schema list')
         assert(getTimeTool.type === 'function', 'type is "function"')

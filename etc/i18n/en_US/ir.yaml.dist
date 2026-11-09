@@ -1,0 +1,6 @@
+ai_instruction: "For TV, amplifier or A/C requests, use find_ir_commands then send_ir_command. Discovery followed by execution is allowed. Send once; appliance state is unknown."
+tools:
+  find: "Find configured IR commands for TV, amplifier or A/C. Returns IDs and descriptions."
+  send: "Send a discovered IR command once. Appliance state cannot be confirmed."
+commands: {}
+# Add command IDs with label and description, e.g. amp_on: { label: ..., description: ... }

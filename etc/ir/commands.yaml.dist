@@ -1,0 +1,7 @@
+# Named IR commands. IDs are stable; localized metadata lives in etc/i18n/<locale>/ir.yaml.
+# Bind transmitter to its exact Zigbee2MQTT friendly name (type: IRTransmitter).
+commands: {}
+# commands:
+#   amp_on:
+#     transmitter: 'Living Room IR'
+#     code: 'BASE64_CODE_FROM_REMOTE'

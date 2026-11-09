@@ -5,6 +5,10 @@
 # Template -- copy to zigbee.yaml and populate with your actual device names.
 
 mechanism:
+  # IR transmitter (use its exact Zigbee2MQTT friendly name):
+  # - name: 'Living Room IR'
+  #   type: IRTransmitter
+  #   ir_send_property: ir_code_to_send
   # Outlets, switches controlling lights, roller shutters etc.
   - "Living Room Outlet"
   - "Bedroom Roller Shutter"

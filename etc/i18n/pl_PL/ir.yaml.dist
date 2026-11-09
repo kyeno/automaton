@@ -1,0 +1,6 @@
+ai_instruction: "Dla telewizora, wzmacniacza lub klimatyzacji używaj find_ir_commands, potem send_ir_command. Wyszukanie i wykonanie to dwa dozwolone wywołania. Wyślij raz; stan odbiornika jest nieznany."
+tools:
+  find: "Znajdź skonfigurowane polecenia IR dla telewizora, wzmacniacza lub klimatyzacji. Zwraca identyfikatory i opisy."
+  send: "Wyślij znalezione polecenie IR jeden raz. Stan odbiornika nie jest potwierdzany."
+commands: {}
+# Add command IDs with label and description, e.g. amp_on: { label: ..., description: ... }
