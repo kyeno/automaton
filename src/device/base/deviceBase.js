@@ -1317,6 +1317,15 @@ export default class DeviceBase {
         this.#mqttService.publish(topic, payload)
     }
 
+    /** Dispatch an event through MQTT without command correlation or cached-state changes.
+     * @param {string} topic - MQTT topic
+     * @param {string} payload - Serialized payload
+     * @returns {Promise<void>} Local dispatch completion */
+    async publishAsync(topic, payload) {
+        if (!this.#mqttService?.publishAsync) throw new Error('MQTT dispatch service unavailable')
+        await this.#mqttService.publishAsync(topic, payload)
+    }
+
     /** Return the list of MQTT topics this device should subscribe to.
      * @param {string} prefix - MQTT topic prefix (e.g., "zigbee2mqtt")
      * @returns {string[]} Array of topic strings to subscribe to */

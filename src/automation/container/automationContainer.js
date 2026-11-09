@@ -151,7 +151,7 @@ class SAutomationContainer {
     /** Trigger an automation's execute method by name.
      * @param {string} name - Automation name
      * @param {{trigger?: string, force?: boolean, forceFirst?: boolean}} [data={}] - Data passed
-     * @returns {Promise<void>} */
+     * @returns {Promise<boolean>} Whether the automation was invoked */
     async callAutomation(name, data = {}) {
         const automation = this.getAutomation(name)
         if (!automation || typeof automation.execute !== 'function') {
@@ -159,7 +159,7 @@ class SAutomationContainer {
                 `Automation "${name}" not found or has no execute() method`,
                 'AutomationContainer'
             )
-            return
+            return false
         }
         //  Re-entrancy guard: invoke_automation actions run their target through this same.
         const maxDepth = 5
@@ -168,11 +168,12 @@ class SAutomationContainer {
                 `Invocation depth limit (${maxDepth}) reached -- skipping "${name}" to break a cycle`,
                 'AutomationContainer'
             )
-            return
+            return false
         }
         this.#invocationDepth++
         try {
             await automation.execute(data)
+            return true
         } finally {
             this.#invocationDepth--
         }

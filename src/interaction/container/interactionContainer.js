@@ -219,16 +219,18 @@ class SInteractionContainer {
     /** Trigger an interaction's execute method by name.
      * @param {string} name - Interaction name
      * @param {Object} [data={}] - Data to pass to execute()
-     * @returns {Promise<void>} */
+     * @returns {Promise<boolean>} Whether the interaction was invoked */
     async callInteraction(name, data = {}) {
         const interaction = this.getInteraction(name)
         if (interaction && typeof interaction.execute === 'function') {
             await interaction.execute(data)
+            return true
         } else {
             LoggerService.warn(
                 `Interaction "${name}" not found or has no execute() method`,
                 'InteractionContainer'
             )
+            return false
         }
     }
 
@@ -367,7 +369,7 @@ class SInteractionContainer {
          * @param {Array} targets - Array of {device, command} objects */
         async function _executeTargets(targets) {
             for (const target of targets) {
-                const cmd = target.command?.toUpperCase()
+                const cmd = typeof target.command === 'string' ? target.command.toUpperCase() : target.command
                 if (!cmd) continue
 
                 const device = DeviceContainer.findByName(target.device)
@@ -381,7 +383,7 @@ class SInteractionContainer {
 
                 try {
                     //  Interaction targets are human-configured actions -> HUMAN provenance.
-                    device.receiveCommand(cmd, DeviceCommandSource.HUMAN)
+                    await device.receiveCommand(cmd, DeviceCommandSource.HUMAN)
                 } catch (err) {
                     LoggerService.error(
                         `Failed to dispatch "${cmd}" to "${target.device}": ${err.message}`,

@@ -16,6 +16,8 @@ import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import { slugify } from '../../lib/string.js'
 import temporal from '../../lib/date.js'
 import { normalizeSequenceConfig } from '../../lib/configMigration.js'
+import HostCommandService from '../../host/hostCommandService.js'
+import { ALLOWED_ACTIONS } from '../../host/hostProtocol.js'
 
 
 //  SequenceBase class.
@@ -29,7 +31,8 @@ class SequenceBase {
     #slug
     /** Raw normalized entry object as loaded from YAML. */
     #config
-    /** Resolved ON steps: [{deviceName, payload, delayMs}]. */
+    /** Resolved ON steps: [{deviceName, payload, delayMs}] plus typed host steps
+     * ({kind: 'host_command', target, action, delayMs}). */
     #stepsOn = []
     /** Same shape for OFF runs. */
     #stepsOff = []
@@ -49,6 +52,10 @@ class SequenceBase {
     #phaseTimer = null
     /** Resolver unblocking the driver when the inter-phase timer fires or is cancelled. */
     #interPhaseResolver = null
+    /** Loop dispatch context, retaining the initiator separately from step provenance. */
+    #loopContext = {}
+    /** Last completed run's local outcomes (not appliance confirmations). */
+    #lastRunResult = null
 
 
     /** Create a sequence instance from one validated YAML entry; normalizes steps + durations.
@@ -102,7 +109,7 @@ class SequenceBase {
      * steps inert with a warning (D10), and stale state keys are cleared for a fresh process.
      * @async */
     async init() {
-        const names = [...new Set([...this.#stepsOn, ...this.#stepsOff].map(s => s.deviceName))]
+        const names = [...new Set([...this.#stepsOn, ...this.#stepsOff].map(s => s.deviceName).filter(Boolean))]
         for (const name of names) {
             let device = null
             try {
@@ -152,6 +159,19 @@ class SequenceBase {
         return this.#slug
     }
 
+    /** Last completed run report.
+     * @returns {Object|null} Snapshot of local step outcomes */
+    getLastRunResult() {
+        return this.#lastRunResult ? structuredClone(this.#lastRunResult) : null
+    }
+
+    /** Whether a phase has explicitly configured or safely derived steps.
+     * @param {string} phase - ON or OFF
+     * @returns {boolean} Phase availability */
+    supportsPhase(phase) {
+        return (phase === 'ON' ? this.#stepsOn : phase === 'OFF' ? this.#stepsOff : []).length > 0
+    }
+
     /** True while any run (single or loop phase) occupies the mutex.
      * @returns {boolean} */
     isActive() {
@@ -162,6 +182,12 @@ class SequenceBase {
      * @returns {boolean} */
     isLoopActive() {
         return this.#loopActive
+    }
+
+    /** Whether this sequence has an enabled loop with both phases.
+     * @returns {boolean} */
+    supportsLoop() {
+        return this.#loopConfig !== null && this.supportsPhase('ON') && this.supportsPhase('OFF')
     }
 
     /** Compact live-status snapshot for UI / AI / status reporting.
@@ -183,8 +209,9 @@ class SequenceBase {
      * their per-step delay (falling back to the sequence-level `delay`). Concurrent invocations
      * are rejected and logged, never queued, never overridden (D7).
      * @param {'ON'|'OFF'} [command='ON'] - Action to send down the sequence
-     * @returns {Promise<boolean>} true when the run executed; false when rejected by the mutex */
-    async run(command = 'ON') {
+     * @param {Object} [context={}] - Initiating source (defaults to automation)
+     * @returns {Promise<boolean>} true when the run executed; inspect getLastRunResult for partial failures */
+    async run(command = 'ON', context = {}) {
         const action = String(command ?? '').toUpperCase()
         if (action !== 'ON' && action !== 'OFF') {
             LoggerService.warn(`Sequence "${this.#name}": invalid command "${command}" (expected ON|OFF)`, 'SequenceBase')
@@ -194,12 +221,13 @@ class SequenceBase {
             LoggerService.warn(`Sequence "${this.#name}" is already running -- ${action} ignored`, 'SequenceBase')
             return false
         }
+        if (!this.supportsPhase(action)) return false
 
         this.#busy = true
         StateService.set(this.#stateKey('active'), true)
         StateService.set(this.#stateKey('phase'), action.toLowerCase())
         try {
-            await this.#executeSteps(action)
+            this.#lastRunResult = await this.#executeSteps(action, context)
         } finally {
             this.#busy = false
             StateService.delete(this.#stateKey('active'))
@@ -212,10 +240,11 @@ class SequenceBase {
 
     /** Start a loop session for this instance (public API for CLI / AI tool calls). Rejected with
      * false + warn log when no `loop:` block is configured or the instance is already busy/looping.
+     * @param {Object} [context={}] - Initiating source
      * @returns {Promise<boolean>} true when the loop started; false when rejected */
-    async startLoop() {
-        if (!this.#loopConfig) {
-            LoggerService.warn(`Sequence "${this.#name}" has no loop configured -- cannot start loop`, 'SequenceBase')
+    async startLoop(context = {}) {
+        if (!this.#loopConfig || !this.supportsPhase('OFF')) {
+            LoggerService.warn(`Sequence "${this.#name}" needs loop configuration and an OFF phase -- cannot start loop`, 'SequenceBase')
             return false
         }
         if (this.#busy || this.#loopActive) {
@@ -224,6 +253,7 @@ class SequenceBase {
         }
 
         this.#stopRequested = false
+        this.#loopContext = { ...context, initiatorSource: context.source, source: DeviceCommandSource.AUTOMATION }
         this.#loopActive = true
         //  The driver keeps the mutex held across phases incl. the inter-phase window, so an
         //  engaged loop also blocks external runs via #busy alone (D7).
@@ -259,6 +289,8 @@ class SequenceBase {
     /** Build #stepsOn / #stepsOff from either config form. Simple `devices:` entries derive bare
      * ON/OFF payloads (per-step `command` overrides the ON payload only); rich `on:`/`off:` steps
      * carry verbatim payloads; a missing `off:` defaults to plain OFF over the `on` devices.
+     * Rich steps carrying `kind: host_command` become typed host steps (no device lookup, no
+     * derived OFF) -- see doc/architecture/sequence-entity.md.
      * @private */
     #normalizeSteps() {
         const parseDelayMs = (value, label) => {
@@ -271,7 +303,26 @@ class SequenceBase {
             return parsed
         }
 
+        const buildHostStep = (entry, index) => {
+            const target = String(entry.target ?? '').trim().toLowerCase()
+            const action = String(entry.action ?? 'shutdown').trim().toLowerCase()
+            const delayMs = parseDelayMs(entry.delay, `step[${index}] delay`)
+            if (!target) {
+                LoggerService.warn(`Sequence "${this.#name}": host_command step[${index}] has no target -- skipped`, 'SequenceBase')
+                return null
+            }
+            if (!ALLOWED_ACTIONS.has(action)) {
+                LoggerService.warn(`Sequence "${this.#name}": host_command action "${action}" is not supported in v1 -- step[${index}] skipped`, 'SequenceBase')
+                return null
+            }
+            if (entry.device !== undefined || entry.payload !== undefined) {
+                LoggerService.warn(`Sequence "${this.#name}": host_command step[${index}] ignores device/payload keys`, 'SequenceBase')
+            }
+            return { kind: 'host_command', target, action, delayMs }
+        }
+
         const buildStep = (entry, index, fallbackPayload) => {
+            if (entry && typeof entry === 'object' && entry.kind === 'host_command') return buildHostStep(entry, index)
             let deviceName = ''
             let payload = null
             let delayMs = 0
@@ -295,7 +346,10 @@ class SequenceBase {
         if (Array.isArray(this.#config.devices)) {
             for (let i = 0; i < this.#config.devices.length; i++) {
                 const onStep = buildStep(this.#config.devices[i], i, 'ON')
-                if (onStep) {
+                if (onStep?.kind === 'host_command') {
+                    //  A host command has no inverse payload -- the simple form cannot derive OFF.
+                    LoggerService.warn(`Sequence "${this.#name}": host_command steps require the on:/off: form -- step[${i}] skipped`, 'SequenceBase')
+                } else if (onStep) {
                     this.#stepsOn.push(onStep)
                     //  Simple-form OFF runs always send plain OFF over the same ordered devices.
                     this.#stepsOff.push({ ...onStep, payload: 'OFF' })
@@ -313,31 +367,66 @@ class SequenceBase {
                 }
             } else {
                 for (const step of this.#stepsOn) {
+                    //  Host steps carry no OFF inverse -- an explicit `off:` list is required.
+                    if (step.kind === 'host_command') continue
                     this.#stepsOff.push({ deviceName: step.deviceName, payload: 'OFF', delayMs: step.delayMs })
                 }
             }
         }
+        if (!Array.isArray(this.#config.off) && this.#stepsOn.some(step => step.payload && typeof step.payload === 'object' && 'ir_command' in step.payload)) {
+            this.#stepsOff = []
+        }
     }
 
     /** Walk one phase's step list, sending each resolved device its payload via receiveCommand()
-     * with AUTOMATION provenance (D9). Inert steps are skipped silently (warned at init); pacing
+     * with the initiating source (automation by default). Missing devices are reported; pacing
      * delays apply only between steps, never after the last one.
      * @private
-     * @param {'ON'|'OFF'} action - Phase action (selects the step list + fallback payload) */
-    async #executeSteps(action) {
+     * @param {'ON'|'OFF'} action - Phase action (selects the step list + fallback payload)
+     * @param {Object} [context={}] - Initiating source
+     * @returns {Promise<Object>} Local step report */
+    async #executeSteps(action, context = {}) {
         const steps = action === 'OFF' ? this.#stepsOff : this.#stepsOn
+        const result = { phase: action, status: 'completed', completed: 0, failed: [] }
         for (let i = 0; i < steps.length; i++) {
             const step = steps[i]
+            if (step.kind === 'host_command') {
+                //  Typed host step: signed request to a host target, reported under a host label.
+                const label = `host:${step.target}`
+                try {
+                    const outcome = await HostCommandService.requestShutdown(step.target, { action: step.action })
+                    if (outcome.status === 'accepted') {
+                        result.completed++
+                    } else {
+                        result.failed.push({ device: label, error: `host command ${outcome.status}: ${outcome.reason ?? outcome.status}` })
+                    }
+                } catch (err) {
+                    result.failed.push({ device: label, error: err.message })
+                    LoggerService.warn(`Sequence "${this.#name}": host command to "${step.target}" failed: ${err.message}`, 'SequenceBase')
+                }
+                const hostDelay = step.delayMs > 0 ? step.delayMs : this.#defaultDelayMs
+                if (hostDelay > 0 && i < steps.length - 1) await this.#sleep(hostDelay)
+                continue
+            }
             const device = this.#devices.get(step.deviceName)
-            if (!device) continue   // inert step -- already warned at init (D10)
+            if (!device) {
+                result.failed.push({ device: step.deviceName, error: 'Device unavailable' })
+                continue
+            }
             try {
-                device.receiveCommand(step.payload ?? action, DeviceCommandSource.AUTOMATION)
+                await device.receiveCommand(step.payload ?? action, context.source ?? DeviceCommandSource.AUTOMATION, {
+                    bypassNoOpSuppression: this.#config.force === true
+                })
+                result.completed++
             } catch (err) {
+                result.failed.push({ device: step.deviceName, error: err.message })
                 LoggerService.warn(`Sequence "${this.#name}": command failed on "${step.deviceName}": ${err.message}`, 'SequenceBase')
             }
             const delay = step.delayMs > 0 ? step.delayMs : this.#defaultDelayMs
             if (delay > 0 && i < steps.length - 1) await this.#sleep(delay)
         }
+        if (result.failed.length) result.status = 'partial_failure'
+        return result
     }
 
     /** Loop driver: ON run -> optional gap -> OFF run -> optional gap -> repeat per cycle config.
@@ -350,7 +439,7 @@ class SequenceBase {
             await this.#sleep(0)
             StateService.set(this.#stateKey('active'), true)
             StateService.set(this.#stateKey('phase'), 'on')
-            await this.#executeSteps('ON')
+            this.#lastRunResult = await this.#executeSteps('ON', this.#loopContext)
             if (this.#stopRequested) break
 
             const offDelayMs = this.#loopConfig.offDelayMs
@@ -360,7 +449,7 @@ class SequenceBase {
             }
 
             StateService.set(this.#stateKey('phase'), 'off')
-            await this.#executeSteps('OFF')
+            this.#lastRunResult = await this.#executeSteps('OFF', this.#loopContext)
             if (this.#stopRequested) break
             if (this.#loopConfig.cycle !== 'continuous') break
 

@@ -44,6 +44,7 @@ import DeviceContainer from '../src/device/container/deviceContainer.js'
 import SequenceBase from '../src/sequence/base/sequenceBase.js'
 import SequenceContainer from '../src/sequence/container/sequenceContainer.js'
 import DeviceCommandSource from '../src/enum/deviceCommandSource.js'
+import SequenceCmd from '../src/ui/commands/sequenceCmd.js'
 
 // Minimal env bootstrap so services can be imported and LoggerService works headless.
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
@@ -78,8 +79,8 @@ class MockDevice {
         this.commands = []
         this._sharedLog = sharedLog
     }
-    receiveCommand(cmd, source) {
-        this.commands.push({ cmd, source })
+    receiveCommand(cmd, source, options) {
+        this.commands.push({ cmd, source, options })
         if (this._sharedLog) this._sharedLog.push(`${this.name}:${typeof cmd === 'string' ? cmd : JSON.stringify(cmd)}`)
         return true
     }
@@ -162,6 +163,7 @@ function stubDeviceLookup(table) {
     const restore = stubDeviceLookup({ 'Salon Dimmer': dimmer })
     try {
         const hazard = new SequenceBase('Hazard Light', {
+            force: true,
             loop: { enabled: true, cycle: 'continuous', off_delay: 'auto' },
             on: [{ device: 'Salon Dimmer', payload: { state: 'ON', brightness: { l1: 1, l2: 25 } } }],
             off: [{ device: 'Salon Dimmer', payload: { state: 'ON', brightness: { l1: 100, l2: 75 } } }]
@@ -172,6 +174,8 @@ function stubDeviceLookup(table) {
             `C: on-payload passed verbatim (got ${JSON.stringify(dimmer.commands[0]?.cmd)})`)
         assert(dimmer.commands[0].source === DeviceCommandSource.AUTOMATION, 'C: rich-form command provenance is AUTOMATION')
         assert(await hazard.run('OFF') === true, 'C: OFF run accepted')
+        assert(dimmer.commands.every(c => c.options?.bypassNoOpSuppression === true),
+            'C: forced hazard sequence reasserts both ON and OFF commands')
         assert(JSON.stringify(dimmer.commands.at(-1).cmd) === JSON.stringify({ state: 'ON', brightness: { l1: 100, l2: 75 } }),
             `C: off-payload passed verbatim (got ${JSON.stringify(dimmer.commands.at(-1)?.cmd)})`)
 
@@ -231,7 +235,7 @@ function stubDeviceLookup(table) {
         })
         await seq.init()
         assert(seq.getSlug() === slug, 'E1: slug derived with slugify()')
-        const started = await seq.startLoop()
+        const started = await seq.startLoop({ source: DeviceCommandSource.HUMAN, caller: 'ui' })
         assert(started === true, 'E1: startLoop() engaged the session')
         let sawOnPhase = false
         let sawOffPhase = false
@@ -307,6 +311,8 @@ function stubDeviceLookup(table) {
             await sleep(5)
         }
         assert(total >= 6, `F: oscillated repeatedly before stopping (${total} commands in the window)`)
+        assert(omega.commands.every(c => c.source === DeviceCommandSource.AUTOMATION),
+            'F: human-started loops dispatch automation steps')
         const stopped = seq.stopLoop()
         assert(stopped === true, 'F: stopLoop() accepted while looping')
         //  Mid-phase stop lets that phase finish -> ON/OFF counts stay balanced.
@@ -576,6 +582,50 @@ function stubDeviceLookup(table) {
         assert(StateService.get(`sequence.${slug}.loop.active`) === undefined, 'I2: loop state key cleared at IDLE')
         seq.cleanup()
     } finally {
+        restore()
+    }
+}
+
+{
+    const dimmer = new MockDevice('UI Dimmer')
+    const restore = stubDeviceLookup({ 'UI Dimmer': dimmer })
+    const seq = new SequenceBase('UI Hazard', {
+        force: true,
+        loop: { enabled: true, cycle: 'continuous', off_delay: '10ms', on_delay: '10ms' },
+        on: [{ device: 'UI Dimmer', payload: { state: 'ON', brightness: { l1: 20, l2: 10 } } }],
+        off: [{ device: 'UI Dimmer', payload: { state: 'ON', brightness: { l1: 85, l2: 50 } } }]
+    })
+    try {
+        await seq.init()
+        const messages = []
+        const ui = new SequenceCmd({
+            print: message => messages.push(message),
+            sequenceContainer: {
+                resolveSequence: () => seq,
+                callCommand: (_name, action, context) => seq.run(action, context),
+                startLoop: (_name, context) => seq.startLoop(context),
+                stopLoop: () => seq.stopLoop()
+            }
+        })
+        await ui.execute('run ui_hazard')
+        assert(dimmer.commands.length === 1 && !seq.isLoopActive(), 'UI: run remains one-shot for loop-enabled sequences')
+        assert(dimmer.commands[0].source === DeviceCommandSource.HUMAN, 'UI: one-shot retains human provenance')
+        assert(messages.some(m => m.includes('/sequence loop start ui_hazard')), 'UI: one-shot output explains how to start repeating')
+        dimmer.commands.length = 0
+        await ui.execute('loop start ui_hazard')
+        for (let i = 0; i < 100 && dimmer.commands.length < 3; i++) await sleep(5)
+        await ui.execute('loop stop ui_hazard')
+        await sleep(30)
+        assert(JSON.stringify(dimmer.commands.slice(0, 3).map(c => c.cmd.brightness))
+            === JSON.stringify([{ l1: 20, l2: 10 }, { l1: 85, l2: 50 }, { l1: 20, l2: 10 }]),
+        'UI: loop repeats low/high/low brightness')
+        assert(dimmer.commands.every(c => c.source === DeviceCommandSource.AUTOMATION && c.options.bypassNoOpSuppression),
+            'UI: forced loop uses automation provenance and bypasses no-op suppression')
+        const count = dimmer.commands.length
+        await sleep(30)
+        assert(!seq.isLoopActive() && dimmer.commands.length === count, 'UI: stop ends further dispatch')
+    } finally {
+        seq.cleanup()
         restore()
     }
 }

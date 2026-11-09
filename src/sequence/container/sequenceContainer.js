@@ -234,26 +234,28 @@ class SSequenceContainer {
     /** Send a command down one sequence via its blocking run core; unknown names warn gracefully.
      * @param {string} name - Slug or friendly name
      * @param {'ON'|'OFF'} [command='ON'] - Action to send
+     * @param {Object} [context={}] - Initiating source
      * @returns {Promise<boolean>} true when the run executed, false when rejected/unknown */
-    async callCommand(name, command = 'ON') {
+    async callCommand(name, command = 'ON', context = {}) {
         const seq = this.resolveSequence(name)
         if (!seq) {
             LoggerService.warn(`Unknown sequence: "${name}"`, 'SequenceContainer')
             return false
         }
-        return seq.run(command)
+        return seq.run(command, context)
     }
 
     /** Start the loop on one sequence instance; unknown names warn gracefully.
      * @param {string} name - Slug or friendly name
+     * @param {Object} [context={}] - Initiating source
      * @returns {Promise<boolean>} true when the loop started */
-    async startLoop(name) {
+    async startLoop(name, context = {}) {
         const seq = this.resolveSequence(name)
         if (!seq) {
             LoggerService.warn(`Unknown sequence: "${name}"`, 'SequenceContainer')
             return false
         }
-        return seq.startLoop()
+        return seq.startLoop(context)
     }
 
     /** Gracefully stop the loop on one sequence instance; unknown names warn gracefully.

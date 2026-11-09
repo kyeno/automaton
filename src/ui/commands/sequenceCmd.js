@@ -9,6 +9,7 @@
 'use strict'
 
 import CommandBase from './base/commandBase.js'
+import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 
 
 class SequenceCmd extends CommandBase {
@@ -136,7 +137,7 @@ class SequenceCmd extends CommandBase {
             return
         }
         if (op === 'start') {
-            const started = await sc.startLoop(seq.getSlug())
+            const started = await sc.startLoop(seq.getSlug(), { source: DeviceCommandSource.HUMAN, caller: 'ui' })
             this.ctx.print(started ? `Loop started: ${seq.getName()}` : `Loop not started: ${seq.getName()} (busy or no loop configured)` )
         } else {
             const stopped = sc.stopLoop(seq.getSlug())
@@ -160,8 +161,14 @@ class SequenceCmd extends CommandBase {
             this.#printAvailableNames()
             return
         }
-        const ok = await sc.callCommand(seq.getSlug(), action)
-        this.ctx.print(ok ? `${action} sent to ${seq.getName()}` : `${action} rejected for ${seq.getName()} (already running)`)
+        const ok = await sc.callCommand(seq.getSlug(), action, { source: DeviceCommandSource.HUMAN, caller: 'ui' })
+        const result = seq.getLastRunResult?.()
+        this.ctx.print(ok
+            ? `${action} ${result?.status ?? 'completed'}: ${seq.getName()}${result?.failed?.length ? ` (${result.failed.length} failed steps)` : ''}`
+            : `${action} rejected for ${seq.getName()} (busy or phase unavailable)`)
+        if (ok && seq.supportsLoop()) {
+            this.ctx.print(`Executed once. Start repeating with: /sequence loop start ${seq.getSlug()}`)
+        }
     }
 
     //  -- Helpers ---------------------------------------------------------------
