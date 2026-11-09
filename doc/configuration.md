@@ -11,8 +11,9 @@ Automaton loads configuration from multiple sources in this order:
 3. **Device definitions** (`etc/device/*.yaml`) -- what devices exist and their types
 4. **Automation rules** (`etc/automation/*.yaml`) -- scheduled rule evaluations
 5. **Sequence definitions** (`etc/sequence/sequences.yaml`) -- ordered device choreography with optional loops
-6. **Interaction mappings** (`etc/interaction/interaction.yaml`) -- event-driven responses
-7. **i18n bundles** (`etc/i18n/{locale}/*`) -- language-specific prompts and templates
+6. **AI virtual devices** (`etc/device/virtual.yaml`) -- named actions exposed to the AI device tools
+7. **Interaction mappings** (`etc/interaction/interaction.yaml`) -- event-driven responses
+8. **i18n bundles** (`etc/i18n/{locale}/*`) -- language-specific prompts and templates
 
 ---
 
@@ -130,6 +131,7 @@ house_owners:                     # who gets the mail
 email:
   enabled: true                   # false disables the channel even with a relay set
   from: ''                        # sender address; falls back to SMTP_USER when empty
+  from_name: ''                   # display name; defaults to ai.name when empty
   subject_prefix: 'Automaton'     # prepended to every subject: "Automaton: <subject>"
   cooldown: "60m"              # per-kind silence after one notification; 0 = mail every event
   notify:                        # per-kind switches; a kind set to false never mails
@@ -139,6 +141,7 @@ email:
 - **`house_owners`** — list of `{ name, email }` (a bare address string is also accepted). Entries without a well-formed address are dropped; a missing name falls back to the local part of the address.
 - **`email.enabled`** — master switch. `false` disables the channel even when `SMTP_HOST` is set.
 - **`email.from`** — sender address; empty falls back to `SMTP_USER`.
+- **`email.from_name`** — sender display name; empty falls back to `ai.name`, then `Automaton`.
 - **`email.subject_prefix`** — prepended to every subject; empty string drops it.
 - **`email.cooldown`** — per-kind re-notification window; `0` mails every event.
 - **`email.notify`** — map of kind → boolean; a kind set to `false` is muted, a kind with no entry is allowed.
@@ -327,9 +330,31 @@ logger:
 
 Winston rotates structured logs. Relative paths resolve from the project root. TRACE contains MQTT payloads, command tokens, and rule skips; it goes only to the trace file. `--no-trace` disables it.
 
+### Host Commands Section
+
+```yaml
+host_commands:
+  enabled: false                      # master switch; nothing is subscribed when false
+  topic_base: 'automaton/host'        # never under zigbee2mqtt, never automaton/ai
+  targets:
+    htpc:
+      secret_env: 'HTPC_MQTT_SECRET'  # env var name -- the secret itself is never in config
+      ack_timeout: '3s'               # 100ms - 10s, default 3s
+```
+
+Automaton publishes signed shutdown requests to `<topic_base>/<target>/command` and waits
+for a signed ACK on `<topic_base>/<target>/ack`. An ACK proves delivery only, never that
+the machine is off. Topics, payloads, canonical signing, the wire test vector, secret
+handling and every limitation: [Host commands](services/host-commands.md).
+
 ---
 
 ## 3. Device Definitions
+
+IR transmitters use the `IRTransmitter` mechanism subtype, a named-code catalog in
+`etc/ir/commands.yaml`, and localized metadata in `etc/i18n/<locale>/ir.yaml`.
+Use `/ir list`, `/ir show <id>` and `/ir send <id>`. See the
+[IR setup and sequence examples](architecture/ir-transmitter.md).
 
 ### Zigbee Devices (`etc/device/zigbee.yaml`)
 
@@ -868,12 +893,63 @@ sequences:
 
 Setting brightness values automatically creates the transition on the wire — no extra "transition" field needed.
 
+### Host command steps
+
+A rich step with `kind: 'host_command'` sends a signed shutdown request to a configured
+host target instead of a device payload:
+
+```yaml
+  - name: 'Home Cinema'
+    on:
+      - device: 'Salon Pilot IR'
+        payload: { ir_command: avr_on }
+    off:
+      - device: 'Salon Pilot IR'
+        payload: { ir_command: avr_off }
+      - device: 'Salon Pilot IR'
+        payload: { ir_command: tv_onoff }
+      - kind: 'host_command'
+        target: 'htpc'
+        action: 'shutdown'
+```
+
+Host steps need the `on:`/`off:` form: they have no inverse payload, so the simple
+`devices:` form rejects them, and a derived `off:` runs device steps only. A host-only
+sequence advertises no OFF phase. Put a host step **last** in its phase — it blocks up to
+`ack_timeout` (3s by default) waiting for the host's signed ACK, and steps run in order.
+Failed host steps are reported as `host:<target>` in the run result and make the run a
+partial failure; surrounding device steps still run, and there is no IR fallback on
+timeout. A bad `kind`, an unsupported `action`, a missing `target` or an unknown step key
+fails config validation. Targets, secrets and ACK semantics:
+[Host commands](services/host-commands.md).
+
 ### Runtime behaviour & state keys
 
 - Runs are **blocking**: a second `run()` or `startLoop()` while an instance is busy is rejected with a warning (never queued, never overridden).
 - Loops stop gracefully (`/sequence loop stop <name>`): between phases the inter-phase timer cancels and the sequence goes straight to idle; mid-phase the in-flight step-list always finishes so no device ends half-configured.
 - Live status is exposed under StateService keys `sequence.<slug>.active`, `sequence.<slug>.phase` (`on`|`off`) and `sequence.<slug>.loop.active`; all cleared at idle. Commands carry AUTOMATION provenance.
 - Drive from the UI: `/sequence run <name> [ON|OFF]`, `/sequence loop start|stop <name>` — names may be slugs or friendly names (case-insensitive); bare `/sequence` lists everything with live status. See [UI commands](./ui/commands/index.md) for details.
+
+---
+
+## 6a. AI Virtual Devices (`etc/device/virtual.yaml`)
+
+Copy `etc/device/virtual.yaml.dist` to `etc/device/virtual.yaml` and define names the AI can use with its ordinary `set_device_state` tool. Virtual devices are visible only to AI; they have no Zigbee identity and do not appear in the physical device registry or UI. `get_device_state` reports an unknown overall appliance state and can include configured read-only observations. `/config reload` validates and reloads the file; invalid edits leave the previous registry in place.
+
+```yaml
+devices:
+  - name: 'kino domowe'
+    description: 'TV, amplituner i HTPC'
+    observations:
+      htpc_presence: { type: network_presence, name: htpc }
+    actions:
+      ON:  { type: sequence, name: home_cinema, phase: ON }
+      OFF: { type: sequence, name: home_cinema, phase: OFF }
+```
+
+Each action maps to one bounded operation. Supported actions are `ON`, `OFF`, `OPEN`, `CLOSE`, `STOP`, and `TOGGLE`. Operations are `sequence` (`name`, `phase: ON|OFF|START_LOOP|STOP_LOOP`), `automation` (`name`, optional `force`), `interaction` (`name`, `action`), `device` (`name`, `command`), and `ir` (`command_id`). No arbitrary JavaScript method names or arguments are accepted. The result describes local invocation or sequence completion, not verified power state of a TV or amplifier.
+
+Optional `observations` map read-only labels to bounded state sources. `network_presence` reads the named host from `etc/device/network.yaml` and reports `online`, `offline`, or `unknown`. The first result after startup is `unknown` until the presence monitor checks that host. Presence is evidence about the host's network reachability only; boot, DHCP, shutdown, or a failed network check can delay it relative to power state.
 
 ---
 

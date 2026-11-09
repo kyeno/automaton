@@ -55,6 +55,7 @@ Singletons watching the world outside Zigbee.
 Core singletons that back the automations and UI.
 
 - [Email Notifications](services/email.md) — SMTP mail channel for the house owners: per-kind templates, cooldown, `/mail` command
+- [Host Commands](services/host-commands.md) — signed MQTT shutdown requests to opted-in PCs: topics, canonical HMAC signing, ACK semantics, secrets
 
 ### Guides & Roadmap
 
