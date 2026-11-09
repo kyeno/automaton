@@ -15,6 +15,27 @@ export function slugify(str) {
     return str.trim().toLowerCase().replace(/\s+/g, '_')
 }
 
+/** Normalize a friendly device name for AI tool matching.
+ * @param {string} name - Friendly name
+ * @returns {string} Matching key */
+export function normalizeDeviceToolName(name) {
+    return String(name)
+        .replace(/[\u0105\u0104]/g, 'a')
+        .replace(/[\u0107\u0106]/g, 'c')
+        .replace(/[\u0119\u0118]/g, 'e')
+        .replace(/[\u0142\u0141]/g, 'l')
+        .replace(/[\u0144\u0143]/g, 'n')
+        .replace(/[\u00F3\u00D3]/g, 'o')
+        .replace(/[\u015B\u015A]/g, 's')
+        .replace(/[\u017A\u0179\u017C\u017B]/g, 'z')
+        .normalize('NFKD')
+        .replace(/\p{M}/gu, '')
+        .replace(/[^a-zA-Z0-9]\s*/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '')
+        .toLowerCase()
+}
+
 /** Derives the rule-target key used under automation `rules[].targets`
  * @param {string} str - The device name to transform.
  * @returns {string} The transformed target key. */

@@ -13,9 +13,12 @@ import EventBus from '../service/eventBus.js'
 import I18nLoader from '../service/i18nLoader.js'
 import LoggerService from '../service/loggerService.js'
 import { round } from '../lib/math.js'
+import { normalizeDeviceToolName } from '../lib/string.js'
 import temporal from '../lib/date.js'
 import { normalizeChannelRef, positionalNameFor, resolveChannelAlias, POSITIONAL_NAMES } from '../lib/channelAliases.js'
 import DeviceCommandSource from '../enum/deviceCommandSource.js'
+import IRCommandService from '../ir/irCommandService.js'
+import VirtualDeviceService from './virtualDeviceService.js'
 
 //  Type Definitions.
 
@@ -61,7 +64,7 @@ class SToolBuilder {
 
         //  Load translations from i18n bundle with English fallbacks.
         const setDesc = I18nLoader.t('tools.set_device_state.description',
-            'Change the state or position of an executive device (light, socket, switch, roller shutter).')
+            'Change the state or position of a device or invoke a configured virtual device action.')
         const setDeviceNameDesc = I18nLoader.t('tools.set_device_state.parameters.device_name',
             'Exact friendly name of the device, e.g. "Living Room Shutter", "Kitchen Socket".')
         const setActionDesc = I18nLoader.t('tools.set_device_state.parameters.action',
@@ -74,7 +77,7 @@ class SToolBuilder {
             'Optional brightness level in percent (0-100) for dimmable devices. Pass it here as a number -- never inside action. Add action: ON to also switch the light on. Combine with channel to target one output only.')
 
         const getDesc = I18nLoader.t('tools.get_device_state.description',
-            'Check the current state of any device (sensor, remote, or executive device). Returns sensors, batteries, or current binary state.')
+            'Check the current state of a device. Virtual devices cannot confirm appliance state.')
         const getDeviceNameDesc = I18nLoader.t('tools.get_device_state.parameters.device_name',
             'Exact friendly name of the device to check.')
         const getTimeDesc = I18nLoader.t('tools.get_time.description',
@@ -150,6 +153,34 @@ class SToolBuilder {
             }
         ]
 
+        this.#tools.push({
+                type: 'function',
+                function: {
+                    name: 'find_ir_commands',
+                    description: I18nLoader.t('ir.tools.find', 'Find configured IR commands for TV, amplifier or A/C. Returns IDs and descriptions, never codes.'),
+                    parameters: {
+                        type: 'object',
+                        properties: { query: { type: 'string' } },
+                        required: ['query'],
+                        additionalProperties: false
+                    }
+                }
+            }, {
+                type: 'function',
+                function: {
+                    name: 'send_ir_command',
+                    description: I18nLoader.t('ir.tools.send', 'Send a discovered IR command once. Appliance state cannot be confirmed.'),
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            command_id: { type: 'string' }
+                        },
+                        required: ['command_id'],
+                        additionalProperties: false
+                    }
+                }
+            })
+
         return this.#tools
     }
 
@@ -175,6 +206,9 @@ class SToolBuilder {
                 return device
             }
         }
+        for (const device of VirtualDeviceService.getAll()) {
+            if (this.#sanitizeToolName(device.getName()) === targetSanitized) return device
+        }
         return null
     }
 
@@ -191,6 +225,14 @@ class SToolBuilder {
             return JSON.stringify({
                 error: `Invalid arguments for "${funcName}": ${toolCall.function?.arguments}`
             })
+        }
+
+        if (!args || typeof args !== 'object' || Array.isArray(args)) return JSON.stringify({ error: 'Arguments must be an object' })
+        if (['find_ir_commands', 'send_ir_command'].includes(funcName)) {
+            return this.#executeCatalogTool(funcName, args)
+        }
+        if (!['get_time', 'get_device_state', 'set_device_state'].includes(funcName)) {
+            return JSON.stringify({ error: `Unknown tool: ${funcName}` })
         }
 
         //  Time queries need no device -- answer directly from lib/date before any lookup.
@@ -243,6 +285,29 @@ class SToolBuilder {
         })
     }
 
+    /** Route domain tools explicitly; never reinterpret them as device-state writes.
+     * @private
+     * @param {string} name - Tool name
+     * @param {Object} args - Parsed arguments
+     * @returns {Promise<string>} JSON result with local outcomes */
+    async #executeCatalogTool(name, args) {
+        try {
+            if (name === 'find_ir_commands') {
+                if (typeof args.query !== 'string') throw new Error('query is required')
+                return JSON.stringify(IRCommandService.search(args.query))
+            }
+            if (name === 'send_ir_command') {
+                if (typeof args.command_id !== 'string') throw new Error('command_id is required')
+                const result = await IRCommandService.send(args.command_id, { source: DeviceCommandSource.HUMAN, caller: 'ai' })
+                EventBus.emit('ai:deviceInteraction', { device: result.transmitter, action: args.command_id, tool: name })
+                return JSON.stringify(result)
+            }
+            throw new Error(`Unknown catalog tool: ${name}`)
+        } catch (error) {
+            return JSON.stringify({ status: 'rejected', error: error.message })
+        }
+    }
+
     /** Execute the get_time tool: returns the current time of day from lib/date.
      * @returns {string} JSON-stringified result for the model.
      * @private */
@@ -269,6 +334,10 @@ class SToolBuilder {
         const fencedMatch = stripped.match(/^\s*\`\`\`(?:json)?\s*\n([\s\S]*?)\n\s*\`\`\`\s*$/)
         if (fencedMatch) {
             stripped = fencedMatch[1].trim()
+        }
+        if (/^<\|(?:channel|tool_call)>call:(?:set_device_state|get_device_state)[{(]/.test(stripped)) {
+            if (!stripped.endsWith('<tool_call|>')) return null
+            stripped = stripped.replaceAll('<|"|>', '"')
         }
 
         // Stage 1 -- strict JSON (well-formed output). Preserves original behavior exactly.
@@ -467,6 +536,19 @@ class SToolBuilder {
      * @private
      */
     async #dispatchToDevice(device, deviceName, { action = null, position, channel, brightness, toolLabel = 'unknown', readState = false, rawArgs = {} }) {
+        if (device.isVirtual?.()) {
+            if (position !== undefined || channel || brightness !== undefined) {
+                EventBus.emit('ai:deviceInteraction', { device: deviceName, action, tool: toolLabel, ok: false })
+                return JSON.stringify({ device: deviceName, status: 'rejected', error: 'Virtual device does not support position, channel or brightness' })
+            }
+            if (readState) return JSON.stringify(device.getStateSummary())
+            const result = await device.receiveCommand(action, DeviceCommandSource.HUMAN)
+            EventBus.emit('ai:deviceInteraction', { device: deviceName, action, tool: toolLabel, ok: !['rejected', 'partial_failure'].includes(result.status) })
+            return JSON.stringify(result)
+        }
+        if (typeof device.transmit === 'function' && (!readState || position !== undefined || channel || brightness !== undefined)) {
+            return JSON.stringify({ error: 'Use find_ir_commands and send_ir_command for IR transmissions' })
+        }
         const hasPosition = typeof position === 'number'
         // Clamp once -- reused by both the event payload and the command branch
         const clampedPos = hasPosition ? Math.max(0, Math.min(100, round(position))) : null
@@ -886,25 +968,7 @@ class SToolBuilder {
      * @private
      */
     #sanitizeToolName(name) {
-        return String(name)
-            // Explicit ASCII folding for common Latin letters whose decomposition is
-            // compatibility-only or whose combining marks fall outside \u0300-\u036f -- e.g.,
-            // Polish "l-stroke" and ogonek-bearing "a"/"e". Keeps matching portable across Node
-            // builds where NFKD may not perform full compatibility decomposition.
-            .replace(/[\u0105\u0104]/g, 'a')   // a-ogonek (upper/lower) -> a
-            .replace(/[\u0107\u0106]/g, 'c')   // c-acute  (upper/lower) -> c
-            .replace(/[\u0119\u0118]/g, 'e')   // e-ogonek (upper/lower) -> e
-            .replace(/[\u0142\u0141]/g, 'l')   // l-stroke (upper/lower) -> l
-            .replace(/[\u0144\u0143]/g, 'n')   // n-acute  (upper/lower) -> n
-            .replace(/[\u00F3\u00D3]/g, 'o')   // o-acute  (upper/lower) -> o
-            .replace(/[\u015B\u015A]/g, 's')   // s-acute  (upper/lower) -> s
-            .replace(/[\u017A\u0179\u017C\u017B]/g, 'z') // z-acute / z-dotabove (upper/lower) -> z
-            .normalize('NFKD')
-            .replace(/\p{M}/gu, '')            // strip any remaining combining marks (broad)
-            .replace(/[^a-zA-Z0-9]\s*/g, '_')
-            .replace(/_+/g, '_')
-            .replace(/^_|_$/g, '')
-            .toLowerCase()
+        return normalizeDeviceToolName(name)
     }
 }
 

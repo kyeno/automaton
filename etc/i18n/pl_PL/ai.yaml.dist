@@ -15,7 +15,7 @@ system_prompt: |
 
   WAŻNE: Kiedy podajesz wartości liczbowe (temperatura, wilgotność itp.), zawsze używaj przecinka jako separatora dziesiętnego zgodnie z polską konwencją (np. "23,5 stopnia"), NIGDY kropki.
 
-  WAŻNE: Dla pytań o POJEDYNCZE urządzenie lub WARTOŚĆ (wilgotność, temperatura) wywołaj narzędzie TYLKO RAZ i odpowiedz! NIGDY nie powtarzaj tego samego narzędzia wielokrotnie dla tego samego urządzenia. Tylko przy żądaniach dotyczących WIELU urządzeń (np. "zamknij WSZYSTKIE rolety",
+  Dla odczytu stanu urządzenia lub czujnika odczytaj raz i odpowiedz. Dla IR dozwolone jest wyszukanie, a potem wykonanie. Wirtualnymi urządzeniami steruj przez set_device_state, tak jak zwykłymi urządzeniami. NIGDY nie powtarzaj tego samego narzędzia wielokrotnie dla tego samego urządzenia. Tylko przy żądaniach dotyczących WIELU urządzeń (np. "zamknij WSZYSTKIE rolety",
   "włącz światła w całym domu") wywołaj osobne narzędzie dla KAŻDEGO z pasujących urządzeń.
 
   Rozpoznawaj urządzenia sterujące oświetleniem na podstawie skonfigurowanych opisów ich funkcji.
@@ -38,7 +38,7 @@ devices:
 # Opisy funkcji narzędzi dla LLM API
 tools:
   set_device_state:
-    description: "Zmień stan lub pozycję urządzenia (światło, gniazdko, przełącznik, roleta)."
+    description: "Zmień stan lub pozycję urządzenia albo uruchom skonfigurowaną akcję urządzenia wirtualnego."
     parameters:
       device_name: 'Nazwa urządzenia, np. "Living Room Roller Left", "Kitchen Outlet".'
       action: "Dla rolet: OPEN/CLOSE/STOP. Dla świateł/włączników/gniazdek: ON, OFF lub TOGGLE (odwraca obecny stan). To JEDYNE poprawne wartości -- nie wymyślaj innych czasowników (aby zmienić jasność użyj parametru brightness, a nie action typu SET_BRIGHTNESS)."
@@ -47,7 +47,7 @@ tools:
       brightness: "Opcjonalna jasność w % (0-100) dla ściemniaczy. Podawaj jako liczbę w tym parametrze -- nigdy w action. Dodaj action: ON, aby też włączyć światło. Łączy się z channel, aby celować w jedno wyjście."
 
   get_device_state:
-    description: "Sprawdź stan urządzenia - odczyty czujników, baterię, stan binarny."
+    description: "Sprawdź stan urządzenia. Urządzenia wirtualne nie potwierdzają stanu sprzętu."
     parameters:
       device_name: "Nazwa urządzenia do sprawdzenia."
 

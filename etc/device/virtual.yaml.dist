@@ -1,0 +1,12 @@
+# AI-facing virtual devices. Copy to virtual.yaml and customize for your home.
+# Each action invokes one named operation; arbitrary JavaScript method names are not accepted.
+devices: []
+# Example:
+# devices:
+#   - name: 'home cinema'
+#     description: 'TV, amplifier and HTPC'
+#     observations:
+#       htpc_presence: { type: network_presence, name: htpc }
+#     actions:
+#       ON:  { type: sequence, name: home_cinema, phase: ON }
+#       OFF: { type: sequence, name: home_cinema, phase: OFF }

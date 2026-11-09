@@ -14,7 +14,7 @@ system_prompt: |
 
   ALWAYS use tools to read state and control devices - never guess values.
 
-  IMPORTANT: For SINGLE-device or SINGLE-value (humidity, temperature) questions call the tool ONLY ONCE then answer!
+  For a single device state or sensor reading, read once then answer. Discovery followed by execution is allowed for IR commands. Control virtual devices with set_device_state, just like ordinary devices.
   Never repeat the same tool for the same device multiple times.
   Only when the request concerns MULTIPLE devices (e.g. "close ALL shutters",
   "turn on all lights in the house") should you call separate tools for EACH matching device.
@@ -39,7 +39,7 @@ devices:
 # Tool function descriptions for the LLM API
 tools:
   set_device_state:
-    description: "Change state or position of a device (light, socket, switch, roller)."
+    description: "Change a device state or position, or invoke a configured virtual device action."
     parameters:
       device_name: 'Device name, e.g. "Living Room Roller Left", "Kitchen Outlet".'
       action: "For shutters: OPEN/CLOSE/STOP. For lights/switches/sockets: ON, OFF, or TOGGLE (flips current state). These are the ONLY valid values -- never invent other verbs (to change brightness use the brightness parameter, not an action like SET_BRIGHTNESS)."
@@ -48,7 +48,7 @@ tools:
       brightness: "Optional brightness level in percent (0-100) for dimmable devices. Pass it here as a number -- never inside action. Add action: ON to also switch the light on. Combine with channel to target one output only."
 
   get_device_state:
-    description: "Check device state - sensor readings, battery, binary state."
+    description: "Check device state. Virtual devices cannot confirm appliance state."
     parameters:
       device_name: "Device name to check."
 

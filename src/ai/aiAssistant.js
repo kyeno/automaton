@@ -14,6 +14,7 @@ import LoggerService from '../service/loggerService.js'
 import EventBus      from '../service/eventBus.js'
 import StateService  from '../service/stateService.js'
 import DeviceContainer from '../device/container/deviceContainer.js'
+import VirtualDeviceService from './virtualDeviceService.js'
 import OpenAiProvider from './providers/openaiProvider.js'
 import ToolBuilder    from './toolBuilder.js'
 import I18nLoader     from '../service/i18nLoader.js'
@@ -134,6 +135,7 @@ class SAiAssistant {
         //  Re-read ai.* now that ConfigService holds the freshly reloaded values.
         this.#loadConfig()
         if (hadProvider) this.#reinitProvider()   // picks up new model / max_tokens / temperature
+        ToolBuilder.build(true)
 
         this.clearConversation()                  // fresh system prompt + cache key drop
 
@@ -417,10 +419,15 @@ class SAiAssistant {
             const tag = role ? ` [${role}]` : ''
             allDevices.push(`- "${name}"${tag}`)
         }
+        for (const device of VirtualDeviceService.getAll()) {
+            const role = device.getDescription()
+            allDevices.push(`- "${device.getName()}"${role ? ` [${role}]` : ''}`)
+        }
 
         const basePrompt = interpolateTokens(this.#systemPrompt, { name: this.getAssistantName() })
 
-        return `${basePrompt}\n\n${devicesHeader}\n${deviceInstruction}\n${allDevices.join('\n')}`
+        const domainInstructions = ['ir'].map(domain => I18nLoader.t(`${domain}.ai_instruction`, '')).filter(Boolean).join('\n')
+        return `${basePrompt}\n${domainInstructions}\n\n${devicesHeader}\n${deviceInstruction}\n${allDevices.join('\n')}`
     }
 
     //  -- Private Helpers --------------------------------------------------
