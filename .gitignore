@@ -9,6 +9,9 @@ node_modules/
 .DS_Store
 _debug/
 
+# Local HTPC shutdown handoff/progress notes -- working scratch, never committed
+HTPC_MQTT_SHUTDOWN_*.md
+
 # Generated documentation
 doc/api/
 
