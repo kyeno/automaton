@@ -73,6 +73,7 @@ house_owners:
 email:
   enabled: true
   from: ''                      # sender address; falls back to SMTP_USER when empty
+  from_name: ''                 # display name; defaults to ai.name when empty
   subject_prefix: 'Automaton'   # prepended to every subject: "Automaton: <subject>"
   cooldown: "60m"            # per-kind silence after one notification; 0 = mail every event
   notify:                       # per-kind switches; a kind set to false never mails
@@ -128,6 +129,23 @@ alerts:
   #   wifi-router:
   #     tts_profile: 'alarm'
 
+# --- HOST COMMANDS: signed shutdown requests to host machines (chat client opt-in)
+#  Requests go to <topic_base>/<target>/command, answers come back signed on
+#  <topic_base>/<target>/ack. An ACK proves delivery only -- never that the machine is off.
+#  Secrets are never stored here: each target names an environment variable that holds the
+#  shared HMAC key, so an unset variable simply disables that target.
+#  See doc/services/host-commands.md
+host_commands:
+  #  Master switch -- when false nothing is subscribed and every request fails closed
+  enabled: false
+  #  Topic tree root; must stay out of the Zigbee2MQTT prefix and away from automaton/ai
+  topic_base: 'automaton/host'
+  #  Allowlisted targets; per-host secret lives only in the named environment variable
+  targets:
+    htpc:
+      secret_env: 'HTPC_MQTT_SECRET'
+      ack_timeout: '3s'
+
 # --- LOGGER: Winston console/file transports & log file paths
 logger:
   file:
@@ -148,6 +166,8 @@ logger:
 #     network: "etc/device/network.yaml"
 #     interaction: "etc/interaction/interaction.yaml"
 #     sequence: "etc/sequence/sequences.yaml"
+#     ir: "etc/ir/commands.yaml"
+#     virtual: "etc/device/virtual.yaml"
 #   directories:
 #     automation: "etc/automation/"
 #     interaction: "etc/interaction/"

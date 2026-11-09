@@ -54,6 +54,7 @@ class ConfigBase {
     /** @type {Record<string, unknown>} */ #data
     /** @type {boolean} */ #hasValidator
     /** @type {Promise<Record<string, ConfigSchemaNode>|null>} */ #schemaPromise
+    /** @type {Function|null} Section-specific semantic validation. */ #customValidator = null
 
 
     //  -- Loading ------------------------------------------------------------
@@ -81,6 +82,7 @@ class ConfigBase {
         try {
             const content = fs.readFileSync(absolutePath, 'utf8')
             const doc = yamlParseDocument(content)
+            if (doc.errors.length) throw new Error(doc.errors.map(error => error.message).join('\n'))
             this.#data = /** @type {Record<string, unknown>} */ (normalizeConfig(doc.toJS(), this.#sectionName)) || {}
         } catch (error) {
             throw new Error(
@@ -105,6 +107,7 @@ class ConfigBase {
                 try {
                     /* v8 ignore next 2 */
                     const mod = await import(validatorPath)
+                    this.#customValidator = mod.validateConfig ?? null
                     const schema = mod.default ?? mod
                     if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
                         this.#hasValidator = true
@@ -127,7 +130,7 @@ class ConfigBase {
         const schema = await this.#ensureSchema()
         if (!schema) return []
 
-        return this.#validate(this.#data, schema, '')
+        return [...this.#validate(this.#data, schema, ''), ...(this.#customValidator?.(this.#data) ?? [])]
     }
 
     /** Validate the current data and THROW on any violation.

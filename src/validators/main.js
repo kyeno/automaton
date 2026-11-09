@@ -8,6 +8,9 @@
  */
 'use strict'
 
+import { ACK_TIMEOUT_MAX_MS, ACK_TIMEOUT_MIN_MS, ENV_NAME_RE, TARGET_ID_RE, TARGET_KEYS } from '../host/hostProtocol.js'
+import temporal from '../lib/date.js'
+
 export default {
     //  Automation section -- global device/interaction behavior (durations)
     automation: {
@@ -113,6 +116,7 @@ export default {
         properties: {
             enabled:        { type: 'boolean' },
             from:           { type: 'string' },
+            from_name:      { type: 'string' },
             //  Per-kind notification switches, keyed by kind name (dynamic keys, map).
             notify:         { type: 'object' },
             cooldown:    { type: ['number', 'string'] },
@@ -161,6 +165,21 @@ export default {
         }
     },
 
+    //  Host commands section -- signed shutdown requests toward host machines whose chat
+    //  client opted in. Secrets never live in this file: every target names an environment
+    //  variable (secret_env) that holds the shared HMAC key. Deep checks live in
+    //  validateConfig below; see doc/services/host-commands.md.
+    host_commands: {
+        type: 'object',
+        required: false,
+        properties: {
+            enabled:    { type: 'boolean' },
+            topic_base: { type: 'string' },
+            //  Target slug -> { secret_env, ack_timeout }. Dynamic keys, map-validated.
+            targets:    { type: 'object' }
+        }
+    },
+
     //  Paths section (optional - provides config file paths and directory paths)
     paths: {
         type: 'object',
@@ -171,6 +190,9 @@ export default {
                 required: false,
                 properties: {
                     network: { type: 'string' },
+                    ir: { type: 'string' },
+                    sequence: { type: 'string' },
+                    virtual: { type: 'string' },
                     interaction: { type: 'string' }
                 }
             },
@@ -262,4 +284,82 @@ export default {
             }
         }
     }
+}
+
+/**
+ * Semantic checks for the host_commands section -- the ConfigBase custom-validator hook.
+ *
+ * The structural schema above only sees `targets` as a map; everything that keeps the
+ * shutdown contract safe (slug shape, env-var naming, topic-tree boundaries, unknown keys
+ * that could smuggle a command) is verified here.
+ *
+ * @param {Object} config - Full main configuration
+ * @returns {string[]} Human-readable errors; empty when the section is usable */
+export function validateConfig(config) {
+    const section = config?.host_commands
+    if (section === undefined || section === null) return []
+    if (typeof section !== 'object' || Array.isArray(section)) return ['host_commands: must be an object']
+
+    const errors = []
+
+    if (section.enabled !== undefined && section.enabled !== null && typeof section.enabled !== 'boolean') {
+        errors.push('host_commands.enabled: must be true or false')
+    }
+
+    const base = section.topic_base
+    if (base !== undefined && base !== null) {
+        const value = String(base).trim()
+        if (!value) {
+            errors.push('host_commands.topic_base: must not be empty')
+        } else if (value.includes('#') || value.includes('+')) {
+            errors.push('host_commands.topic_base: wildcards are not allowed')
+        } else if (value === 'zigbee2mqtt' || value.startsWith('zigbee2mqtt/')) {
+            errors.push('host_commands.topic_base: must not live under the Zigbee2MQTT prefix')
+        } else if (value === 'automaton/ai' || value.startsWith('automaton/ai/')) {
+            errors.push('host_commands.topic_base: automaton/ai is reserved for chat input')
+        } else if (value.startsWith('/') || value.endsWith('/') || value.includes('//')) {
+            errors.push('host_commands.topic_base: must not contain empty topic levels')
+        }
+    }
+
+    const targets = section.targets
+    if (targets === undefined || targets === null) {
+        if (section.enabled === true) errors.push('host_commands.targets: required when host_commands.enabled is true')
+        return errors
+    }
+    if (typeof targets !== 'object' || Array.isArray(targets)) {
+        return [...errors, 'host_commands.targets: must be a map of target slug to settings']
+    }
+
+    for (const [key, entry] of Object.entries(targets)) {
+        const path = `host_commands.targets.${key}`
+        if (!TARGET_ID_RE.test(String(key).trim().toLowerCase())) {
+            errors.push(`${path}: target id must be a lowercase slug matching ${TARGET_ID_RE.source}`)
+        }
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            errors.push(`${path}: must be an object with secret_env and optional ack_timeout`)
+            continue
+        }
+        for (const key2 of Object.keys(entry)) {
+            if (!TARGET_KEYS.has(key2)) {
+                errors.push(`${path}.${key2}: unsupported key (only secret_env and ack_timeout are allowed)`)
+            }
+        }
+        const secretEnv = entry.secret_env
+        if (typeof secretEnv !== 'string' || !ENV_NAME_RE.test(secretEnv.trim())) {
+            errors.push(`${path}.secret_env: must name an environment variable (letters, digits, underscores)`)
+        }
+        if (entry.ack_timeout !== undefined && entry.ack_timeout !== null) {
+            const parsed = temporal.parseDurationMs(entry.ack_timeout)
+            if (parsed === null) {
+                errors.push(`${path}.ack_timeout: not a duration`)
+            } else if (parsed <= 0) {
+                errors.push(`${path}.ack_timeout: must be positive`)
+            } else if (parsed < ACK_TIMEOUT_MIN_MS || parsed > ACK_TIMEOUT_MAX_MS) {
+                errors.push(`${path}.ack_timeout: must be between ${ACK_TIMEOUT_MIN_MS}ms and ${ACK_TIMEOUT_MAX_MS}ms`)
+            }
+        }
+    }
+
+    return errors
 }

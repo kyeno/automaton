@@ -495,6 +495,29 @@ class SMQTTService {
         this.#drainQueue()
     }
 
+    /** Publish an event and await local dispatch. Expired events are removed rather than replayed.
+     * @param {string} topic - MQTT topic
+     * @param {string|Object} message - Payload
+     * @param {number} [timeoutMs=15000] - Maximum queue wait
+     * @param {Object} [publishOptions] - mqtt.js publish options; only qos (0/1/2) and retain
+     *   (boolean) are honoured, every other key is ignored
+     * @returns {Promise<void>} Resolves when handed to mqtt.js, without remote confirmation */
+    publishAsync(topic, message, timeoutMs = 15_000, publishOptions = {}) {
+        if (this.#shuttingDown) return Promise.reject(new Error('MQTT is shutting down'))
+        return new Promise((resolve, reject) => {
+            //  qos/retain come from the caller; meta stays service-internal and is never forwarded.
+            const qos = publishOptions?.qos === 1 || publishOptions?.qos === 2 ? publishOptions.qos : 0
+            const options = { retain: publishOptions?.retain === true, qos, meta: {} }
+            const timer = setTimeout(() => {
+                this.#commandQueue = this.#commandQueue.filter(entry => entry.options !== options)
+                reject(new Error(`MQTT dispatch timed out for ${topic}`))
+            }, timeoutMs)
+            options.meta.onPublish = () => { clearTimeout(timer); resolve() }
+            options.meta.onError = error => { clearTimeout(timer); reject(error) }
+            this.publish(topic, message, options)
+        })
+    }
+
     // -- Command Queue Drain -----------------------------------------------
 
     /**
@@ -548,6 +571,7 @@ class SMQTTService {
                             }
                         }
                     } catch (e) {
+                        entry.options?.meta?.onError?.(e)
                         LoggerService.error(
                             `Failed to publish to "${entry.topic}": ${e.message}`,
                             'MqttService'
@@ -636,6 +660,9 @@ class SMQTTService {
      */
     async disconnect() {
         this.#shuttingDown = true
+        for (const entry of this.#commandQueue.splice(0)) {
+            entry.options?.meta?.onError?.(new Error('MQTT shut down before dispatch'))
+        }
         this.#cancelReconnect()
         this.#stopHeartbeat()
         this.#reconnectCallbacks = []
