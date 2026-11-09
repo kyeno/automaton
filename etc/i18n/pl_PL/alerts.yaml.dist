@@ -12,8 +12,8 @@ zigbee_device_offline: "Uwaga, urządzenie {device} zeszło z sieci Zigbee."
 
 # A mission-critical network host went offline (names from etc/device/network.yaml)
 network_device_offline:
-  default: "Uwaga, {device} jest offline."
-  # core-server: "Uwaga, serwer core jest offline."
+  default: "{device} jest wyłączony."
+  # core-server: "serwer core jest wyłączony."
 
 # A watched host came back (spoken only with alerts.network_offline_announce_recovery: true)
 network_device_online:

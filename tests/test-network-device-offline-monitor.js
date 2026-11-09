@@ -90,7 +90,7 @@ i18nProto.getLocale = function () { return 'pl_PL' }
 const monitorProto = Object.getPrototypeOf(NetworkDeviceOfflineMonitor)
 const originalReadBundle = monitorProto.readBundle
 monitorProto.readBundle = () => ({
-    network_device_offline: { default: 'Uwaga, {device} jest offline.', 'core-server': 'Uwaga, serwer core jest offline.' },
+    network_device_offline: { default: '{device} jest wyłączony.', 'core-server': 'serwer core jest wyłączony.' },
     network_device_online: { default: '{device} znowu działa.', 'dns-server': 'Serwer DNS znowu działa.' },
 })
 
@@ -198,7 +198,7 @@ async function main() {
         EventBus.emit('network:core-server', { name: 'core-server', status: 'offline' })
         await sleep(50)
         assert(spoken.length === 1, `one utterance (got ${spoken.length})`)
-        assert(spoken[0] === 'Uwaga, serwer core jest offline.',
+        assert(spoken[0] === 'serwer core jest wyłączony.',
             `per-device sentence from alerts.yaml: "${spoken[0]}"`)
         assert(Object.keys(payloads[0]).length === 1, 'no framing fields when nothing is configured')
 
