@@ -136,6 +136,8 @@ class SMQTTService {
         return new Promise((resolve, reject) => {
             const client = (this.#connectFn || mqtt.connect)(this.#url, {
                 clientId: `${CLIENT_ID_PREFIX}${randomBytes(4).toString('hex')}`,
+                clean: true,
+                queueQoSZero: false,
                 reconnectPeriod: 0
             })
             this.#client = client
@@ -309,7 +311,7 @@ class SMQTTService {
         this.#client.setMaxListeners(MAX_CLIENT_LISTENERS)
 
         const client = this.#client
-        client.on('message', (topic, payload) => {
+        client.on('message', (topic, payload, packet) => {
             if (this.#shuttingDown || client !== this.#client) return
             const message = payload.toString()
             const now = Date.now()
@@ -329,7 +331,7 @@ class SMQTTService {
             for (const sub of this.#subscriptions) {
                 if (this.#topicMatches(sub.topic, topic)) {
                     try {
-                        sub.callback(topic, message)
+                        sub.callback(topic, message, packet)
                     } catch (e) {
                         LoggerService.error(
                             `Subscription callback threw for topic "${topic}": ${e.message}`,
@@ -651,6 +653,22 @@ class SMQTTService {
      */
     isConnected() {
         return !this.#shuttingDown && (this.#client?.connected ?? false)
+    }
+
+    /** Publish a trusted-LAN control frame immediately, never into an offline queue.
+     * @param {string} topic - Exact control topic
+     * @param {Object} frame - JSON object (may contain a private key; never logged)
+     * @returns {Promise<void>} Local transport completion */
+    publishControl(topic, frame) {
+        if (!this.isConnected()) return Promise.reject(new Error('MQTT is offline'))
+        return new Promise((resolve, reject) => {
+            try {
+                this.#client.publish(topic, JSON.stringify(frame), { qos: 0, retain: false },
+                    error => error ? reject(new Error('MQTT control publish failed')) : resolve())
+            } catch {
+                reject(new Error('MQTT control publish failed'))
+            }
+        })
     }
 
     /**

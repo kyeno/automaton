@@ -342,10 +342,17 @@ host_commands:
       ack_timeout: '3s'               # 100ms - 10s, default 3s
 ```
 
-Automaton publishes signed shutdown requests to `<topic_base>/<target>/command` and waits
-for a signed ACK on `<topic_base>/<target>/ack`. An ACK proves delivery only, never that
-the machine is off. Topics, payloads, canonical signing, the wire test vector, secret
-handling and every limitation: [Host commands](services/host-commands.md).
+Automaton publishes trusted-LAN v2 shutdown requests to `<topic_base>/<target>/command`
+and waits for a correlated ACK on `<topic_base>/<target>/ack`. Requests carry the
+per-host key; no signatures or peer clocks are involved. LANFLIX owns the receiver.
+An ACK means accepted, not powered off. See [Host commands](services/host-commands.md).
+
+### MQTT Command Control
+
+`mqtt_control` exposes a globally configured subset of the headless `ir`, `sequence`
+and `occupancy` commands, including with `--no-ui`. Everyone holding its shared key
+gets the same capabilities. See [MQTT control](services/mqtt-control.md) and the main
+YAML template for the enabled operations. This is separate from per-host shutdown keys.
 
 ---
 

@@ -27,6 +27,7 @@ import SequenceContainer from './sequence/container/sequenceContainer.js'
 import VirtualDeviceService from './ai/virtualDeviceService.js'
 import IRCommandService from './ir/irCommandService.js'
 import HostCommandService from './host/hostCommandService.js'
+import ControlService from './control/controlService.js'
 
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
@@ -200,6 +201,7 @@ async function gracefulDeath(reason, errorLevel = 0) {
     try {
         //  Phase 1 -- Stop high-level logic (interactions -> automations)
         const initialized = StateService.get('lifecycle.initializedServices')
+        if (initialized.has('ControlService')) ControlService.cleanup()
 
         if (initialized.has('InteractionContainer')) {
             LoggerService.debug('Cleaning up interactions...', 'Main')
@@ -393,6 +395,7 @@ async function bootstrap() {
     await initService('IRCommandService', () => IRCommandService.init(), true)
     await initService('HostCommandService', () => HostCommandService.init(), true)
     await initService('SequenceContainer', () => SequenceContainer.init(), true)
+    await initService('ControlService', () => ControlService.init(), true)
     await initService('AutomationContainer', () => AutomationContainer.init())
     await initService('InteractionContainer', () => InteractionContainer.init())
     await initService('VirtualDeviceService', () => VirtualDeviceService.init(), true)

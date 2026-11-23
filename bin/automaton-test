@@ -134,6 +134,7 @@ const defaultTestScripts = [
   'test-ir.js',
   'test-host-command-service.js',
   'test-host-command-config.js',
+  'test-mqtt-control.js',
   'test-mqtt-event-dispatch.js',
   'test-device-cmd.js',
   'test-silence-between.js',

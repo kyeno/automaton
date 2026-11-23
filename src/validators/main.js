@@ -12,6 +12,15 @@ import { ACK_TIMEOUT_MAX_MS, ACK_TIMEOUT_MIN_MS, ENV_NAME_RE, TARGET_ID_RE, TARG
 import temporal from '../lib/date.js'
 
 export default {
+    mqtt_control: {
+        type: 'object',
+        properties: {
+            enabled: { type: 'boolean' },
+            topic_base: { type: 'string' },
+            secret_env: { type: 'string' },
+            commands: { type: 'object' }
+        }
+    },
     occupancy: {
         type: 'object',
         properties: { rooms: { type: 'object' } }
@@ -169,9 +178,9 @@ export default {
         }
     },
 
-    //  Host commands section -- signed shutdown requests toward host machines whose chat
+    //  Host commands section -- shared-key shutdown requests toward host machines whose LANFLIX
     //  client opted in. Secrets never live in this file: every target names an environment
-    //  variable (secret_env) that holds the shared HMAC key. Deep checks live in
+    //  variable (secret_env) that holds the per-host key. Deep checks live in
     //  validateConfig below; see doc/services/host-commands.md.
     host_commands: {
         type: 'object',
@@ -327,7 +336,7 @@ function validateOccupancy(section) {
  * @param {Object} config - Full main configuration
  * @returns {string[]} Human-readable errors; empty when the section is usable */
 export function validateConfig(config) {
-    const occupancyErrors = validateOccupancy(config?.occupancy)
+    const occupancyErrors = [...validateOccupancy(config?.occupancy), ...validateControl(config?.mqtt_control)]
     const section = config?.host_commands
     if (section === undefined || section === null) return occupancyErrors
     if (typeof section !== 'object' || Array.isArray(section)) return [...occupancyErrors, 'host_commands: must be an object']
@@ -393,5 +402,32 @@ export function validateConfig(config) {
         }
     }
 
+    return errors
+}
+
+/** Validate the globally exposed headless command surface.
+ * @param {Object} section - Optional mqtt_control settings
+ * @returns {string[]} Configuration problems */
+function validateControl(section) {
+    if (section === undefined) return []
+    const errors = []
+    const map = value => value && typeof value === 'object' && !Array.isArray(value)
+    if (!map(section)) return ['mqtt_control: must be an object']
+    const operations = {
+        ir: ['list', 'search', 'show', 'send'],
+        sequence: ['list', 'run', 'loop'],
+        occupancy: ['list', 'show', 'set', 'clear']
+    }
+    if (section.enabled !== undefined && typeof section.enabled !== 'boolean') errors.push('mqtt_control.enabled: must be boolean')
+    const base = section.topic_base ?? 'automaton/control'
+    if (typeof base !== 'string' || !/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(base)
+        || /^(zigbee2mqtt|automaton\/(ai|host))(\/|$)/.test(base)) errors.push('mqtt_control.topic_base: invalid or reserved topic')
+    if ((section.enabled || section.secret_env !== undefined) && !ENV_NAME_RE.test(section.secret_env ?? '')) errors.push('mqtt_control.secret_env: required environment variable name')
+    if (section.commands !== undefined && !map(section.commands)) errors.push('mqtt_control.commands: must be a map')
+    else for (const [verb, values] of Object.entries(section.commands ?? {})) {
+        if (!Object.hasOwn(operations, verb) || !Array.isArray(values)
+            || values.some(value => !operations[verb].includes(value))) errors.push(`mqtt_control.commands.${verb}: unsupported command or operation`)
+    }
+    for (const key of Object.keys(section)) if (!['enabled', 'topic_base', 'secret_env', 'commands'].includes(key)) errors.push(`mqtt_control.${key}: unsupported key`)
     return errors
 }

@@ -8,9 +8,9 @@
 #   devices   simple form: ordered names (or {device, command, delay}); ON/OFF drives each device
 #   on/off    rich form: explicit step lists of {device, payload?, delay?}; payload goes to
 #             DeviceBase.receiveCommand() verbatim; 'off' defaults to OFF over the 'on' devices
-#             A step may instead be {kind: host_command, target, action?, delay?} -- it signs an
+#             A step may instead be {kind: host_command, target, action?, delay?} -- it sends an
 #             MQTT host shutdown command (see host_commands in etc/automaton.yaml) and waits for
-#             that host's signed ACK. Put it LAST: it blocks up to ack_timeout, and a lost ACK
+#             that host's correlated ACK. Put it LAST: it blocks up to ack_timeout, and a lost ACK
 #             must never queue the device steps behind it. doc/services/host-commands.md
 #   loop      optional looping block:
 #             enabled: true
@@ -45,7 +45,7 @@ sequences:
 
   # Rich form with a host step: switch the AV off with IR, then ask the media PC to shut
   #  itself down over MQTT. The host step is LAST on purpose -- it waits up to ack_timeout
-  #  (3s by default) for the host's signed ACK, and the IR sends must not queue behind it.
+  #  (3s by default) for the host's correlated ACK, and the IR sends must not queue behind it.
   #  Needs host_commands.enabled: true and the target's secret_env set in the environment.
   #  An ACK proves the command was accepted, never that the machine is off; presence comes
   #  from etc/device/network.yaml. There is no IR fallback on timeout by design.

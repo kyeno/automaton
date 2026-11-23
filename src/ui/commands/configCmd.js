@@ -15,6 +15,7 @@ import AiAssistant from '../../ai/aiAssistant.js'
 import SequenceContainer from '../../sequence/container/sequenceContainer.js'
 import IRCommandService from '../../ir/irCommandService.js'
 import HostCommandService from '../../host/hostCommandService.js'
+import ControlService from '../../control/controlService.js'
 import VirtualDeviceService from '../../ai/virtualDeviceService.js'
 import channels from '../channels.js'
 
@@ -213,6 +214,7 @@ class ConfigCmd extends CommandBase {
 
         //  ---- Refresh dependent subsystems (initialized AND actually affected) ----
         const changed = new Set(report.changed)
+        await ControlService.reload()
         /** @type {string[]} */
         const refreshed = []
 

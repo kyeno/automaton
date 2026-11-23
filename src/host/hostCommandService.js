@@ -1,12 +1,12 @@
 /**
- * Signed host commands over MQTT -- the Automaton side of the HTPC shutdown contract.
+ * Trusted-LAN host commands over MQTT -- the Automaton side of the HTPC shutdown contract.
  *
- * v1 supports exactly one action ("shutdown") toward an allowlisted host target whose chat
+ * v2 supports exactly one action ("shutdown") toward an allowlisted host target whose LANFLIX
  * client opted in. Requests are published to `<topic_base>/<target>/command` and correlated
- * with a signed ACK on `<topic_base>/<target>/ack`; an ACK proves only that the request
+ * with an ACK on `<topic_base>/<target>/ack`; an ACK proves only that the request
  * reached the host, never that the machine is physically off (see
  * doc/services/host-commands.md). Nothing from the wire is ever interpolated into a command,
- * and the HMAC secret lives only in the environment.
+ * and the per-host key lives in the environment.
  *
  * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
@@ -22,40 +22,23 @@ import MqttService from '../service/mqttService.js'
 import LoggerService from '../service/loggerService.js'
 import temporal from '../lib/date.js'
 
-import {
-    ACK_STATUSES,
-    ALLOWED_ACTIONS,
-    CLOCK_SKEW_MS,
-    COMMAND_VALIDITY_MS,
-    DEFAULT_ACK_TIMEOUT_MS,
-    DEFAULT_TOPIC_BASE,
-    DISPATCH_TIMEOUT_MS,
-    PROCESSED_GRACE_MS,
-    PROTOCOL_VERSION,
-    TARGET_ID_RE,
-    canonicalAck,
-    canonicalCommand,
-    signCanonical,
-    verifySignature
-} from './hostProtocol.js'
+import { ACK_STATUSES, ALLOWED_ACTIONS, DEFAULT_ACK_TIMEOUT_MS, DEFAULT_TOPIC_BASE,
+    PROTOCOL_VERSION, TARGET_ID_RE } from './hostProtocol.js'
+import { decodeFrame } from '../control/controlProtocol.js'
 
 
 //  SHostCommandService (module-level singleton)
 
-/** Signed host-command dispatcher: allowlisted targets, per-target secret, ACK correlation. */
+/** Host-command dispatcher: allowlisted targets, per-target secret, ACK correlation. */
 class SHostCommandService {
 
     /** Active target registry: target slug -> { secretEnv, secret, ackTimeoutMs }.
      * @type {Map<string, Object>} */
     #targets = new Map()
 
-    /** Requests awaiting their ACK: request id -> { target, action, resolve, timer, iatMs, expMs }.
+    /** Requests awaiting their ACK: request id -> { target, action, resolve, timer }.
      * @type {Map<string, Object>} */
     #pending = new Map()
-
-    /** Resolved request ids kept for the replay guard: id -> expiry timestamp ms.
-     * @type {Map<string, number>} */
-    #processed = new Map()
 
     /** Active ACK subscriptions: target slug -> unsubscribe function.
      * @type {Map<string, Function>} */
@@ -157,17 +140,17 @@ class SHostCommandService {
 
     //  -- Public API ---------------------------------------------------------
 
-    /** Ask one host to shut down and wait for its signed ACK.
+    /** Ask one host to shut down and wait for its correlated ACK.
      *
      * Returns an explicit outcome; it never throws and never retries:
      *   accepted -- the host validated the request and acknowledged it (NOT proof it is off);
      *   failed   -- rejected by the host, unconfigured target, missing secret, no ACK
      *               subscription, or local dispatch error;
-     *   timeout  -- no matching signed ACK within the target's ack_timeout.
+     *   timeout  -- no matching correlated ACK within the target's ack_timeout.
      *
      * @param {string} target - Allowlisted target slug
      * @param {Object} [options] - Per-request overrides
-     * @param {string} [options.action='shutdown'] - Action; only 'shutdown' is accepted in v1
+     * @param {string} [options.action='shutdown'] - Action; only 'shutdown' is accepted in v2
      * @returns {Promise<Object>} { status, target, action, id?, reason?, ack_ts_ms? }
      * @async */
     async requestShutdown(target, options = {}) {
@@ -199,31 +182,21 @@ class SHostCommandService {
         }
 
         const id = crypto.randomUUID()
-        const iatMs = Date.now()
-        const expMs = iatMs + COMMAND_VALIDITY_MS
-        const signature = signCanonical(cfg.secret, canonicalCommand({ id, target: name, action, iatMs, expMs }))
-        const payload = {
-            v: PROTOCOL_VERSION,
-            id,
-            target: name,
-            action,
-            iat_ms: iatMs,
-            exp_ms: expMs,
-            sig: signature
-        }
+        const payload = { v: PROTOCOL_VERSION, id, target: name, action, key: cfg.secret }
 
         return new Promise((resolve) => {
-            const pending = { target: name, action, resolve, timer: null, iatMs, expMs }
+            const pending = { target: name, action, resolve, timer: setTimeout(() => this.#expire(id), cfg.ackTimeoutMs) }
             this.#pending.set(id, pending)
 
-            //  The ACK clock starts only after local dispatch -- queueing time is not host latency.
-            MqttService.publishAsync(this.commandTopic(name), payload, DISPATCH_TIMEOUT_MS, { qos: 1, retain: false })
+            // Immediate QoS 0 dispatch: never queue host actions for a later reconnect.
+            MqttService.publishControl(this.commandTopic(name), payload)
                 .then(() => {
                     if (!this.#pending.has(id)) return
-                    pending.timer = setTimeout(() => this.#expire(id), cfg.ackTimeoutMs)
                     LoggerService.debug(`Host command dispatched: ${name}/${action} id=${id}`, 'HostCommandService')
                 })
                 .catch((error) => {
+                    if (!this.#pending.has(id)) return
+                    clearTimeout(pending.timer)
                     this.#pending.delete(id)
                     LoggerService.warn(`Host command dispatch failed: ${name}/${action} id=${id}: ${error.message}`, 'HostCommandService')
                     resolve({ status: 'failed', target: name, action, id, reason: error.message })
@@ -279,7 +252,7 @@ class SHostCommandService {
             const topic = this.ackTopic(target)
             const unsubscribe = MqttService.subscribe(
                 topic,
-                (received, message) => this.#handleAck(received, message),
+                (received, message, packet) => { if (!packet?.retain) this.#handleAck(received, message) },
                 { dedupe: false }
             )
             if (typeof unsubscribe === 'function') {
@@ -306,14 +279,8 @@ class SHostCommandService {
      * @param {string} topic - Exact topic the message arrived on
      * @param {string} message - Raw payload */
     #handleAck(topic, message) {
-        let data
-        try {
-            data = JSON.parse(message)
-        } catch {
-            LoggerService.warn(`Host ACK on "${topic}" is not valid JSON -- ignored`, 'HostCommandService')
-            return
-        }
-        if (!data || typeof data !== 'object' || Array.isArray(data)) return
+        const data = decodeFrame(message)
+        if (!data) return
 
         const target = String(data.target ?? '').trim().toLowerCase()
         const status = String(data.status ?? '').trim().toLowerCase()
@@ -340,19 +307,7 @@ class SHostCommandService {
             LoggerService.warn(`Host ACK for "${target}" id=${id} does not match the pending request -- ignored`, 'HostCommandService')
             return
         }
-        if (!verifySignature(cfg.secret, canonicalAck({ id, target, status, tsMs: data.ts_ms }), data.sig)) {
-            LoggerService.warn(`Host ACK for "${target}" id=${id} failed signature verification -- ignored`, 'HostCommandService')
-            return
-        }
-
-        const tsMs = Number(data.ts_ms)
-        const now = Date.now()
-        if (!Number.isFinite(tsMs) || tsMs < pending.iatMs - CLOCK_SKEW_MS || tsMs > now + CLOCK_SKEW_MS) {
-            LoggerService.warn(`Host ACK for "${target}" id=${id} has an implausible timestamp -- ignored`, 'HostCommandService')
-            return
-        }
-
-        this.#resolve(id, { status, target, action: pending.action, id, ack_ts_ms: data.ts_ms })
+        this.#resolve(id, { status, target, action: pending.action, id })
     }
 
     /** Settle one pending request exactly once.
@@ -364,8 +319,6 @@ class SHostCommandService {
         if (!pending) return
         this.#pending.delete(id)
         if (pending.timer) clearTimeout(pending.timer)
-        this.#processed.set(id, pending.expMs + PROCESSED_GRACE_MS)
-        this.#purgeProcessed()
         LoggerService.info(`Host command ${outcome.target}/${outcome.action} id=${id} -> ${outcome.status}`, 'HostCommandService')
         pending.resolve(outcome)
     }
@@ -393,14 +346,7 @@ class SHostCommandService {
         }
     }
 
-    /** Drop replay-guard entries whose grace period has elapsed.
-     * @private */
-    #purgeProcessed() {
-        const now = Date.now()
-        for (const [id, expiry] of this.#processed.entries()) {
-            if (expiry <= now) this.#processed.delete(id)
-        }
-    }
+
 }
 
 // Module-level singleton -- ES module caching guarantees single instantiation.

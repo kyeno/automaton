@@ -129,12 +129,21 @@ alerts:
   #   wifi-router:
   #     tts_profile: 'alarm'
 
-# --- HOST COMMANDS: signed shutdown requests to host machines (chat client opt-in)
-#  Requests go to <topic_base>/<target>/command, answers come back signed on
-#  <topic_base>/<target>/ack. An ACK proves delivery only -- never that the machine is off.
-#  Secrets are never stored here: each target names an environment variable that holds the
-#  shared HMAC key, so an unset variable simply disables that target.
-#  See doc/services/host-commands.md
+# --- MQTT CONTROL: shared-key headless commands (trusted wired LAN only)
+#  Commands use <topic_base>/command and <topic_base>/reply. See doc/services/mqtt-control.md.
+mqtt_control:
+  enabled: false
+  topic_base: 'automaton/control'
+  secret_env: 'AUTOMATON_CONTROL_KEY'
+  # Global policy for everyone holding the key; no client registration.
+  commands:
+    ir: [list, search, show, send]
+    sequence: [list, run]
+    occupancy: [list, show, set, clear]
+
+# --- HOST COMMANDS: trusted-LAN v2 shutdown, with a separate key per host
+#  Requests use <topic_base>/<target>/command; ACKs use <topic_base>/<target>/ack.
+#  An ACK means accepted, never proof of power-off. See doc/services/host-commands.md.
 host_commands:
   #  Master switch -- when false nothing is subscribed and every request fails closed
   enabled: false
