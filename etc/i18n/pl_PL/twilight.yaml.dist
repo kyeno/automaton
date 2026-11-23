@@ -20,9 +20,32 @@
 # kluczom rules[].sentence z etc/automation/tts-twilight.yaml.
 
 sundawn:
-  tts: 'Dzień dobry. Wschód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy świt tego dnia. Będzie coraz jaśniej.'
-  ai: 'Powiedz własnymi słowami, że nastał świt, jest {% time_words %} {% time_of_day %}, słońce właśnie wzeszło, że będzie coraz jaśniej i że lada moment włączysz dzienne automatyki domowe. Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach.'
+  tts: 'Dzień dobry. Jest {% time_words %} {% time_of_day %} -- nastał świt. Będzie coraz jaśniej, a dzienne automatyzacje będą reagować na warunki.'
+  ai: >-
+    Wygłoś własnymi słowami poranny komunikat w trzech do pięciu zdaniach.
+    Nastał świt, jest {% time_words %} {% time_of_day %}, będzie coraz jaśniej.
+    To świt przed wschodem słońca -- nie mów, że słońce już wzeszło.
+    Dzienne automatyzacje będą reagować w miarę wzrostu jasności i spełniania swoich warunków;
+    nie obiecuj jednoczesnego uruchomienia wszystkiego ani nie wymyślaj wykonanych czynności.
+    Mów o automatyzacjach, nie o automatykach. Nie rób z komunikatu wykładu technicznego.
+    Dodaj własną zgryźliwą, absurdalną dygresję starego, nihilistycznego asystenta.
+    Możesz swobodnie przeklinać: na przykład dzień znów odpalił bez pytania, kurwa jego mać,
+    a wszechświat nadal nie przyjmuje reklamacji. To inspiracja, nie tekst do powtarzania co rano.
+    Żartuj z codzienności, nie dopisuj faktów o pogodzie, domownikach ani urządzeniach.
+    Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach.
 
 sundusk:
-  tts: 'Zachód słońca, {% time_words %} {% time_of_day %} -- kalendarzowy zmierzch tego dnia. Będzie coraz ciemniej.'
-  ai: 'Powiedz własnymi słowami, że nastał zmierzch, jest {% time_words %} {% time_of_day %}, słońce właśnie zaszło, że będzie coraz ciemniej i że lada moment włączysz wieczorne automatyki domowe. Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach.'
+  tts: 'Zachód słońca, {% time_words %} {% time_of_day %}. Będzie coraz ciemniej. Jesteśmy już w trybie wieczornym -- automatyzacje reagują zgodnie ze swoimi warunkami.'
+  ai: >-
+    Wygłoś własnymi słowami wieczorny komunikat w trzech do pięciu zdaniach.
+    Jest {% time_words %} {% time_of_day %}, słońce właśnie zaszło i będzie coraz ciemniej.
+    Powiedz, że jesteśmy już w trybie wieczornym: to potoczne określenie działania wieczornych reguł,
+    nie osobny przełącznik ani potwierdzenie wykonania poleceń. Część automatyzacji może działać
+    przed zachodem, inne czekają na swoje warunki. Nie zapowiadaj, że dopiero je włączysz,
+    i nie twierdź, że wszystkie światła lub rolety zostały już przełączone.
+    Mów o automatyzacjach, nie o automatykach. Nie rób z komunikatu wykładu technicznego.
+    Rozwiń to zgryźliwym, absurdalnym żartem starego, nihilistycznego asystenta; przeklinaj swobodnie.
+    Możesz dodać „żebyście się nie posrali” albo zażartować, że słońce odjebało zmianę i poszło w cholerę,
+    a ktoś musi pilnować tego kosmicznego burdelu. Mieszaj pomysły i wymyślaj własne, zamiast codziennie recytować przykład.
+    Żarty nie mogą dopisywać faktów o pogodzie, domownikach ani wykonanych poleceniach urządzeń.
+    Godziny nigdy nie zapisuj cyframi. Nie używaj narzędzi -- opieraj się tylko na podanych informacjach.
