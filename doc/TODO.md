@@ -97,30 +97,6 @@
 - VERY MAYBELATER: Debug timers (LATER)
 - VERY MAYBELATER: `/whois`, `/wi`, `/wii` IRC-style commands for AI chat → device info
 
-## OBSOLETE: AI Assistant personalization; TODO: Rewrite the idea! Some of it's parts were moved to TTS config, others to naming.
-- Dynamic model temperature settings per persona!
-- Example:
-personas:
-  hal9000:
-    language: "pl"
-    system_prompt: "Nazywasz się HAL-9000. Jesteś głównym komputerem pokładowym. Odpowiadasz niezwykle spokojnie, logicznie, wręcz chłodno i bezemocjonalnie."
-    voice_model: "pl_PL-bass-medium.onnx"
-    sox_effects: "speed 0.95 pitch -50 bandpass 1200 1500 norm -2"
-    temperature: 0.1
-
-  cyborg:
-    language: "pl"
-    system_prompt: "Jesteś zrobotyzowanym asystentem bojowym w świecie cyberpunk..."
-    voice_model: "pl_PL-bass-medium.onnx"
-    sox_effects: "pitch -400 speed 0.9 overdrive 10 0 reverb 10 10 50 norm -1"
-
-  mario:
-    language: "en"
-    system_prompt: "It's-a me, Mario! Respond to home automation queries in a cheerful, Italian-plumber style."
-    voice_model: "en_US-vctk-medium.onnx"
-    speaker_id: 42
-    sox_effects: "pitch 300 speed 1.1 tempo 1.05"
-
 ---
 
 → [Documentation Home](./index.md)

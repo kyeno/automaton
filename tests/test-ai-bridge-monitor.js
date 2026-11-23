@@ -5,7 +5,7 @@ config()
 
 /**
  * Focused tests for AiBridgeMonitor -- the MQTT channel that feeds external prompts into
- * the shared AI conversation (contract: _debug/ai-bridge-mqtt-channel.md).
+ * the shared AI conversation (contract: doc/configuration.md, AI MQTT Bridge).
  *
  * Drives the REAL MqttService dispatcher with an injected fake client (no live broker)
  * and a stubbed AiAssistant prototype (no LLM), then pins down:
