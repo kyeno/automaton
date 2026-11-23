@@ -83,3 +83,12 @@ rules:
       Kitchen_Outlet: OFF
       Hallway_Cupboard_Outlet: OFF
       Home_Office_Dimmer: OFF
+
+  - name: 'Office: playing - kitchen LED off unless motion owns it'
+    conditions:
+      presence: { my-pc: true }
+      video_player: { my-pc: [playing] }
+      automation_state:
+        KitchenCountertopLEDAutomation: { countdown_active: false }
+    targets:
+      Kitchen_LED_Outlet: OFF

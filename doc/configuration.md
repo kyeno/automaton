@@ -556,6 +556,37 @@ conditions:
 
 Other conditions still apply. Unresolvable candidates are ignored; if none resolve, the gate fails closed. Static coverage treats these gates as satisfied.
 
+### Automation Runtime State (`automation_state`)
+
+Use an owner's explicitly exposed boolean state to defer a rule while that owner
+is active. Currently the supported field is `countdown_active`, exposed by
+`KitchenCountertopLEDAutomation`:
+
+```yaml
+conditions:
+  automation_state:
+    KitchenCountertopLEDAutomation: { countdown_active: false }
+targets:
+  Kitchen_LED_Outlet: OFF
+```
+
+This rule can clear manually lit LEDs when no motion countdown is running. While
+the countdown runs, the kitchen owner alone decides whether to extend it or turn
+the LED off. Manual switch/remote activity during an active countdown does not
+remove this protection. Existing human-interaction cooldown settings still apply.
+
+Conditions gate the entire rule: keep other lights in a separate shutdown rule
+with the same playback/daylight conditions. All matching rules are evaluated in
+one run, so one playback event handles both rules. This condition adds no trigger;
+countdown expiry is handled by the kitchen owner, not a second lighting run.
+
+A missing owner counts as an inactive countdown. An installed owner must expose
+the requested state through `getConditionState(key)`; arbitrary property access is
+not supported. Empty/malformed maps, unsupported state names and non-boolean
+expectations reject the rule and log an error. Conditions combine with other
+gates using AND and may be nested in `any_of`/`all_of`. Static coverage treats this
+runtime gate as satisfied rather than simulating countdowns.
+
 ### Transition Origin Gate (`state_transition`)
 
 `state_transition` checks the origin and/or destination of the subject's last SQLite

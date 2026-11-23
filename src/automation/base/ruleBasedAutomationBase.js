@@ -78,6 +78,7 @@ const SCALAR_CONDITION_KEYS = Object.freeze(new Set([
     'season',
     'presence',
     'video_player',
+    'automation_state',
     'state_changed_ago_minutes',
     'state_transition',
     'after_latest_of',
@@ -298,12 +299,45 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         return this.#checkScalarConditions(group, context)
     }
 
+    /** Compare explicitly exposed automation state; missing owners have inactive countdowns.
+     * @private
+     * @param {*} spec - Automation names mapped to supported boolean state expectations
+     * @returns {boolean} Whether every requested state matches
+     * @throws {Error} When the condition or exposed state is invalid */
+    #matchesAutomationState(spec) {
+        const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+        if (!isMap(spec) || Object.keys(spec).length === 0) {
+            throw new Error('automation_state must be a non-empty map')
+        }
+        let matches = true
+        for (const [name, expected] of Object.entries(spec)) {
+            if (!name.trim() || !isMap(expected) || Object.keys(expected).length === 0) {
+                throw new Error('automation_state requires an automation name and non-empty state map')
+            }
+            const automation = AutomationContainer.getAutomation(name)
+            for (const [key, value] of Object.entries(expected)) {
+                if (key !== 'countdown_active' || typeof value !== 'boolean') {
+                    throw new Error(`Unsupported automation_state expectation: ${name}.${key}; expected countdown_active: boolean`)
+                }
+                const actual = automation == null ? false : automation.getConditionState?.(key)
+                if (typeof actual !== 'boolean') {
+                    throw new Error(`Automation "${name}" does not expose boolean state "${key}"`)
+                }
+                if (actual !== value) matches = false
+            }
+        }
+        return matches
+    }
+
     /** Evaluate one condition group's scalar entries against the built context -- the historical.
      * @private
      * @param {Record<string, unknown>} conds - Scalar condition entries from YAML
      * @param {{illuminance?: number|null, temperature?: number|null, timeOfDay: string, sundawn: number|null, sundusk: number|null}} context
      * @returns {Promise<boolean>} */
     async #checkScalarConditions(conditions, context) {
+
+        if (conditions.automation_state !== undefined
+            && !this.#matchesAutomationState(conditions.automation_state)) return false
 
         //  time_of_day check.
         if (conditions['time_of_day']) {
@@ -474,6 +508,11 @@ export default class RuleBasedAutomationBase extends AutomationBase {
                 const season = temporal.getCurrentSeason()
                 if (!seasons.includes(season)) return `season '${season}' not in [${seasons.join(', ')}]`
             }
+            if (conditions.automation_state !== undefined
+                && !this.#matchesAutomationState(conditions.automation_state)) {
+                return `automation_state does not match ${JSON.stringify(conditions.automation_state)}`
+            }
+
             //  Presence gate.
             if (conditions.presence !== undefined) {
                 for (const [host, shouldBeOnline] of Object.entries(this.#normalizePresenceCondition(conditions.presence))) {

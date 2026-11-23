@@ -40,6 +40,18 @@ rules:
       Hallway_Cupboard_Outlet: OFF    # safety net: cupboard lamp never survives into daylight
       Living_Room_Switch: OFF
 
+  # Motion owns the LED until its countdown ends; manual-only lighting can be cleared.
+  - name: 'Bright morning - turn off kitchen LED unless motion owns it'
+    once: true
+    conditions:
+      time_of_day: [morning]
+      hour: { gte: sunrise }
+      illuminance: { gte: 20 }
+      automation_state:
+        KitchenCountertopLEDAutomation: { countdown_active: false }
+    targets:
+      Kitchen_LED_Outlet: OFF
+
   # Dusk lamps-on: once per window when dark, never before `predusk`
   - name: 'Settled dusk - turn on ambient lamps'
     once: true

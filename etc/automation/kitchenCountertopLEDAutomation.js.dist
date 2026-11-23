@@ -90,6 +90,14 @@ export default class KitchenCountertopLEDAutomation extends AutomationBase {
     /** Whether the grace countdown is currently running (useful for debugging / tests). */
     get countdownActive() { return this.#timer.isActive() }
 
+    /** Expose only supported runtime state to YAML rule conditions.
+     * @param {string} key - State key requested by automation_state
+     * @returns {boolean|undefined} Countdown activity, or undefined for unsupported keys */
+    getConditionState(key) {
+        if (key === 'countdown_active') return this.countdownActive
+        return undefined
+    }
+
     /** Clean up the timer on shutdown. */
     cleanup() {
         super.cleanup()

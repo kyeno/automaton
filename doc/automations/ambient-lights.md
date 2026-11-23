@@ -60,6 +60,14 @@ The dusk rule has this form:
     Hallway_Cupboard_Outlet: ON
 ```
 
+## Kitchen LED ownership
+
+The morning kitchen LED shutdown is a separate rule gated by
+`automation_state: { KitchenCountertopLEDAutomation: { countdown_active: false } }`.
+Motion-owned lighting stays with its countdown controller; manually lit LEDs can
+be cleared normally when no countdown is active. Other morning targets are not
+gated by kitchen ownership.
+
 ## File Map
 
 | Component | Path |

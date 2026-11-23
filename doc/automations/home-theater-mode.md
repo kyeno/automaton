@@ -34,6 +34,15 @@ Other settings:
 
 See [Restore & Ownership](../architecture/rule-engine-restore-semantics.md) for shared behavior.
 
+## Kitchen LED ownership
+
+The office playback policy clears the kitchen LED in a separate rule with
+`automation_state: { KitchenCountertopLEDAutomation: { countdown_active: false } }`.
+One playback event evaluates both shutdown rules: other lights go out regardless,
+but an active motion countdown leaves the LED under its kitchen owner's control.
+Countdown expiry is not a new home-theater trigger. Without an active countdown,
+manually lit LEDs remain subject to the normal playback policy.
+
 ## Configuration Files
 
 | Instance | Wrapper | Template |

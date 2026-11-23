@@ -128,6 +128,7 @@ const defaultTestScripts = [
   'test-interaction-cmd.js',
   'test-roller-shutters.js',
   'test-kitchen-countertop-led.js',
+  'test-automation-state.js',
   'test-sequences.js',
   'test-ir.js',
   'test-host-command-service.js',
