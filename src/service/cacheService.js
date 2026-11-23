@@ -152,6 +152,16 @@ class SCacheService {
         }
     }
 
+    /** Read JSON state without conflating missing keys with unavailable storage.
+     * @param {string} key - Cache key
+     * @returns {Promise<*>} Parsed value, or undefined when the key is absent
+     * @throws {Error} When Redis is unavailable, the read fails, or JSON is invalid */
+    async getStrict(key) {
+        if (!this.isConnected()) throw new Error('Redis is not connected')
+        const value = await this.#command('get', key)
+        return value === null ? undefined : JSON.parse(value)
+    }
+
     /** Set a cached item with optional TTL (JSON-serialized).
      * @param {string} key - Cache key
      * @param {Object} item - Value to cache

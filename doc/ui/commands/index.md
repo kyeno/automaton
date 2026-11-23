@@ -13,6 +13,7 @@ Slash commands are available in interactive UI mode. `--no-ui` disables them.
 | `/pgup` | Scroll page up (back through history) |
 | `/pgdn` | Scroll page down (forward to live tail) |
 | `/status` | Dump StateService contents |
+| `/occupancy [arg]` | Manual room occupancy: `list`, `show <room>`, `set <room> <30m\|45m\|1h\|90m\|2h\|3h>`, `clear <room>` |
 | `/config [arg]` | Inspect the main config & apply live overrides: `debug` dumps it in full, `set <path> <value...>` targets the main section, `reload` re-reads files from disk (bare invocation shows usage) |
 | `/automation [arg]` | Manage automations: `list`, `debug <name>`, `coverage <name> [legacy]` (static timing-gap analysis), `run <name>`, `force <name> [first]` (bare invocation shows usage) |
 | `/interaction [arg]` | Manage interactions: `list`, `debug <name>`, `run <name> [actionType]` (bare invocation shows usage) |
@@ -27,6 +28,14 @@ Slash commands are available in interactive UI mode. `--no-ui` disables them.
 `/config set <path> <value>` applies schema-validated YAML values in memory only. Invalid changes are rejected. `debug` and `set` target the main config.
 
 `/config reload` validates candidate files before swapping them into memory. Failure keeps the live configuration; success discards runtime overrides and reports them. Changed locale/AI/TTS settings refresh their initialized services and relevant window output; AI changes reset the conversation. Window-definition changes require a restart. Sequence reload stops loops gracefully and rebuilds entries; unreadable sequence files retain the existing registry.
+
+### Manual Room Occupancy
+
+`/occupancy` uses room IDs configured under `occupancy.rooms`. Setting replaces
+the expiry; clearing and expiry only remove protection for future rule evaluations.
+These commands do not change lights or trigger automation. Redis failures are
+reported rather than presented as successful updates. See
+[Manual Room Occupancy](../../configuration.md#manual-room-occupancy-occupancy).
 
 ### Keyboard Shortcuts
 

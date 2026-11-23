@@ -556,6 +556,54 @@ conditions:
 
 Other conditions still apply. Unresolvable candidates are ignored; if none resolve, the gate fails closed. Static coverage treats these gates as satisfied.
 
+### Manual Room Occupancy (`occupancy`)
+
+Define optional room IDs in the main configuration. IDs are positive integers and
+need not be consecutive; names are display labels, not device mappings:
+
+```yaml
+occupancy:
+  rooms:
+    1: { name: 'Example room' }
+    40: { name: 'Another room' }
+```
+
+Use `/occupancy set 1 45m` to assert that room 1 should be treated as occupied.
+Allowed durations are `30m`, `45m`, `1h`, `90m` (1 hour 30 minutes), `2h`, and `3h`.
+Setting again replaces the expiry from now. `/occupancy show 1` and
+`/occupancy list` show labels and remaining time; `/occupancy clear 1` removes the
+assertion, including when already absent. Commands support tab completion.
+
+Gate a shutdown rule with:
+
+```yaml
+conditions:
+  video_player: { my-pc: [playing] }
+  occupancy:
+    room:
+      1: false    # No active manual occupancy assertion for room 1
+targets:
+  Example_Room_Outlet: OFF
+```
+
+`true` requires an active assertion; `false` requires an absent, cleared or expired
+assertion. Multiple rooms combine with AND; use `any_of` for alternatives.
+Unknown room IDs, malformed conditions and unreadable Redis state reject the rule
+with a diagnostic. A Redis outage is not interpreted as an empty room.
+
+This is manual intent, not sensor-derived presence. Activation never restores
+lights already off. Setting, clearing and expiry never trigger automation or
+change devices; only the next normal evaluation uses the current state. Keep
+unprotected devices in a separate rule without the occupancy gate, and remove
+protected targets from any unconditional shutdown rule. Existing guards and
+human-interaction cooldowns still apply.
+
+The thin `RoomOccupancy` singleton provides `set(roomId, duration)`, `get(roomId)`,
+`clear(roomId)`, and `list()`. Redis keys `occupancy:room:<id>` contain `expiresAt`
+and a TTL; remaining assertions survive application restarts while Redis retains
+them. No expiry scheduler or StateService changes are needed. Static coverage
+treats occupancy conditions as satisfied rather than simulating manual state.
+
 ### Automation Runtime State (`automation_state`)
 
 Use an owner's explicitly exposed boolean state to defer a rule while that owner

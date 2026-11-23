@@ -172,6 +172,14 @@ logger:
 #     automation: "etc/automation/"
 #     interaction: "etc/interaction/"
 
+# --- OCCUPANCY: optional manual room assertions (/occupancy set 1 45m)
+# IDs are stable references for rule conditions; names are display labels only.
+# Assertions expire passively and never change devices or trigger automations.
+# occupancy:
+#   rooms:
+#     1: { name: 'Example room' }
+#     40: { name: 'Another room' }
+
 # --- AUTOMATION: global device/interaction behavior
 automation:
   # Skip a device this long after a human changes it manually ("90s","15m", or ms; 0 = off)

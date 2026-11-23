@@ -14,6 +14,7 @@ import temporal from '../../lib/date.js'
 import solar from '../../lib/sun.js'
 
 import CacheService from '../../service/cacheService.js'
+import RoomOccupancy from '../../service/roomOccupancy.js'
 import DatabaseService from '../../service/databaseService.js'
 import LoggerService from '../../service/loggerService.js'
 import StateService from '../../service/stateService.js'
@@ -79,6 +80,7 @@ const SCALAR_CONDITION_KEYS = Object.freeze(new Set([
     'presence',
     'video_player',
     'automation_state',
+    'occupancy',
     'state_changed_ago_minutes',
     'state_transition',
     'after_latest_of',
@@ -329,12 +331,30 @@ export default class RuleBasedAutomationBase extends AutomationBase {
         return matches
     }
 
+    /** Match manual room occupancy, rejecting malformed and unavailable state.
+     * @private
+     * @param {*} spec - Object containing a room ID to boolean expectation map
+     * @returns {Promise<boolean>} Whether every room expectation matches */
+    async #matchesOccupancy(spec) {
+        const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+        if (!isMap(spec) || Object.keys(spec).length !== 1 || !isMap(spec.room)
+            || Object.keys(spec.room).length === 0) throw new Error('occupancy requires a non-empty room map')
+        let matches = true
+        for (const [id, expected] of Object.entries(spec.room)) {
+            if (typeof expected !== 'boolean') throw new Error('occupancy.room expectations must be boolean')
+            if ((await RoomOccupancy.get(id)).occupied !== expected) matches = false
+        }
+        return matches
+    }
+
     /** Evaluate one condition group's scalar entries against the built context -- the historical.
      * @private
      * @param {Record<string, unknown>} conds - Scalar condition entries from YAML
      * @param {{illuminance?: number|null, temperature?: number|null, timeOfDay: string, sundawn: number|null, sundusk: number|null}} context
      * @returns {Promise<boolean>} */
     async #checkScalarConditions(conditions, context) {
+
+        if (conditions.occupancy !== undefined && !await this.#matchesOccupancy(conditions.occupancy)) return false
 
         if (conditions.automation_state !== undefined
             && !this.#matchesAutomationState(conditions.automation_state)) return false
@@ -511,6 +531,10 @@ export default class RuleBasedAutomationBase extends AutomationBase {
             if (conditions.automation_state !== undefined
                 && !this.#matchesAutomationState(conditions.automation_state)) {
                 return `automation_state does not match ${JSON.stringify(conditions.automation_state)}`
+            }
+
+            if (conditions.occupancy !== undefined && !await this.#matchesOccupancy(conditions.occupancy)) {
+                return `occupancy does not match ${JSON.stringify(conditions.occupancy)}`
             }
 
             //  Presence gate.

@@ -12,6 +12,10 @@ import { ACK_TIMEOUT_MAX_MS, ACK_TIMEOUT_MIN_MS, ENV_NAME_RE, TARGET_ID_RE, TARG
 import temporal from '../lib/date.js'
 
 export default {
+    occupancy: {
+        type: 'object',
+        properties: { rooms: { type: 'object' } }
+    },
     //  Automation section -- global device/interaction behavior (durations)
     automation: {
         type: 'object',
@@ -286,8 +290,35 @@ export default {
     }
 }
 
+/** Validate optional manual occupancy room definitions.
+ * @param {*} section - Main occupancy configuration
+ * @returns {string[]} Validation errors */
+function validateOccupancy(section) {
+    if (section === undefined) return []
+    const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+    if (!isMap(section)) return ['occupancy: must be an object']
+    const errors = []
+    for (const key of Object.keys(section)) {
+        if (key !== 'rooms') errors.push(`occupancy.${key}: unsupported key`)
+    }
+    if (section.rooms === undefined) return errors
+    if (!isMap(section.rooms)) return [...errors, 'occupancy.rooms: must be a room ID map']
+    for (const [id, room] of Object.entries(section.rooms)) {
+        const label = `occupancy.rooms.${id}`
+        if (!/^[1-9]\d*$/.test(id)) errors.push(`${label}: room ID must be a positive integer`)
+        if (!isMap(room) || typeof room.name !== 'string' || !room.name.trim()) {
+            errors.push(`${label}: requires a non-empty name`)
+        } else {
+            for (const key of Object.keys(room)) {
+                if (key !== 'name') errors.push(`${label}.${key}: unsupported key`)
+            }
+        }
+    }
+    return errors
+}
+
 /**
- * Semantic checks for the host_commands section -- the ConfigBase custom-validator hook.
+ * Semantic checks for occupancy and host_commands -- the ConfigBase custom-validator hook.
  *
  * The structural schema above only sees `targets` as a map; everything that keeps the
  * shutdown contract safe (slug shape, env-var naming, topic-tree boundaries, unknown keys
@@ -296,11 +327,12 @@ export default {
  * @param {Object} config - Full main configuration
  * @returns {string[]} Human-readable errors; empty when the section is usable */
 export function validateConfig(config) {
+    const occupancyErrors = validateOccupancy(config?.occupancy)
     const section = config?.host_commands
-    if (section === undefined || section === null) return []
-    if (typeof section !== 'object' || Array.isArray(section)) return ['host_commands: must be an object']
+    if (section === undefined || section === null) return occupancyErrors
+    if (typeof section !== 'object' || Array.isArray(section)) return [...occupancyErrors, 'host_commands: must be an object']
 
-    const errors = []
+    const errors = [...occupancyErrors]
 
     if (section.enabled !== undefined && section.enabled !== null && typeof section.enabled !== 'boolean') {
         errors.push('host_commands.enabled: must be true or false')

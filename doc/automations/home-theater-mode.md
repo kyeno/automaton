@@ -43,6 +43,16 @@ but an active motion countdown leaves the LED under its kitchen owner's control.
 Countdown expiry is not a new home-theater trigger. Without an active countdown,
 manually lit LEDs remain subject to the normal playback policy.
 
+## Manual room occupancy
+
+Configure room IDs under `occupancy.rooms` and activate a passive assertion with
+`/occupancy set 1 45m`. Move protected targets out of the normal playback OFF rule
+into a separate playback rule with `occupancy: { room: { 1: false } }`.
+During the next playback evaluation, an occupied room keeps those lights while
+other targets still turn off. This never relights devices already off, and
+clearing/expiry does not trigger evaluation. The shipped office template includes
+a commented example; device names and room membership remain deployment-specific.
+
 ## Configuration Files
 
 | Instance | Wrapper | Template |

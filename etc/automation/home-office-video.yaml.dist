@@ -27,6 +27,18 @@ triggers_network:
   - my-pc
 
 rules:
+  # Optional occupancy protection: move protected targets OUT of the normal OFF rule
+  # and into a separate rule like this. Configure room 1 in automaton.yaml first.
+  # - name: 'Office: playing - protected room lights off unless occupied'
+  #   conditions:
+  #     presence: { my-pc: true }
+  #     video_player: { my-pc: [playing] }
+  #     occupancy:
+  #       room:
+  #         1: false    # Example room; label configured in occupancy.rooms
+  #   targets:
+  #     Example_Room_Outlet: OFF
+
   # Rollers are owned while the player answers HTTP (any state).
   - name: 'Office: player reachable - close rollers'
     conditions:
