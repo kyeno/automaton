@@ -60,3 +60,19 @@ sequences:
   #    - kind: 'host_command'
   #      target: 'htpc'
   #      action: 'shutdown'
+
+  # Double-step volume for LANFLIX. Enable mqtt_control.commands.sequence: [run]
+  # (or add run to the existing list) and set the transmitter to your IR device.
+  # Run avr_volume ON for up or OFF for down.
+  #- name: 'AVR Volume'
+  #  delay: '375ms'
+  #  on:
+  #    - device: 'Living Room Pilot IR'
+  #      payload: { ir_command: avr_vol_up }
+  #    - device: 'Living Room Pilot IR'
+  #      payload: { ir_command: avr_vol_up }
+  #  off:
+  #    - device: 'Living Room Pilot IR'
+  #      payload: { ir_command: avr_vol_down }
+  #    - device: 'Living Room Pilot IR'
+  #      payload: { ir_command: avr_vol_down }

@@ -37,7 +37,8 @@ let locale = 'en_US'
 mock.method(cfgProto, 'get', (key, fallback) => key === 'locale.language' ? locale : originalGet.call(ConfigService, key, fallback))
 const commands = {
     amp_on: { transmitter: 'Test IR', code: 'AQIDBA==' },
-    amp_vol_up: { transmitter: 'Test IR', code: 'BQYHCA==' }
+    amp_vol_up: { transmitter: 'Test IR', code: 'BQYHCA==' },
+    amp_vol_down: { transmitter: 'Test IR', code: 'DQ4PEA==' }
 }
 const english = path.resolve('etc/i18n/en_US/ir.yaml')
 const polish = path.resolve('etc/i18n/pl_PL/ir.yaml')
@@ -58,7 +59,7 @@ transmitter.setMqttService({
     subscribe: (_topic, fn) => { receive = fn; return () => {} },
     publishAsync: async (topic, payload) => {
         if (hold) await new Promise(resolve => { release = resolve })
-        sent.push({ topic, payload: JSON.parse(payload), at: Date.now() })
+        sent.push({ topic, payload: JSON.parse(payload), at: performance.now() })
     }
 })
 try {
@@ -68,7 +69,7 @@ try {
     save(commands)
     await IRCommandService.init()
     assert.equal(transmitter instanceof Mechanism, true)
-    assert.equal(IRCommandService.list().length, 2)
+    assert.equal(IRCommandService.list().length, 3)
     assert.equal(IRCommandService.search('amplifier').results[0].id, 'amp_on')
     assert.equal(JSON.stringify(IRCommandService.list()).includes('AQIDBA'), false, 'metadata never includes codes')
     const schemaBefore = JSON.stringify(ToolBuilder.build(true))
@@ -113,7 +114,7 @@ try {
     await I18nLoader.reload()
 
     save({ ...commands, amp_off: { transmitter: 'Test IR', code: 'CQoLDA==' } })
-    assert.equal((await IRCommandService.reload()).loaded, 3)
+    assert.equal((await IRCommandService.reload()).loaded, 4)
     assert.equal(JSON.stringify(ToolBuilder.build()), schemaBefore, 'catalog growth does not expand tools')
     assert.equal(AiAssistant.getEffectiveSystemPrompt(), promptBefore, 'catalog growth does not expand system prompt')
     for (const invalid of [
@@ -124,7 +125,7 @@ try {
     ]) {
         save(invalid)
         assert.equal((await IRCommandService.reload()).ok, false)
-        assert.equal(IRCommandService.list().length, 3, 'bad reload preserves entire previous catalog')
+        assert.equal(IRCommandService.list().length, 4, 'bad reload preserves entire previous catalog')
     }
     fs.writeFileSync(file, 'commands: [')
     assert.equal((await IRCommandService.reload()).ok, false)
@@ -154,13 +155,16 @@ try {
         sourceCalls.push(source)
         return originalReceive(command, source)
     })
-    const sequence = new SequenceBase('IR Cinema', {
-        delay: '20ms',
+    const sequence = new SequenceBase('AVR Volume', {
+        delay: '375ms',
         on: [
-            { device: 'Test IR', payload: { ir_command: 'amp_on' } },
+            { device: 'Test IR', payload: { ir_command: 'amp_vol_up' } },
             { device: 'Test IR', payload: { ir_command: 'amp_vol_up' } }
         ],
-        off: [{ device: 'Test IR', payload: { ir_command: 'amp_on' } }, { device: 'Test IR', payload: { ir_command: 'amp_vol_up' } }]
+        off: [
+            { device: 'Test IR', payload: { ir_command: 'amp_vol_down' } },
+            { device: 'Test IR', payload: { ir_command: 'amp_vol_down' } }
+        ]
     })
     await sequence.init()
     hold = true
@@ -168,16 +172,18 @@ try {
     const running = sequence.run('ON', { source: DeviceCommandSource.HUMAN })
     await Promise.resolve()
     assert.equal(sent.length, startCount, 'sequence awaits local dispatch')
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await new Promise(resolve => setTimeout(resolve, 400))
     assert.equal(sent.length, startCount, 'next step cannot overtake queued IR send')
     hold = false
     release()
     assert.equal(await running, true)
     assert.equal(sent.length, startCount + 2)
-    assert.ok(sent.at(-1).at - sent.at(-2).at >= 15, 'delay starts after local dispatch')
+    assert.deepEqual(sent.slice(startCount).map(entry => entry.payload.ir_code_to_send), ['BQYHCA==', 'BQYHCA=='])
+    assert.ok(sent.at(-1).at - sent.at(-2).at >= 370, 'delay starts after local dispatch')
     assert.deepEqual(sourceCalls.slice(-2), [DeviceCommandSource.HUMAN, DeviceCommandSource.HUMAN])
-    await sequence.run('OFF')
-    assert.ok(sent.at(-1).at - sent.at(-2).at >= 15, 'same static delay applies to OFF')
+    assert.equal(await sequence.run('OFF'), true)
+    assert.deepEqual(sent.slice(startCount + 2).map(entry => entry.payload.ir_code_to_send), ['DQ4PEA==', 'DQ4PEA=='])
+    assert.ok(sent.at(-1).at - sent.at(-2).at >= 370, 'same static delay applies to OFF')
     assert.deepEqual(sourceCalls.slice(-2), [DeviceCommandSource.AUTOMATION, DeviceCommandSource.AUTOMATION])
     assert.equal(sequence.getLastRunResult().status, 'completed')
     const oneWay = new SequenceBase('One Way', { on: [{ device: 'Test IR', payload: { ir_command: 'amp_on' } }] })
