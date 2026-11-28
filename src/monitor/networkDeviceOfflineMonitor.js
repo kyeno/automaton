@@ -9,7 +9,9 @@
 'use strict'
 
 import EventBus from '../service/eventBus.js'
+import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
+import RedAlertScenario from '../scenario/redAlertScenario.js'
 import NetworkPresence from './networkPresence.js'
 import AlertMonitorBase from './base/alertMonitorBase.js'
 
@@ -56,6 +58,17 @@ class SNetworkDeviceOfflineMonitor extends AlertMonitorBase {
     async init() {
         if (this.#running) return   // idempotent
         this.#running = true
+
+        this.registerUnsub(EventBus.subscribe('network:presenceChanged', (name, label, previous) => {
+            if (label === 'online' && previous === 'offline') {
+                void RedAlertScenario.recover(name)
+            } else if (label === 'offline' && previous === 'online') {
+                const trigger = this.#redAlertTrigger(name)
+                if (trigger && !RedAlertScenario.start({ host: name, warning: trigger.warning, recovery_warning: trigger.recovery_warning })) {
+                    LoggerService.warn(`Red Alert start was not accepted for "${name}"`, LABEL)
+                }
+            }
+        }))
 
         const devices = this.configuredDevices()
         if (devices.length === 0) {
@@ -107,6 +120,18 @@ class SNetworkDeviceOfflineMonitor extends AlertMonitorBase {
 
     //  -- Public API ---------------------------------------------------------
 
+    /** A scenario-trigger host routes to local playback instead of remote TTS.
+     * @private
+     * @param {string} name - Network host name
+     * @returns {Object|null} Enabled trigger options */
+    #redAlertTrigger(name) {
+        const scenario = ConfigService.get('scenarios.red_alert')
+        if (scenario?.enabled !== true) return null
+        const hosts = scenario.triggers?.network_offline ?? {}
+        const key = Object.keys(hosts).find(host => host.toLowerCase() === name.toLowerCase())
+        return key === undefined ? null : hosts[key] ?? {}
+    }
+
     /** Announce list read from live config: one entry per configured host, sorted by
      * @returns {Array<{name: string, key: string, overrides: Record<string, unknown>}>} Configured hosts */
     configuredDevices() {
@@ -144,6 +169,7 @@ class SNetworkDeviceOfflineMonitor extends AlertMonitorBase {
      * @async
      * @private */
     async #onPresence(device) {
+        if (this.#redAlertTrigger(device.name)) return
         const label = NetworkPresence.getLastLabel(device.name)
 
         if (label === 'offline') {

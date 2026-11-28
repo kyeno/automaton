@@ -13,6 +13,8 @@ The presence and player monitors live in `src/monitor/` and follow the same shap
 
 Two more monitors watch for things going *away* and speak a warning instead of driving rules: [Offline Alerts](./offline-alerts.md) covers Zigbee devices leaving the mesh and mission-critical LAN hosts dropping offline.
 
+Selected network hosts can instead trigger the [Red Alert scenario](./red-alert.md) with local sound and lights.
+
 [Frozen Sensor Monitor](./frozen-sensors.md) tracks unchanged numeric readings, persists incidents,
 and sends grouped initial email plus recurring voice reminders independently of automations.
 

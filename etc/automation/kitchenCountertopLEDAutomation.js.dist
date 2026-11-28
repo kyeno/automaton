@@ -2,7 +2,7 @@
  * Kitchen Countertop LED Automation.
  * Copy this template to .js and set DEVICES to enable it.
  * Motion-presence controller for the kitchen countertop LED outlet ("Kitchen LED Outlet")
- * Copyright (C) 2026 Ratan M. Kyeno <matt@prayam.com>
+ * Copyright (C) 2026 Ratan M. Kyeno
  * Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
  */
 'use strict'

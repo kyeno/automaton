@@ -16,6 +16,7 @@ import DeviceStateOrigin from '../../enum/deviceStateOrigin.js'
 import DeviceCommandSource from '../../enum/deviceCommandSource.js'
 import { slugify } from '../../lib/string.js'
 import temporal from '../../lib/date.js'
+import { lightWriteGuard } from '../../scenario/lightOwnership.js'
 
 
 /** Default echo window (ms) for instant commands (ON/OFF/TOGGLE).
@@ -1133,10 +1134,14 @@ export default class DeviceBase {
      * @param {string|Object} command - Command to send. Either a state string
      * @param {DeviceCommandSource} [source=DeviceCommandSource.HUMAN] - Who is behind this command
      * @param {Object} [options] - Dispatch modifiers
+     * @param {Object} [options.lightLease] - Internal scenario authorization
      * @param {boolean} [options.bypassNoOpSuppression=false] - Send even when the cached state
      *   already matches the commanded state. Reserved for hand-off/restore dispatches, where the
      *   cache may be a stale pre-command snapshot and the command MUST reach the device. */
     receiveCommand(command, source = DeviceCommandSource.HUMAN, options = {}) {
+        const canPublish = lightWriteGuard(this.#name, options.lightLease)
+        if (!canPublish()) return
+
         let finalPayload
         let description
 
@@ -1191,7 +1196,7 @@ export default class DeviceBase {
         }
 
         //  --- Suppress retries of ineffective automation commands ---
-        if (isAutomation && this.#failedCommand != null) {
+        if (isAutomation && !options.lightLease && this.#failedCommand != null) {
             const fc = this.#failedCommand
             if (Date.now() < fc.until && fc.description === description) {
                 const posNow = Number.isFinite(this.#stateLast?.position) ? this.#stateLast.position : null
@@ -1289,7 +1294,7 @@ export default class DeviceBase {
         }
 
         LoggerService.trace(`publish source=${source} topic="${topic}" payload=${JSON.stringify(finalPayload)}`, `${this.getLogPrefix()}:${this.#name}`)
-        this.#mqttService.publish(topic, JSON.stringify(finalPayload), { meta: { onPublish: _onPublish } })
+        this.#mqttService.publish(topic, JSON.stringify(finalPayload), { meta: { onPublish: _onPublish, canPublish } })
         LoggerService.info(
             `Command "${description}" sent to topic ${topic}`,
             `${this.getLogPrefix()}:${this.#name}`

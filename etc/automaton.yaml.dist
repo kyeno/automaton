@@ -20,7 +20,7 @@ locale:
   language: en_US
   # Time display format: "12h" (01:30pm) or "24h" (13:30)
   time_format: "24h"
-  # Observer coordinates for the sun shorthands ("sundawn"/"sundusk"): WGS84 decimal degrees
+  # Example observer coordinates (WGS84 decimal degrees); use your own for dawn/dusk.
   geo_latitude: 52.0
   geo_longitude: 21.0
 
@@ -140,6 +140,23 @@ alerts:
   #   wifi-router:
   #     tts_profile: 'alarm'
 
+# Optional Red Alert. Install a local alarm and replace the example host and lights
+# with your own before enabling. See doc/monitors/red-alert.md.
+# scenarios:
+#   red_alert:
+#     enabled: true
+#     light_sequence: hazard_lights
+#     restore_automation: AmbientLightsAutomation
+#     audio:
+#       alarm_file: alarm.mp3
+#       warning_initial_delay: '2s'
+#       warning_repeat_delay: '20s'
+#     triggers:
+#       network_offline:
+#         wifi-router:
+#           warning: wifi-router-offline
+#           recovery_warning: wifi-router-online
+
 # --- MQTT CONTROL: shared-key headless commands (trusted wired LAN only)
 #  Commands use <topic_base>/command and <topic_base>/reply. See doc/services/mqtt-control.md.
 mqtt_control:
@@ -151,6 +168,7 @@ mqtt_control:
     ir: [list, search, show, send]
     sequence: [list, run]
     occupancy: [list, show, set, clear]
+    # scenario: [status, start, stop]  # Explicitly opt in to remote scenario control
 
 # --- HOST COMMANDS: trusted-LAN v2 shutdown, with a separate key per host
 #  Requests use <topic_base>/<target>/command; ACKs use <topic_base>/<target>/ack.

@@ -472,8 +472,8 @@ class SMQTTService {
      * If the broker is disconnected when the drain runs, it will retry every
      * {@link DISCONNECT_RETRY_DELAY_MS} until reconnection restores the pipeline.
      *
-     * Callers may attach non-MQTT metadata under `options.meta`. The one
-     * recognized key is `onPublish` -- a zero-argument callback invoked exactly
+     * Callers may attach non-MQTT metadata under `options.meta`.
+     * `canPublish` may veto an invalidated write. `onPublish` is invoked exactly
      * once at the moment the queued message is actually handed to the underlying
      * client (i.e., after any reconnect wait), so deferred side-effects such as
      * correlator registration or origin stamping run precisely when the command
@@ -485,6 +485,7 @@ class SMQTTService {
      * @param {Object} [options] - Optional MQTT publish options
      * @param {Object} [options.meta] - Non-MQTT caller metadata (see above)
      * @param {Function} [options.meta.onPublish] - Invoked once on actual publish
+     * @param {Function} [options.meta.canPublish] - Skip an invalidated device write
      */
     publish(topic, message, options = {}) {
         if (this.#shuttingDown) return
@@ -556,6 +557,7 @@ class SMQTTService {
                         // Caller metadata (options.meta) is not an MQTT option -- strip it
                         // before handing options to the underlying client.
                         const { meta, ...mqttOptions } = entry.options ?? {}
+                        if (meta?.canPublish && !meta.canPublish()) continue
                         this.#client.publish(entry.topic, entry.payload, mqttOptions)
                         // Fire onPublish hook so callers can defer side-effects
                         // (correlator registration, origin updates) to actual publish time.

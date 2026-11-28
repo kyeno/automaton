@@ -28,6 +28,7 @@ import VirtualDeviceService from './ai/virtualDeviceService.js'
 import IRCommandService from './ir/irCommandService.js'
 import HostCommandService from './host/hostCommandService.js'
 import ControlService from './control/controlService.js'
+import RedAlertScenario from './scenario/redAlertScenario.js'
 
 import NetworkPresence from './monitor/networkPresence.js'
 import VideoPlayerMonitor from './monitor/videoPlayerMonitor.js'
@@ -202,6 +203,7 @@ async function gracefulDeath(reason, errorLevel = 0) {
         //  Phase 1 -- Stop high-level logic (interactions -> automations)
         const initialized = StateService.get('lifecycle.initializedServices')
         if (initialized.has('ControlService')) ControlService.cleanup()
+        await RedAlertScenario.stop()
 
         if (initialized.has('InteractionContainer')) {
             LoggerService.debug('Cleaning up interactions...', 'Main')

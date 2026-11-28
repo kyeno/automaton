@@ -9,9 +9,10 @@ import SequenceContainer from '../sequence/container/sequenceContainer.js'
 import IRCommand from '../commands/irCommand.js'
 import SequenceCommand from '../commands/sequenceCommand.js'
 import OccupancyCommand from '../commands/occupancyCommand.js'
+import ScenarioCommand from '../commands/scenarioCommand.js'
 import { VERSION, decodeFrame, RequestCache } from './controlProtocol.js'
 
-const COMMANDS = { ir: IRCommand, sequence: SequenceCommand, occupancy: OccupancyCommand }
+const COMMANDS = { ir: IRCommand, sequence: SequenceCommand, occupancy: OccupancyCommand, scenario: ScenarioCommand }
 
 /** One globally configured command surface; possession of the key grants access. */
 export class SControlService {
@@ -56,7 +57,7 @@ export class SControlService {
         const generation = this.#generation
         const verb = data.command
         const args = typeof data.args === 'string' ? data.args.trim() : ''
-        const sub = args.split(/\s+/)[0] || 'list'
+        const sub = args.split(/\s+/)[0] || (verb === 'scenario' ? 'status' : 'list')
         const allowed = this.#config.commands?.[verb]
         let result = { status: 'rejected', lines: ['Command or operation is not enabled'] }
         if (Object.hasOwn(COMMANDS, verb) && Array.isArray(allowed) && allowed.includes(sub)) {

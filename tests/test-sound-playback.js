@@ -6,13 +6,15 @@
 'use strict'
 
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { mock } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import ConfigService from '../src/service/configService.js'
 import { playSound } from '../src/lib/sound.js'
+import { hasSound } from '../src/lib/soundPlayback.js'
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'automaton-sound-'))
 const filename = 'a space; $literal.MP3'
@@ -50,6 +52,25 @@ try {
     config.players.mp3 = [command('setInterval(() => {}, 1000)', '{file}'), command(copy, output)]
     config.timeout_ms = 100
     await assert.rejects(playSound(filename), /timed out after 100 ms/)
+
+    assert.equal(await hasSound('not-installed.wav'), false)
+    assert.equal(await hasSound('sound.wav'), true)
+    const started = path.join(directory, 'started')
+    config.timeout_ms = 5_000
+    config.players.wav = [command('require("node:fs").writeFileSync(process.argv[2], String(process.pid)); setInterval(() => {}, 1000)', '{file}', started)]
+    const controller = new AbortController()
+    const done = assert.rejects(playSound('sound.wav', { signal: controller.signal }), { name: 'AbortError' })
+    try {
+        for (let i = 0; i < 100 && !await stat(started).catch(() => null); i++) await delay(10)
+        const pid = Number(await readFile(started, 'utf8'))
+        controller.abort()
+        await done
+        assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+        await assert.rejects(playSound('sound.wav', { signal: controller.signal }), { name: 'AbortError' })
+    } finally {
+        controller.abort()
+        await done
+    }
 } finally {
     mock.restoreAll()
     await rm(directory, { recursive: true, force: true })

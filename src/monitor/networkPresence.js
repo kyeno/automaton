@@ -231,7 +231,11 @@ class SNetworkPresence {
      * @param {'online'|'offline'} newLabel - New normalized presence label
      * @private */
     async #markDevice(deviceName, ipAddress, newLabel) {
-        this.#lastLabel.set(String(deviceName).toLowerCase(), newLabel)
+        const key = String(deviceName).toLowerCase()
+        const previous = this.#lastLabel.get(key)
+        this.#lastLabel.set(key, newLabel)
+        // Do not depend on SQLite history for process-local transitions, including recovery.
+        if (previous !== newLabel) EventBus.emit('network:presenceChanged', deviceName, newLabel, previous)
         const result = await DatabaseService.recordTransition({ domain: 'network', subject: deviceName, toState: newLabel })
 
         if (result.changed || !DatabaseService.isAvailable()) {

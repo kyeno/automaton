@@ -354,6 +354,10 @@ and `occupancy` commands, including with `--no-ui`. Everyone holding its shared 
 gets the same capabilities. See [MQTT control](services/mqtt-control.md) and the main
 YAML template for the enabled operations. This is separate from per-host shutdown keys.
 
+### Scenarios
+
+Configure built-in scenarios under `scenarios` in `etc/automaton.yaml`. See [Scenarios: Red Alert](./monitors/red-alert.md) for setup and commands.
+
 ---
 
 ## 3. Device Definitions
@@ -946,7 +950,7 @@ Sequences send ordered commands with optional loops. Copy `etc/sequence/sequence
 
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `name` | yes | Friendly name; internally slugified (`'Living Room Hazard Light'` → `living_room_hazard_light`). Slugs must be unique across all sequences |
+| `name` | yes | Friendly name; internally slugified (`'Hazard Lights'` → `hazard_lights`). Slugs must be unique across all sequences |
 | `delay` | no | Sequence-level inter-step pause (duration like `"500ms"` / `"2s"`, or plain ms number). Absent ⇒ **multi-device endpoint mode** — every step fires back-to-back |
 | `devices` | simple form | Ordered list of names (or `{device, command?, delay?}` objects). ON sends each device `'ON'`; OFF sends each device `'OFF'` in the same order |
 | `on` / `off` | rich form | Explicit step lists; a step is `{device, payload?, delay?}`. `payload` passes through `receiveCommand()` verbatim (any shape: strings, `{state}`, `{position:N}`, `{state,brightness:{l1,l2}}`, ...). Missing `off:` defaults to plain OFF over the `on` devices |
@@ -971,7 +975,7 @@ sequences:
 ### Rich form + loop (hazard light oscillation)
 
 ```yaml
-  - name: 'Living Room Hazard Light'
+  - name: 'Hazard Lights'
     loop:
       enabled: true
       cycle: continuous

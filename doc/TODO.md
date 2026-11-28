@@ -24,6 +24,7 @@
 - Support per-rule speech/action alongside targets: and invoke_automation, enabling one rule to drive devices AND speak
 - CONSIDER: naming unification. Some *services* are named "...Service" (MqttService, CacheService) while others - still being services - are not (DeviceContainer)
 - Same about monitor names. networkPresence doesn't have the Monitor suffix. Decide if we want those there or not.
+- Add service-health monitors alongside NetworkPresence. Start with a DNS probe that queries a configured resolver and verifies the expected answer even when the host remains reachable.
 - LATER: Do something with the structure; src/service/ vs src/ai/; as well as other similar cases
 - CONSIDER: "ZigbeeMonitor" sharing the same "state change" logic as other monitors and populate that via local EventBus. Log real Zigbee state changes ONLY as trace; every higher level - via EventBus.
 - CONSIDER: Dropping db's shm and wal to original DB more often, not just on quit?

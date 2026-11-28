@@ -163,6 +163,24 @@ async function testPublishWithoutOptionsStillWorks(fake) {
         `no metadata leaked into mqtt.js options (options=${JSON.stringify(call?.options)})`)
 }
 
+async function testInvalidatedQueuedPublish(fake) {
+    console.log('\n-- Invalidated device commands never reach the MQTT client --')
+    let allowed = true
+    let staleHook = false
+    let marker = false
+    // Enqueue from a publish hook so the stale write cannot drain until this hook returns.
+    MqttService.publish('zigbee2mqtt/before-hazard/set', '{}', { meta: { onPublish: () => {
+        MqttService.publish('zigbee2mqtt/stale-hazard/set', '{}', {
+            meta: { canPublish: () => allowed, onPublish: () => { staleHook = true } }
+        })
+        allowed = false
+        MqttService.publish('zigbee2mqtt/after-hazard/set', '{}', { meta: { onPublish: () => { marker = true } } })
+    } } })
+    await waitFor(() => marker, 'queue drained after stale write')
+    assert(!fake.published.some(call => call.topic.endsWith('/stale-hazard/set')), 'invalidated write never reached client')
+    assert(!staleHook, 'skipped command did not register publish side effects')
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -179,6 +197,7 @@ async function main() {
         await testEachPublishFiresItsOwnHookInOrder(fake)
         await testThrowingHookDoesNotBreakQueue(fake)
         await testPublishWithoutOptionsStillWorks(fake)
+        await testInvalidatedQueuedPublish(fake)
     } catch (err) {
         console.error(`\nFatal error in test suite: ${err.message}\n${err.stack}`)
         process.exit(1)

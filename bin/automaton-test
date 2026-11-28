@@ -204,6 +204,7 @@ const defaultTestScripts = [
   'test-ai-bridge-monitor.js',
   'test-zigbee-device-offline-monitor.js',
   'test-network-device-offline-monitor.js',
+  'test-red-alert-scenario.js',
   'test-weatherman-use-ai-flag.js',
 ]
 

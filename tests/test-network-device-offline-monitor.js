@@ -37,6 +37,7 @@ import I18nLoader from '../src/service/i18nLoader.js'
 import TtsService from '../src/service/ttsService.js'
 import NetworkPresence from '../src/monitor/networkPresence.js'
 import NetworkDeviceOfflineMonitor from '../src/monitor/networkDeviceOfflineMonitor.js'
+import RedAlertScenario from '../src/scenario/redAlertScenario.js'
 
 // Set minimal env vars so ConfigService won't throw on missing required keys
 process.env['MQTT_URL'] = process.env['MQTT_URL'] || 'mqtt://localhost:1883'
@@ -298,6 +299,42 @@ async function main() {
         EventBus.emit('network:nas-server', { name: 'nas-server', status: 'offline' })
         await sleep(50)
         assert(spoken.length === 1, 'host announced once TTS recovered (cooldown not burned)')
+        console.log('-- Red Alert: only live transitions route to the scenario --')
+        const scenarioProto = Object.getPrototypeOf(RedAlertScenario)
+        const { start, recover } = scenarioProto
+        const starts = []
+        const recoveries = []
+        scenarioProto.start = request => { starts.push(request); return true }
+        scenarioProto.recover = name => { recoveries.push(name); return Promise.resolve(true) }
+        try {
+            setOverride('scenarios.red_alert', { enabled: true, triggers: { network_offline: {
+                'wifi-router': { warning: 'wifi-router-offline', recovery_warning: 'wifi-router-online' }
+            } } })
+            setOverride('alerts.network_offline_tts', false)
+            EventBus.emit('network:presenceChanged', 'wifi-router', 'online', undefined)
+            EventBus.emit('network:presenceChanged', 'wifi-router', 'offline', undefined)
+            assert(starts.length === 0 && recoveries.length === 0, 'initial presence never starts or stops the scenario')
+            EventBus.emit('network:presenceChanged', 'wifi-router', 'offline', 'online')
+            assert(starts.length === 1 && starts[0].warning === 'wifi-router-offline', 'offline starts local audio independently of TTS')
+            assert(starts[0].recovery_warning === 'wifi-router-online', 'monitor passes the configured recovery clip ID')
+            EventBus.emit('network:presenceChanged', 'wifi-router', 'online', 'offline')
+            assert(recoveries.join(',') === 'wifi-router', 'offline to online requests recovery without recovery TTS')
+
+            spoken.length = 0
+            ttsEnabledFlag = true
+            setOverride('alerts.network_offline_tts', true)
+            setLabel('wifi-router', 'offline')
+            EventBus.publish('network:wifi-router')
+            await sleep(50)
+            assert(spoken.length === 0, 'scenario hosts do not also request remote speech')
+            setOverride('scenarios.red_alert', { enabled: false })
+            EventBus.publish('network:wifi-router')
+            await sleep(50)
+            assert(spoken.length === 1, 'disabled scenario leaves existing remote speech intact')
+        } finally {
+            scenarioProto.start = start
+            scenarioProto.recover = recover
+        }
     } catch (err) {
         console.error(`\nFatal error in test suite: ${err.message}\n${err.stack}`)
         process.exitCode = 1

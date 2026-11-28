@@ -40,6 +40,10 @@ Included automations demonstrating rule-engine patterns.
 - [Bedroom Rollers](automations/bedroom-rollers.md) — night-close rollers + pilot remote outlet interaction example
 - [Home Theater Mode](automations/home-theater-mode.md) — video-player-driven dark mode with roller ownership
 
+### Scenarios
+
+- [Scenarios: Red Alert](monitors/red-alert.md) — temporary modes, with a local alarm and lighting loop for network outages
+
 ### Monitors
 
 Singletons watching the world outside Zigbee.

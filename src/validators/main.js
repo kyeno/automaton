@@ -12,6 +12,28 @@ import { ACK_TIMEOUT_MAX_MS, ACK_TIMEOUT_MIN_MS, ENV_NAME_RE, TARGET_ID_RE, TARG
 import temporal from '../lib/date.js'
 
 export default {
+    scenarios: {
+        type: 'object',
+        properties: {
+            red_alert: {
+                type: 'object',
+                properties: {
+                    enabled: { type: 'boolean' },
+                    light_sequence: { type: 'string' },
+                    lights: { type: 'array', items: { type: 'string' } },
+                    restore_automation: { type: 'string' },
+                    audio: {
+                        type: 'object',
+                        properties: { alarm_file: { type: 'string' } }
+                    },
+                    triggers: {
+                        type: 'object',
+                        properties: { network_offline: { type: 'object' } }
+                    }
+                }
+            }
+        }
+    },
     sounds: {
         type: 'object',
         properties: {
@@ -424,7 +446,8 @@ function validateControl(section) {
     const operations = {
         ir: ['list', 'search', 'show', 'send'],
         sequence: ['list', 'run', 'loop'],
-        occupancy: ['list', 'show', 'set', 'clear']
+        occupancy: ['list', 'show', 'set', 'clear'],
+        scenario: ['status', 'start', 'stop']
     }
     if (section.enabled !== undefined && typeof section.enabled !== 'boolean') errors.push('mqtt_control.enabled: must be boolean')
     const base = section.topic_base ?? 'automaton/control'

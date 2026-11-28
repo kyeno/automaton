@@ -35,6 +35,12 @@ The MP3 default streams raw 44.1 kHz stereo PCM on little-endian Linux, so
 
 ## Credits and redistribution
 
+Red Alert plays its MP3 and optional pre-generated WAVs directly on the
+Automaton host. See [Red Alert](../monitors/red-alert.md) for names and timing.
+Only assets with suitable redistribution terms should be committed. For Piper
+recordings, record the voice model, revision, and applicable notices before
+bundling any generated WAVs. No Piper model or WAV set ships with this change.
+
 The local-only sample used for playback testing was
 [Greece EAS Alarm](https://pixabay.com/sound-effects/film-special-effects-greece-eas-alarm-greece-451404/)
 by JeremayJimenez on Pixabay.

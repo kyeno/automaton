@@ -19,6 +19,7 @@ Slash commands are available in interactive UI mode. `--no-ui` disables them.
 | `/interaction [arg]` | Manage interactions: `list`, `debug <name>`, `run <name> [actionType]` (bare invocation shows usage) |
 | `/device [arg]` | List & inspect Zigbee + network devices: bare counts/help, `list [zigbee\|network]`, `debug <name>` cross-registry lookup |
 | `/sequence [arg]` | Run device sequences & control their loops: bare list with live status, `run <name> [ON\|OFF]`, `loop start <name>`, `loop stop <name>` (names may be slugs or friendly names) |
+| `/scenario [arg]` | Inspect, start, or stop [Red Alert](../../monitors/red-alert.md#manual-controls) |
 | `/quit` (`/exit`, `/q`) | Exit Automaton |
 | `/win [arg]` | Switch window by shortcut number or id |
 | `/rules [arg]` | Drive the rules window tabs: bare lists the automations, `<name>` focuses one automation's box, `all` shows every box again |

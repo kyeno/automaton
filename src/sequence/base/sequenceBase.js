@@ -8,6 +8,8 @@
  */
 'use strict'
 
+import { setTimeout as delay } from 'node:timers/promises'
+
 import DeviceContainer from '../../device/container/deviceContainer.js'
 import StateService from '../../service/stateService.js'
 import LoggerService from '../../service/loggerService.js'
@@ -27,7 +29,7 @@ class SequenceBase {
 
     /** Friendly name from config. */
     #name
-    /** Registry / state key -- slugify(name), e.g. 'Salon Hazard Light' -> salon_hazard_light. */
+    /** Registry / state key -- slugify(name), e.g. 'Hazard Lights' -> hazard_lights. */
     #slug
     /** Raw normalized entry object as loaded from YAML. */
     #config
@@ -54,6 +56,8 @@ class SequenceBase {
     #interPhaseResolver = null
     /** Loop dispatch context, retaining the initiator separately from step provenance. */
     #loopContext = {}
+    /** Completion of the most recent loop, including cancellation. */
+    #loopCompletion = Promise.resolve()
     /** Last completed run's local outcomes (not appliance confirmations). */
     #lastRunResult = null
 
@@ -190,6 +194,21 @@ class SequenceBase {
         return this.#loopConfig !== null && this.supportsPhase('ON') && this.supportsPhase('OFF')
     }
 
+    /** Return all device steps for a continuous, device-only pattern.
+     * @returns {string[]|null} Names, or null for an incompatible loop */
+    getPatternDevices() {
+        if (!this.supportsLoop() || this.#loopConfig.cycle !== 'continuous') return null
+        const steps = [...this.#stepsOn, ...this.#stepsOff]
+        if (steps.some(step => step.kind === 'host_command' || !this.#devices.has(step.deviceName))) return null
+        return [...new Set(steps.map(step => step.deviceName))]
+    }
+
+    /** Wait for the current loop to finish, including its last local dispatch.
+     * @returns {Promise<void>} Loop completion */
+    waitForLoop() {
+        return this.#loopCompletion
+    }
+
     /** Compact live-status snapshot for UI / AI / status reporting.
      * @returns {{name: string, slug: string, active: boolean, phase: ('on'|'off'|null), loopActive: boolean}} */
     getStateSummary() {
@@ -243,6 +262,7 @@ class SequenceBase {
      * @param {Object} [context={}] - Initiating source
      * @returns {Promise<boolean>} true when the loop started; false when rejected */
     async startLoop(context = {}) {
+        if (context.lightLease?.signal.aborted) return false
         if (!this.#loopConfig || !this.supportsPhase('OFF')) {
             LoggerService.warn(`Sequence "${this.#name}" needs loop configuration and an OFF phase -- cannot start loop`, 'SequenceBase')
             return false
@@ -260,8 +280,13 @@ class SequenceBase {
         this.#busy = true
         StateService.set(this.#stateKey('loop.active'), true)
 
-        void this.#driveLoop().catch(err => {
-            LoggerService.error(`Sequence "${this.#name}": loop crashed: ${err.message}`, 'SequenceBase')
+        const signal = context.lightLease?.signal
+        const abort = () => this.stopLoop()
+        signal?.addEventListener('abort', abort, { once: true })
+        this.#loopCompletion = this.#driveLoop().catch(err => {
+            if (!signal?.aborted) LoggerService.error(`Sequence "${this.#name}": loop crashed: ${err.message}`, 'SequenceBase')
+        }).finally(() => {
+            signal?.removeEventListener('abort', abort)
             this.#exitLoop()
         })
         return true
@@ -387,8 +412,10 @@ class SequenceBase {
      * @returns {Promise<Object>} Local step report */
     async #executeSteps(action, context = {}) {
         const steps = action === 'OFF' ? this.#stepsOff : this.#stepsOn
+        const signal = context.lightLease?.signal
         const result = { phase: action, status: 'completed', completed: 0, failed: [] }
         for (let i = 0; i < steps.length; i++) {
+            signal?.throwIfAborted()
             const step = steps[i]
             if (step.kind === 'host_command') {
                 //  Typed host step: signed request to a host target, reported under a host label.
@@ -415,7 +442,8 @@ class SequenceBase {
             }
             try {
                 await device.receiveCommand(step.payload ?? action, context.source ?? DeviceCommandSource.AUTOMATION, {
-                    bypassNoOpSuppression: this.#config.force === true
+                    bypassNoOpSuppression: this.#config.force === true || Boolean(context.lightLease),
+                    ...(context.lightLease ? { lightLease: context.lightLease } : {})
                 })
                 result.completed++
             } catch (err) {
@@ -423,7 +451,7 @@ class SequenceBase {
                 LoggerService.warn(`Sequence "${this.#name}": command failed on "${step.deviceName}": ${err.message}`, 'SequenceBase')
             }
             const delay = step.delayMs > 0 ? step.delayMs : this.#defaultDelayMs
-            if (delay > 0 && i < steps.length - 1) await this.#sleep(delay)
+            if (delay > 0 && i < steps.length - 1) await this.#sleep(delay, signal)
         }
         if (result.failed.length) result.status = 'partial_failure'
         return result
@@ -437,9 +465,11 @@ class SequenceBase {
             //  Yield one event-loop tick each cycle: with all-zero delays every await resolves as a
             //  microtask, which would starve timers/IO/UI and make stop requests unresponsive.
             await this.#sleep(0)
+            if (this.#stopRequested) break
             StateService.set(this.#stateKey('active'), true)
             StateService.set(this.#stateKey('phase'), 'on')
             this.#lastRunResult = await this.#executeSteps('ON', this.#loopContext)
+            if (this.#loopContext.lightLease && this.#lastRunResult.failed.length) break
             if (this.#stopRequested) break
 
             const offDelayMs = this.#loopConfig.offDelayMs
@@ -450,6 +480,7 @@ class SequenceBase {
 
             StateService.set(this.#stateKey('phase'), 'off')
             this.#lastRunResult = await this.#executeSteps('OFF', this.#loopContext)
+            if (this.#loopContext.lightLease && this.#lastRunResult.failed.length) break
             if (this.#stopRequested) break
             if (this.#loopConfig.cycle !== 'continuous') break
 
@@ -461,7 +492,6 @@ class SequenceBase {
                 if (this.#stopRequested) break
             }
         }
-        this.#exitLoop()
     }
 
     /** Wait out the configured inter-phase gap with the TimedAction guarding the slot; resolves
@@ -491,6 +521,7 @@ class SequenceBase {
         this.#busy = false
         this.#loopActive = false
         this.#stopRequested = false
+        this.#loopContext = {}
         if (this.#phaseTimer.isActive()) {
             this.#phaseTimer.stop()
             const resolver = this.#interPhaseResolver
@@ -504,9 +535,10 @@ class SequenceBase {
 
     /** Sleep helper for step pacing.
      * @private
-     * @param {number} ms - Delay in milliseconds */
-    #sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+     * @param {number} ms - Delay in milliseconds
+     * @param {AbortSignal} [signal] - Optional scenario cancellation */
+    #sleep(ms, signal) {
+        return signal ? delay(ms, undefined, { signal }) : new Promise(resolve => setTimeout(resolve, ms))
     }
 
     /** Build a StateService key under the `sequence.<slug>` prefix (D8).

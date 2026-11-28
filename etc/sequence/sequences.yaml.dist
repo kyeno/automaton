@@ -3,7 +3,7 @@
 # Template -- copy to sequences.yaml and customize for your home.
 #
 # Entry fields:
-#   name      friendly name; slugified internally ('Living Room Hazard Light' -> living_room_hazard_light)
+#   name      friendly name; slugified internally ('Hazard Lights' -> hazard_lights)
 #   delay  optional inter-step pause ("500ms", "2s", ms); absent = steps fire back-to-back
 #   devices   simple form: ordered names (or {device, command, delay}); ON/OFF drives each device
 #   on/off    rich form: explicit step lists of {device, payload?, delay?}; payload goes to
@@ -30,7 +30,7 @@ sequences:
 
   # Rich form: Living Room dual-dimmer hazard light oscillation. Brightness values create the
   # transition on the wire -- no extra "transition" field needed.
-  - name: 'Living Room Hazard Light'
+  - name: 'Hazard Lights'
     loop:
       enabled: true
       cycle: continuous
