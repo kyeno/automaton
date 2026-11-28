@@ -1,0 +1,10 @@
+dispatched:
+  tts: 'Wyłączyłem kino domowe, bo ktoś mógł zasnąć na kanapie.'
+  ai: >-
+    Powiedz krótko po polsku: "Wyłączyłem kino domowe, bo ktoś mógł zasnąć na kanapie."
+    Nie twierdź, że ktoś na pewno zasnął ani że sprawdziłeś stan poszczególnych urządzeń. Zwróć tylko wypowiedź do przeczytania. Nie używaj narzędzi.
+unconfirmed:
+  tts: 'Próbowałem wyłączyć kino domowe, bo ktoś mógł zasnąć na kanapie, ale nie udało się potwierdzić wszystkich poleceń.'
+  ai: >-
+    Powiedz krótko po polsku, że próbowałeś wyłączyć kino domowe, bo ktoś mógł zasnąć na kanapie, ale nie udało się potwierdzić wszystkich poleceń.
+    Nie twierdź, że ktoś na pewno zasnął ani że wyłączenie się powiodło. Zwróć tylko wypowiedź do przeczytania. Nie używaj narzędzi.

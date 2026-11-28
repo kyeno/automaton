@@ -73,6 +73,24 @@ export default class MpcProvider {
         return title || null
     }
 
+    /** Read usable timeline evidence for a paused or stopped file. Missing
+     * metadata and unrecognized states do not count as end-of-movie evidence.
+     * @param {string} body - Raw response body
+     * @returns {{media: string, atEnd: boolean}|null} Loaded file and end flag */
+    extractIdleTimeline(body) {
+        const state = this.#extractParagraph(body, 'statestring')?.toLowerCase()
+        if (state !== 'paused' && state !== 'stopped') return null
+
+        const position = this.#extractParagraph(body, 'position')
+        const duration = this.#extractParagraph(body, 'duration')
+        if (!/^\d+$/.test(position ?? '') || !/^\d+$/.test(duration ?? '')) return null
+        const ms = Number(duration)
+        const elapsed = Number(position)
+        if (!Number.isSafeInteger(ms) || ms <= 0 || elapsed > ms) return null
+        const media = this.#extractParagraph(body, 'filepath') || this.#extractParagraph(body, 'file')
+        return media ? { media, atEnd: elapsed === ms } : null
+    }
+
     //  -- Private helpers --------------------------------------------------
 
     /** Extract the trimmed text content of a `<p id="...">` paragraph.

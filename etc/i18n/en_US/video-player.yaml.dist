@@ -1,0 +1,10 @@
+dispatched:
+  tts: 'I turned off the home cinema because someone might have fallen asleep on the couch.'
+  ai: >-
+    Give a brief announcement in English: "I turned off the home cinema because someone might have fallen asleep on the couch."
+    Do not claim anyone was actually asleep or that you verified individual device states. Return only the spoken line. Do not call tools.
+unconfirmed:
+  tts: 'I tried to turn off the home cinema because someone might have fallen asleep on the couch, but not every command could be confirmed.'
+  ai: >-
+    Briefly say in English that you tried to turn off the home cinema because someone might have fallen asleep on the couch, but not every command could be confirmed.
+    Do not claim anyone was actually asleep or that shutdown succeeded. Return only the spoken line. Do not call tools.

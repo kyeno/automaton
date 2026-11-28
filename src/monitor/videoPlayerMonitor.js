@@ -8,11 +8,20 @@
  */
 'use strict'
 
+import fs from 'node:fs'
+import path from 'node:path'
+import { parseDocument } from 'yaml'
+
 import ConfigService from '../service/configService.js'
 import LoggerService from '../service/loggerService.js'
 import DatabaseService from '../service/databaseService.js'
 import EventBus from '../service/eventBus.js'
 import StateService from '../service/stateService.js'
+import I18nLoader from '../service/i18nLoader.js'
+import SequenceContainer from '../sequence/container/sequenceContainer.js'
+import AnnouncementPipeline from '../lib/announcementPipeline.js'
+import TtsProfiles from '../lib/ttsProfiles.js'
+import PROJECT_ROOT from '../lib/projectRoot.js'
 import NetworkPresence from './networkPresence.js'
 
 import VlcProvider from './providers/vlc.js'
@@ -22,6 +31,9 @@ import MpcProvider from './providers/mpc.js'
 /** Interval between video-player sweeps in milliseconds (4 seconds).
  * @type {number} */
 const CHECK_INTERVAL_MS = 4_000
+
+const END_FRAME_IDLE_MS = 15 * 60_000
+const MAX_END_FRAME_POLL_GAP_MS = 3 * CHECK_INTERVAL_MS
 
 /** Consecutive fetch failures before an online host is declared `offline` (raw detail:
  * @type {number} */
@@ -106,6 +118,9 @@ class SVideoPlayerMonitor {
      * @type {Map<string, string|null>} */
     #rawDetails = new Map()
 
+    /** Per-host end-frame dwell and one-shot latch; deliberately not persisted. */
+    #endFrameIdle = new Map()
+
 
     /** Synchronous singleton constructor.
      * @return {this} */
@@ -142,7 +157,15 @@ class SVideoPlayerMonitor {
                 )
                 continue
             }
-            this.#videoPlayers[host] = { ...entry, host: resolvedHost }
+            const { end_frame_shutdown: shutdown, ...endpoint } = entry
+            this.#videoPlayers[host] = { ...endpoint, host: resolvedHost }
+            if (shutdown != null) {
+                if (entry.parser !== 'mpc' || typeof shutdown.sequence !== 'string' || !shutdown.sequence.trim()) {
+                    LoggerService.warn(`Ignoring end_frame_shutdown for "${host}": requires the mpc parser and a sequence name`, 'VideoPlayerMonitor')
+                } else {
+                    this.#videoPlayers[host].end_frame_shutdown = { ...shutdown, sequence: shutdown.sequence.trim() }
+                }
+            }
         }
 
         const hosts = Object.keys(this.#videoPlayers)
@@ -185,6 +208,7 @@ class SVideoPlayerMonitor {
 
     /** Stop the periodic sweep. */
     stop() {
+        this.#endFrameIdle.clear()
         if (this.#timer) {
             clearInterval(this.#timer)
             this.#timer = null
@@ -282,6 +306,7 @@ class SVideoPlayerMonitor {
         //  Presence gate: skip polling only when the host is *known* offline --
         const presence = await NetworkPresence.getPresence(host)
         if (presence === PRESENCE_OFFLINE) {
+            this.#interruptEndFrameDwell(host)
             await this.#observe(host, null, null)
             return
         }
@@ -296,9 +321,14 @@ class SVideoPlayerMonitor {
             const body = await provider.fetch(cfg)
             const status = provider.parse(body)
             const title = typeof provider.extractTitle === 'function' ? provider.extractTitle(body) : null
+            const timeline = cfg.end_frame_shutdown ? provider.extractIdleTimeline(body) : null
             this.#failCounts.set(host, 0)
             await this.#observe(host, status, title)
+            if (cfg.end_frame_shutdown && this.#timer && !StateService.get('lifecycle.shuttingDown')) {
+                this.#observeEndFrame(host, cfg.end_frame_shutdown, status, timeline)
+            }
         } catch (error) {
+            this.#interruptEndFrameDwell(host)
             const strikes = (this.#failCounts.get(host) ?? 0) + 1
             this.#failCounts.set(host, strikes)
             if (strikes >= FAILURE_STRIKES) {
@@ -312,6 +342,80 @@ class SVideoPlayerMonitor {
                 )
             }
         }
+    }
+
+    /** Drop unconfirmed dwell time, but never re-send a toggle just because a reply was lost. */
+    #interruptEndFrameDwell(host) {
+        if (!this.#endFrameIdle.get(host)?.attempted) this.#endFrameIdle.delete(host)
+    }
+
+    /** Update the one-shot idle timer from a fresh, raw player observation. */
+    #observeEndFrame(host, cfg, status, timeline) {
+        const previous = this.#endFrameIdle.get(host)
+        if (!timeline?.atEnd) {
+            // A stopped/rewound response may be the result of shutdown itself.
+            if (status === 'playing' || (timeline && timeline.media !== previous?.media)) this.#endFrameIdle.delete(host)
+            else this.#interruptEndFrameDwell(host)
+            return
+        }
+
+        const { media } = timeline
+        const now = nowFn()
+        if (previous?.media === media && previous.attempted) return
+        if (previous?.media !== media || now < previous.lastSeen || now - previous.lastSeen > MAX_END_FRAME_POLL_GAP_MS) {
+            this.#endFrameIdle.set(host, { media, since: now, lastSeen: now, attempted: false })
+            return
+        }
+        previous.lastSeen = now
+        if (now - previous.since < END_FRAME_IDLE_MS) return
+
+        previous.attempted = true
+        // A slow sequence or AI request must not block the player sweep.
+        void this.#shutdownAtEndFrame(host, cfg).catch((error) => {
+            LoggerService.warn(`${host}: end-frame shutdown or announcement failed: ${error.message}`, 'VideoPlayerMonitor')
+        })
+    }
+
+    /** Attempt the configured OFF sequence once and report dispatch, not power state. */
+    async #shutdownAtEndFrame(host, cfg) {
+        const sequence = SequenceContainer.resolveSequence(cfg.sequence)
+        if (!sequence || !await sequence.run('OFF')) {
+            LoggerService.warn(`${host}: end-frame OFF sequence "${cfg.sequence}" did not run`, 'VideoPlayerMonitor')
+            return
+        }
+        const complete = sequence.getLastRunResult()?.status === 'completed'
+        if (!complete) LoggerService.warn(`${host}: end-frame OFF sequence reported unconfirmed or failed steps`, 'VideoPlayerMonitor')
+        if (!this.#timer || StateService.get('lifecycle.shuttingDown')) return
+        await AnnouncementPipeline.announce({
+            bundle: this.#loadShutdownBundle(),
+            section: complete ? 'dispatched' : 'unconfirmed',
+            label: 'VideoPlayerMonitor',
+            useAi: cfg.use_ai !== false,
+            allowTools: false,
+            ttsOptions: TtsProfiles.resolve(cfg)
+        })
+    }
+
+    /** Load the locale's user bundle or shipped template, with English as a fallback. */
+    #loadShutdownBundle() {
+        const root = path.join(PROJECT_ROOT, 'etc', 'i18n')
+        let bundle = {}
+        for (const locale of new Set(['en_US', I18nLoader.getLocale()])) {
+            for (const suffix of ['.dist', '']) {
+                const file = path.join(root, locale, `video-player.yaml${suffix}`)
+                try {
+                    const doc = parseDocument(fs.readFileSync(file, 'utf8'))
+                    if (doc.errors.length) throw doc.errors[0]
+                    const data = doc.toJS()
+                    for (const section of ['dispatched', 'unconfirmed']) {
+                        bundle[section] = { ...bundle[section], ...data?.[section] }
+                    }
+                } catch (error) {
+                    if (error.code !== 'ENOENT') LoggerService.warn(`Cannot load ${file}: ${error.message}`, 'VideoPlayerMonitor')
+                }
+            }
+        }
+        return bundle
     }
 
     /** Apply one playback observation to a host's watch-session state machine.

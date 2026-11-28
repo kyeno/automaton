@@ -87,6 +87,35 @@ videoPlayers:
 
 **VLC** — set a password under *Tools → Preferences (All) → Interface → Main interfaces → Lua → Lua HTTP Password*, then configure `username` / `password` on the player entry (sent as basic auth).
 
+## End-of-Movie Shutdown (Opt-In)
+
+Add this under the MPC-HC player entry in `etc/device/network.yaml`, then restart Automaton:
+
+```yaml
+    end_frame_shutdown:
+      sequence: media_room     # Replace with the installed OFF sequence name or slug
+      use_ai: true             # Default; false always uses the clean TTS line
+      # tts_profile: couch_sleepover
+      # tts_options: { intro: 'your-chime.wav' }
+```
+
+The monitor waits for 15 minutes of successful polls showing the same loaded file
+in raw `Paused` or `Stopped` state with position equal to a positive duration.
+Playback, a seek away from the end, a new file, a failed poll, a gap longer than
+12 seconds, or an Automaton restart resets the pending countdown. An empty or
+rewound `Stopped` response cannot trigger shutdown. VLC is not supported by this option.
+
+The monitor attempts `OFF` once per qualifying idle session. It does not retry on a
+lost acknowledgement or a stopped/rewound reply for the same file: some TVs use
+a power toggle. Playback or a different file re-arms it. A successful IR dispatch is
+not appliance power feedback, and a host ACK confirms acceptance, not power-off.
+The announcement distinguishes a completed dispatch from an unconfirmed run and
+should be routed to a speaker that stays available after the theater shuts down.
+
+Edit `etc/i18n/<locale>/video-player.yaml` (template: `video-player.yaml.dist`)
+to customize the AI prompt and plain TTS fallback. Both paths use the same optional
+`tts_profile` from that locale's `tts.yaml`; explicit `tts_options` take precedence.
+
 ## Using It in Automations
 
 ```yaml

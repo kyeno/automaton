@@ -425,6 +425,8 @@ Each player's IP resolves from the same-named `computers` entry; an optional `ho
 
 Optional per-player keys: `username` / `password` (VLC basic auth) and `timeout` (default 1200 ms). Player-side setup (MPC-HC web interface, VLC Lua HTTP password), polling mechanics, and the `videoPlayer:<host>` status events are covered in [Video Player Monitor](monitors/video-player.md); subscribe automations to status changes via `triggers_video`.
 
+MPC-HC entries can also opt into [end-of-movie shutdown](monitors/video-player.md#end-of-movie-shutdown-opt-in) with `end_frame_shutdown`.
+
 ---
 
 ## 4. Automation Rules (`etc/automation/*.yaml`)

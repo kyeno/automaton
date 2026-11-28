@@ -157,6 +157,7 @@ const defaultTestScripts = [
   'test-video-player-host-resolution.js',
   'test-video-player-suppression.js',
   'test-video-player-settle.js',
+  'test-video-player-end-frame-shutdown.js',
   'test-database-service.js',
   'test-sensor-history.js',
   'test-daylight-learning.js',

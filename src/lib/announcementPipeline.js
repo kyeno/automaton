@@ -56,6 +56,7 @@ class SAnnouncementPipeline {
      * @param {Record<string, string>} [options.tokens={}] - Values filling the {% token %} placeholders
      * @param {string} [options.label='AnnouncementPipeline'] - Logger tag used for warnings
      * @param {boolean} [options.useAi=false] - Route the announcement through the model
+     * @param {boolean} [options.allowTools=true] - Allow tools on the AI leg
      * @param {boolean} [options.speak=true] - false generates the text without voicing it
      * @param {boolean} [options.emitUi=true] - Echo the text into the terminal AI window
      * @param {boolean} [options.emitBridge=true] - Mirror the text onto the MQTT AI bridge
@@ -72,6 +73,7 @@ class SAnnouncementPipeline {
             tokens = {},
             label = DEFAULT_LABEL,
             useAi = false,
+            allowTools = true,
             speak = true,
             emitUi = true,
             emitBridge = true,
@@ -97,7 +99,7 @@ class SAnnouncementPipeline {
             return outcome
         }
 
-        const leg = await this.#buildText({ node, plainText, tokens, section, useAi, speak, ttsOptions, emitUi, warn, report })
+        const leg = await this.#buildText({ node, plainText, tokens, section, useAi, allowTools, speak, ttsOptions, emitUi, warn, report })
         outcome.text = leg.text
         outcome.via = leg.via
         outcome.spoken = leg.spoken
@@ -148,6 +150,7 @@ class SAnnouncementPipeline {
      * @param {Record<string, string>} args.tokens - Placeholder values
      * @param {string} args.section - Bucket key, named in warnings
      * @param {boolean} args.useAi - Route through the model
+     * @param {boolean} args.allowTools - Allow the AI to call tools
      * @param {boolean} args.speak - Voice the result
      * @param {boolean} args.emitUi - Echo into the AI window
      * @param {{intro?: string, outro?: string, intro_spacing?: number}} args.ttsOptions - Framing
@@ -156,7 +159,7 @@ class SAnnouncementPipeline {
      * @returns {Promise<{text: string, via: string, spoken: boolean, ui: boolean}>} Generated leg
      * @private
      * @async */
-    async #buildText({ node, plainText, tokens, section, useAi, speak, ttsOptions, emitUi, warn, report }) {
+    async #buildText({ node, plainText, tokens, section, useAi, allowTools, speak, ttsOptions, emitUi, warn, report }) {
         let text = plainText
         let via = 'tts'
         let spoken = false
@@ -170,7 +173,7 @@ class SAnnouncementPipeline {
                 if (!instruction) {
                     warn(`No AI instruction for "${section}.ai" -- speaking the plain sentence instead`)
                 } else {
-                    const reply = await this.#routeThroughAi(instruction, ttsOptions, emitUi, report, speak)
+                    const reply = await this.#routeThroughAi(instruction, ttsOptions, emitUi, report, speak, allowTools)
                     if (reply) {
                         text = reply
                         via = 'ai'
@@ -202,10 +205,11 @@ class SAnnouncementPipeline {
      * @param {boolean} emitUi - Echo the instruction and the reply into the AI window
      * @param {(message: string, level?: string) => void} report - Log sink
      * @param {boolean} speak - Whether the assistant should voice its reply
+     * @param {boolean} allowTools - Allow the AI to call tools
      * @returns {Promise<string>} The model's reply, or '' when the leg must fall back
      * @private
      * @async */
-    async #routeThroughAi(instruction, ttsOptions, emitUi, report, speak) {
+    async #routeThroughAi(instruction, ttsOptions, emitUi, report, speak, allowTools) {
         if (emitUi) this.#emitTranscript(SYSTEM_MESSAGE_CHANNEL, instruction)
 
         let spoken = ''
@@ -213,7 +217,8 @@ class SAnnouncementPipeline {
             const response = await AiAssistant.processMessage(instruction, {
                 origin: ChatMessageOrigin.SYSTEM,
                 speak,
-                tts: ttsOptions
+                tts: ttsOptions,
+                ...(allowTools === false ? { allowTools: false } : {})
             })
             spoken = typeof response === 'string' ? response.trim() : ''
         } catch (error) {

@@ -174,6 +174,7 @@ class SAiAssistant {
       * @param {Object} [options] - Optional processing options.
       * @param {'user'|'system'} [options.origin='user'] - Message authorship origin (for UI rendering).
       * @param {boolean} [options.speak=true] - Whether to voice the reply through TTS.
+      * @param {boolean} [options.allowTools=true] - Set false for speech-only turns.
       * @param {Record<string, unknown>} [options.tts] - Extra TTS server parameters forwarded verbatim into the 'tts:speak' event payload for this reply (e.g., intro/outro jingle framing); omitted when absent or not an object.
       * @returns {Promise<string>} The assistant's textual reply. */
     processMessage(userInput, options = {}) {
@@ -252,6 +253,7 @@ class SAiAssistant {
     async #executeTurn(userInput, options = {}) {
         const origin = options.origin || 'user'
         const isSystemOrigin = origin === ChatMessageOrigin.SYSTEM
+        const allowTools = options.allowTools !== false
 
         //  Optional per-reply TTS passthrough params -- spread into every 'tts:speak' emission.
         const ttsOptions = (options.tts && typeof options.tts === 'object') ? options.tts : {}
@@ -262,17 +264,17 @@ class SAiAssistant {
             iteration++
 
             //  Returns the optimized, tiny static array (100% cache friendly)
-            const tools = ToolBuilder.build()
+            const tools = allowTools ? ToolBuilder.build() : []
 
             //  Strip internal fields (_ts) before sending to AI provider.
             const apiMessages = this.stripInternalFields(this.#messages)
             const assistantMsg = await this.#provider.chat(apiMessages, tools)
+            const jsonIntents = ToolBuilder.parseJsonIntent(assistantMsg.content)
+            if (!allowTools && (assistantMsg.tool_calls?.length || jsonIntents?.length)) return ''
             this.#messages.push({ ...assistantMsg, _ts: Date.now(), _origin: origin })
 
             if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
                 //  Check if the model returned JSON instead of proper tool_calls -- catch models.
-                const jsonIntents = ToolBuilder.parseJsonIntent(assistantMsg.content)
-
                 if (jsonIntents && jsonIntents.length > 0) {
                     LoggerService.warn(
                         `Model caught red-handed! Malformed tool calling detected (${jsonIntents.length} intent(s)) - returned JSON text instead of native tool_calls. Parsing anyway.`,

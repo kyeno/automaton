@@ -50,3 +50,9 @@ videoPlayers:
   #   port: 13579
   #   path: /variables.html
   #   parser: mpc
+  #   end_frame_shutdown:            # Optional, MPC-HC only; 15 minutes at end while paused/stopped
+  #     sequence: media_room        # Run OFF once; name or slug of an installed sequence
+  #     use_ai: true                 # Default: AI with plain TTS fallback
+  #     tts_profile: couch_sleepover # Optional; define it in the active locale's tts.yaml
+  #     tts_options:                # Optional overrides for the profile
+  #       intro: 'your-chime.wav'

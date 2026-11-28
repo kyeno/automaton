@@ -71,8 +71,8 @@ if (CacheService.isConnected()) {
 const originalChat = OpenAiProvider.prototype.chat
 const calls = []          // { messages: Array, startedAt, finishedAt }
 let scripted = []         // values to return, or Error instances to throw
-OpenAiProvider.prototype.chat = async function (messages) {
-    const rec = { messages: JSON.parse(JSON.stringify(messages)), startedAt: Date.now() }
+OpenAiProvider.prototype.chat = async function (messages, tools) {
+    const rec = { messages: JSON.parse(JSON.stringify(messages)), tools, startedAt: Date.now() }
     calls.push(rec)
     const next = scripted.length ? scripted.shift() : { role: 'assistant', content: '' }
     await sleep(60)       // widen the window enough that unserialized turns WOULD overlap
@@ -96,6 +96,28 @@ try {
     let reply = await AiAssistant.processMessage('WEATHER_ALPHA outside is warm today.', { origin: ChatMessageOrigin.SYSTEM })
     assert(reply === 'Raport pogody A.', 'system turn still returns its reply to the caller')
     assert(baseline() === l0, `history length unchanged after successful weather tick (${baseline()} vs ${l0})`)
+
+    const speechOnly = { origin: ChatMessageOrigin.SYSTEM, allowTools: false, speak: false }
+    scripted = [{ role: 'assistant', content: 'Pustka nie ogląda napisów końcowych.' }]
+    reply = await AiAssistant.processMessage('Speech only.', speechOnly)
+    assert(reply === 'Pustka nie ogląda napisów końcowych.', 'speech-only turn returns a normal AI reply')
+    assert(calls.at(-1).tools.length === 0, 'speech-only turn exposes no tools')
+
+    scripted = [{ role: 'assistant', content: 'Żyję.' }]
+    reply = await AiAssistant.processMessage('Żyjesz?', { speak: false })
+    assert(reply === 'Żyję.', 'a regular chat turn still works after a speech-only turn')
+    assert(calls.at(-1).tools.length > 0, 'regular chat still has tools by default')
+
+    for (const attemptedTool of [
+        { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'set_device_state', arguments: '{}' } }] },
+        { role: 'assistant', content: '{"device_name":"Test Light","action":"ON"}' }
+    ]) {
+        const before = calls.length
+        scripted = [attemptedTool]
+        reply = await AiAssistant.processMessage('Speech only.', speechOnly)
+        assert(reply === '', 'tool-shaped replies fall back instead of being spoken or executed')
+        assert(calls.length === before + 1 && calls.at(-1).tools.length === 0, 'speech-only AI sends no tools and does not enter a tool loop')
+    }
 
     // ── 2. Failed system tick rejects AND leaves no orphan user message ──────────────
     console.log('── 2. system-origin failure isolation ──')
