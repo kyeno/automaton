@@ -388,6 +388,12 @@ Device types determine behavior:
 
 Names must exactly match Zigbee2MQTT `friendly_name`. Unmapped measurement-only devices can be auto-classified as sensors; other unmapped devices become dummies under Unclassified. Startup warnings and type counts identify missing mappings.
 
+### Local Sounds (`etc/automaton.yaml`)
+
+The optional `sounds` section selects local playback commands per file type.
+See [Local Sound Playback](installation/local-sounds.md) for defaults, ALSA mixing,
+and asset credits.
+
 ### Network Hosts (`etc/device/network.yaml`)
 
 Defines hosts monitored for network presence detection:

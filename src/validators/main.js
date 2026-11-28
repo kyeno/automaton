@@ -12,6 +12,14 @@ import { ACK_TIMEOUT_MAX_MS, ACK_TIMEOUT_MIN_MS, ENV_NAME_RE, TARGET_ID_RE, TARG
 import temporal from '../lib/date.js'
 
 export default {
+    sounds: {
+        type: 'object',
+        properties: {
+            directory: { type: 'string' },
+            timeout_ms: { type: 'number' },
+            players: { type: 'object' }
+        }
+    },
     mqtt_control: {
         type: 'object',
         properties: {

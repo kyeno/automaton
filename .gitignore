@@ -31,3 +31,7 @@ etc/**/*.js
 !etc/**/*.js.dist
 # Active proverb lists (clean starter templates ship as .txt.dist)
 etc/i18n/*/proverbs.txt
+
+# Locally downloaded sound assets are not redistributed by default.
+/share/sounds/*
+!/share/sounds/README.md

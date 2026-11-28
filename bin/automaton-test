@@ -198,6 +198,7 @@ const defaultTestScripts = [
   'test-ui-min-width.js',
   // Note: JSDoc coverage + completeness checks live in npm run lint:check
   'test-sound.js',
+  'test-sound-playback.js',
   'test-sound-mario.js',
   'test-get-time-tool.js',
   'test-ai-bridge-monitor.js',

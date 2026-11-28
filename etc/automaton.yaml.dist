@@ -3,6 +3,17 @@
 # (MQTT_URL, REDIS_URL, AI_API_URL, ...). Full reference: doc/configuration.md
 # Template -- copy to automaton.yaml and customize for your setup.
 
+# Local sound playback, separate from remote TTS. Commands are argv arrays, not shell strings.
+sounds:
+  directory: share/sounds       # Relative to the project root, or an absolute path
+  timeout_ms: 60000
+  players:
+    mp3:
+      - [mpg123, '-q', '-s', '-r', '44100', '--stereo', '-e', s16, '{file}']
+      - [aplay, '-q', '-D', default, '-t', raw, '-f', S16_LE, '-r', '44100', '-c', '2', '-']
+    wav:
+      - [aplay, '-q', '-D', default, '{file}']
+
 # --- LOCALE: language + time display (drives AI prompt, TTS voice, UI greetings)
 locale:
   # BCP 47 code == directory name under etc/i18n/. Available: pl_PL, en_US

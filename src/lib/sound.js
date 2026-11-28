@@ -11,6 +11,8 @@
 
 import { spawn } from 'node:child_process'
 
+export { playSound } from './soundPlayback.js'
+
 
 /** Default beep frequency in Hertz.
  * @type {number} */
